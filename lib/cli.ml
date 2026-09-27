@@ -3,11 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The dune-release/dune-subst watermark: substituted with the VCS tag at
-   distribution time, so [-V] and the changelog cannot drift apart. In a dev
-   tree the literal stays unsubstituted and renders as-is. *)
+(* The dune-release/dune-subst watermark: substituted with the VCS tag,
+   without its leading [v], at distribution time, so [-V] and the changelog
+   cannot drift apart. In a dev tree the literal stays unsubstituted and
+   renders as-is. *)
 let version =
-  let watermark = "%%VERSION%%" in
+  let watermark = "%%VERSION_NUM%%" in
   if String.length watermark > 0 && watermark.[0] = '%' then "dev" else watermark
 
 (* Parsing *)
