@@ -199,3 +199,43 @@ CAMLprim value ocaml_thumper_loadavg (value unit)
 }
 
 #endif
+
+/* Host UUID (thumper addition, not in upstream mtime).
+
+   On Darwin the machine key hashes the hardware UUID, which gethostuuid(2)
+   returns, instead of the hostname, which follows the network there.  It
+   is rendered in uppercase canonical form, as System Information shows it.
+   Other systems, and a Darwin host where the call fails, report None: the
+   key then hashes the hostname. */
+
+#if defined(OCAML_MTIME_DARWIN)
+
+#include <unistd.h>
+#include <uuid/uuid.h>
+
+CAMLprim value ocaml_thumper_host_uuid (value unit)
+{
+  CAMLparam1 (unit);
+  CAMLlocal2 (str, some);
+  uuid_t id;
+  struct timespec wait = { 1, 0 };
+  char buf[37];
+
+  if (gethostuuid (id, &wait) != 0) CAMLreturn (Val_none);
+
+  uuid_unparse_upper (id, buf);
+  str = caml_copy_string (buf);
+  some = caml_alloc (1, 0);
+  Store_field (some, 0, str);
+  CAMLreturn (some);
+}
+
+#else
+
+CAMLprim value ocaml_thumper_host_uuid (value unit)
+{
+  (void) unit;
+  return Val_none;
+}
+
+#endif

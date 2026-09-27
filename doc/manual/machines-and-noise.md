@@ -14,7 +14,9 @@ section byte-for-byte untouched. Comparing across machines is refused
 by design, not normalized away.
 
 A section is keyed by a 16-hex-digit fingerprint of
-`hostname:os:cpu-model`. The hostname is in the key deliberately:
+`host:os:cpu-model`, where `host` is the hardware UUID on macOS (whose
+hostname follows the network) and the hostname elsewhere. The machine
+is in the key deliberately:
 splitting too eagerly costs a harmless, visible new section;
 splitting too little (two same-model machines with different cooling)
 compares wrong, silently. Human legibility comes from the section's

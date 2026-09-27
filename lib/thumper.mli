@@ -548,10 +548,11 @@ module Baseline : sig
   val machine_key : unit -> string
   (** [machine_key ()] is the key of this machine's baseline section: the
       [THUMPER_MACHINE] environment variable when set, else the host fingerprint
-      — the FNV-1a 64-bit hash of [hostname:os:cpu-model], rendered as 16
-      lowercase hexadecimal digits ([%016x]). The hostname is part of the key
-      deliberately: over-splitting costs a harmless, loud NEW section;
-      under-splitting silently compares wrong.
+      — the FNV-1a 64-bit hash of [host:os:cpu-model], rendered as 16 lowercase
+      hexadecimal digits ([%016x]), where [host] is the hardware UUID on macOS
+      and the hostname elsewhere. The machine is part of the key deliberately:
+      over-splitting costs a harmless, loud NEW section; under-splitting
+      silently compares wrong.
 
       A [THUMPER_MACHINE] override is used verbatim — for interchangeable CI
       fleets — and must be non-empty over [[A-Za-z0-9._-]], the charset that

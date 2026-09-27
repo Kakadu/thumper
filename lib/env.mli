@@ -29,19 +29,23 @@ val fingerprint : string -> string
 val machine_key : unit -> string
 (** [machine_key ()] is the key of this machine's baseline section: the
     [THUMPER_MACHINE] environment variable when set, else
-    [fingerprint (hostname ^ ":" ^ os ^ ":" ^ cpu_model)] where
+    [fingerprint (host ^ ":" ^ os ^ ":" ^ cpu_model)] where
 
-    - [hostname] is [Unix.gethostname ()];
+    - [host] is, on macOS, the hardware UUID as [gethostuuid(2)] returns it, in
+      uppercase canonical form ([Thumper_clock.host_uuid]); elsewhere, and on
+      macOS if that call fails, it is [Unix.gethostname ()];
     - [os] is the lowercased uname sysname (["darwin"], ["linux"]; ["unknown"]
       if [uname -s] cannot run);
     - [cpu_model] is the platform CPU string, trimmed of surrounding whitespace:
       [sysctl -n machdep.cpu.brand_string] on Darwin, the first [/proc/cpuinfo]
       ["model name"] value on Linux, and the empty string when undetectable.
 
-    The hostname stays in the key deliberately: over-splitting costs a harmless,
-    loud NEW section; under-splitting (two same-model machines, different
-    cooling) silently compares wrong. Human legibility comes from
-    {!host_description}, not the key.
+    The machine's identity stays in the key deliberately: over-splitting costs a
+    harmless, loud NEW section; under-splitting (two same-model machines,
+    different cooling) silently compares wrong. macOS hashes its hardware UUID
+    because its hostname follows the network (DHCP), which would give one Mac a
+    section per network. Human legibility comes from {!host_description}, not
+    the key.
 
     A [THUMPER_MACHINE] override is used verbatim — for interchangeable CI
     fleets — and must be non-empty over [[A-Za-z0-9._-]], the charset that keeps

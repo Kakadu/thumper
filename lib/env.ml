@@ -74,6 +74,7 @@ let cpuinfo_model () =
 
 type facts = {
   hostname : string;
+  host : string; (* the key's machine identity (.mli) *)
   os : string;
   arch : string;
   cpu_model : string;
@@ -106,7 +107,9 @@ let facts =
        in
        Option.value detected ~default:""
      in
-     { hostname = Unix.gethostname (); os; arch; cpu_model })
+     let hostname = Unix.gethostname () in
+     let host = Option.value (Thumper_clock.host_uuid ()) ~default:hostname in
+     { hostname; host; os; arch; cpu_model })
 
 let is_key_char = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' -> true
@@ -122,8 +125,8 @@ let machine_key () =
              key)
       else key
   | None ->
-      let { hostname; os; cpu_model; _ } = Lazy.force facts in
-      fingerprint (String.concat ":" [ hostname; os; cpu_model ])
+      let { host; os; cpu_model; _ } = Lazy.force facts in
+      fingerprint (String.concat ":" [ host; os; cpu_model ])
 
 let host_description () =
   let { hostname; os; arch; cpu_model } = Lazy.force facts in

@@ -6,6 +6,7 @@
 
 external now_ns : unit -> int64 = "ocaml_thumper_clock_now_ns"
 external load_average : unit -> float option = "ocaml_thumper_loadavg"
+external host_uuid : unit -> string option = "ocaml_thumper_host_uuid"
 
 (* Read once at module initialization so that, on Darwin, the mach timebase
    is set up here and the first measured read does not pay for it. *)

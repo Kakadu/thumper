@@ -94,6 +94,49 @@ let default_key_is_a_fingerprint () =
   is_true ~msg:"16 lowercase hex" (is_hex16 key);
   equal ~msg:"stable across calls" string key (Env.machine_key ())
 
+(* All output lines of [prog args], or [] if it cannot run. *)
+let output_lines prog args =
+  match Unix.open_process_args_in prog (Array.of_list (prog :: args)) with
+  | exception Unix.Unix_error _ -> []
+  | ic ->
+      let lines = In_channel.input_lines ic in
+      ignore (Unix.close_process_in ic);
+      lines
+
+(* On macOS the key hashes the hardware UUID in place of the hostname, which
+   follows the network there. The UUID and the CPU model are read here through
+   ioreg and sysctl, independently of the stub. *)
+let macos_key_hashes_the_hardware_uuid () =
+  if Sys.getenv_opt "THUMPER_MACHINE" <> None then
+    skip ~reason:"THUMPER_MACHINE is set in the test environment" ();
+  if output_lines "uname" [ "-s" ] <> [ "Darwin" ] then
+    skip ~reason:"the hardware UUID is macOS's" ();
+  let uuid =
+    List.find_map
+      (fun line ->
+        match String.split_on_char '"' line with
+        | [ _; "IOPlatformUUID"; _; uuid; _ ] -> Some uuid
+        | _ -> None)
+      (output_lines "/usr/sbin/ioreg"
+         [ "-rd1"; "-c"; "IOPlatformExpertDevice" ])
+  in
+  let uuid =
+    match uuid with Some u -> u | None -> fail "ioreg reports no UUID"
+  in
+  let cpu =
+    String.trim
+      (String.concat ""
+         (output_lines "/usr/sbin/sysctl" [ "-n"; "machdep.cpu.brand_string" ]))
+  in
+  let key = Env.machine_key () in
+  equal ~msg:"key hashes the UUID" string
+    (Env.fingerprint (String.concat ":" [ uuid; "darwin"; cpu ]))
+    key;
+  is_false ~msg:"key does not hash the hostname"
+    (String.equal key
+       (Env.fingerprint
+          (String.concat ":" [ Unix.gethostname (); "darwin"; cpu ])))
+
 let override_is_used_verbatim () =
   setenv "THUMPER_MACHINE" (Some "ci-runner-01");
   equal string "ci-runner-01" (Env.machine_key ());
@@ -457,6 +500,8 @@ let () =
               equal string expected (Env.fingerprint input));
           test "default key is a stable 16-hex fingerprint"
             default_key_is_a_fingerprint;
+          test "on macOS the key hashes the hardware UUID"
+            macos_key_hashes_the_hardware_uuid;
           test "THUMPER_MACHINE overrides the key verbatim"
             override_is_used_verbatim;
           test "THUMPER_MACHINE rejects the empty string" override_rejects_empty;

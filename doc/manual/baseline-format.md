@@ -48,8 +48,10 @@ degraded. A section is:
 
 - **`KEY`** — the section's identity: 16 lowercase hex digits, or a
   `THUMPER_MACHINE` override (non-empty, over `[A-Za-z0-9._-]`). The
-  derived key is the FNV-1a 64-bit hash of `hostname:os:cpu-model`
-  rendered `%016x`, where `os` is the lowercased uname sysname
+  derived key is the FNV-1a 64-bit hash of `host:os:cpu-model`
+  rendered `%016x`, where `host` is the hardware UUID on macOS (as
+  `gethostuuid(2)` returns it, in uppercase canonical form) and the
+  hostname elsewhere, and `os` is the lowercased uname sysname
   (`darwin`, `linux`) — fully specified, no dependency.
 - **`# host:`** — a human-legible description. Informational only:
   never parsed, never part of the key.
