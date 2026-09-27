@@ -55,6 +55,12 @@ val machine_key : unit -> string
     Raises [Invalid_argument] naming the variable if [THUMPER_MACHINE] is set
     but empty or contains a character outside [[A-Za-z0-9._-]]. *)
 
+val cpu_model : unit -> string
+(** [cpu_model ()] is the platform CPU string of {!machine_key}'s recipe,
+    rendered for humans: ["unknown"] when undetectable, and control characters
+    rendered as spaces, so the string is a single line without tabs. It is the
+    [cpu-model] component of {!host_description}. *)
+
 val host_description : unit -> string
 (** [host_description ()] is the human-legible [# host:] header body:
     [hostname · cpu-model · arch · os], e.g.

@@ -191,6 +191,7 @@ let host_description_shape () =
   match split_sep sep s with
   | [ hostname; cpu; arch; os ] ->
       equal ~msg:"hostname" string (Unix.gethostname ()) hostname;
+      equal ~msg:"cpu is cpu_model" string (Env.cpu_model ()) cpu;
       List.iter
         (fun (msg, field) -> is_true ~msg (String.length field > 0))
         [

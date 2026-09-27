@@ -460,20 +460,8 @@ type render = {
   wrote_corrected : bool;
   rerun_flags : string;
   strict : bool;
+  cpu_model : string;
 }
-
-(* The CPU-model component of a host description ("hostname · cpu · arch ·
-   os") — the NEW header's legible half. *)
-let cpu_model_of host =
-  let sep = " \xc2\xb7 " in
-  let n = String.length host and m = String.length sep in
-  let rec split acc start i =
-    if i + m > n then List.rev (String.sub host start (n - start) :: acc)
-    else if String.equal (String.sub host i m) sep then
-      split (String.sub host start (i - start) :: acc) (i + m) (i + m)
-    else split acc start (i + 1)
-  in
-  match split [] 0 0 with _ :: cpu :: _ -> cpu | _ -> host
 
 let pad_left s w =
   if String.length s >= w then s else String.make (w - String.length s) ' ' ^ s
@@ -776,8 +764,7 @@ let render_check r v =
       | Verdict.No_baseline ->
           header_line ~color ~suite
             (Printf.sprintf " — no baseline for machine %s (%s)"
-               ident.Baseline.machine
-               (cpu_model_of ident.Baseline.host))
+               ident.Baseline.machine r.cpu_model)
       | Verdict.Stale (Verdict.Ocaml_mismatch { section; current }) ->
           let recorded = if section = "" then "(unrecorded)" else section in
           header_line ~color ~suite
@@ -1156,6 +1143,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
           | None -> "")
         ^ String.concat "" (List.map (fun t -> " --tag " ^ shell_arg t) o.tags);
       strict = o.strict;
+      cpu_model = Env.cpu_model ();
     }
   in
   print_string (render_check r verdict);

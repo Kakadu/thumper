@@ -217,7 +217,7 @@ let e2e_env dir =
 
 let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
-    ?(rerun_flags = "") ?(strict = false) () =
+    ?(rerun_flags = "") ?(strict = false) ?(cpu_model = "Test CPU") () =
   {
     Cli.color;
     accept;
@@ -228,6 +228,7 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     wrote_corrected = wrote;
     rerun_flags;
     strict;
+    cpu_model;
   }
 
 (* Parsing *)
@@ -690,7 +691,7 @@ let new_run_renders_proposed_rows_and_the_accept_prompt () =
   expect (Cli.render_check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — no baseline for machine testkey (test-host)
+thumper: digest — no baseline for machine testkey (Test CPU)
 
   alpha   1.00 us  ±0.0%   54 w   proposed
 

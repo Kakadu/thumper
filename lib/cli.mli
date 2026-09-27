@@ -218,6 +218,9 @@ type render = {
           the exe path). *)
   strict : bool;
       (** The run's [--strict], which decides the summary's colour. *)
+  cpu_model : string;
+      (** This host's CPU model ([Env.cpu_model]), which the no-baseline header
+          names beside the machine key. *)
 }
 (** The type for check-report rendering inputs: everything {!render_check} needs
     beyond the verdict, resolved by {!main}. *)

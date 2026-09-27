@@ -122,16 +122,21 @@ let machine_key () =
       let { host; os; cpu_model; _ } = Lazy.force facts in
       fingerprint (String.concat ":" [ host; os; cpu_model ])
 
+(* Host strings are rendered verbatim into single-line output (the
+   baseline's [# host:] header, the report's header): an interior control
+   character in a detected value (however unlikely) must not be able to break
+   the file grammar or the terminal line. *)
+let printable s = String.map (fun c -> if Char.code c < 0x20 then ' ' else c) s
+
+let cpu_model () =
+  match (Lazy.force facts).cpu_model with
+  | "" -> "unknown"
+  | model -> printable model
+
 let host_description () =
-  let { hostname; os; arch; cpu_model } = Lazy.force facts in
+  let { hostname; os; arch; _ } = Lazy.force facts in
   let os = match os with "darwin" -> "macos" | other -> other in
-  let cpu = match cpu_model with "" -> "unknown" | model -> model in
-  (* The description is rendered verbatim into the baseline's single-line
-     [# host:] header: an interior control character in a detected value
-     (however unlikely) must not be able to break the file grammar. *)
-  String.map
-    (fun c -> if Char.code c < 0x20 then ' ' else c)
-    (String.concat " \xc2\xb7 " [ hostname; cpu; arch; os ])
+  printable (String.concat " \xc2\xb7 " [ hostname; cpu_model (); arch; os ])
 
 let ocaml_identity () =
   let profile =
