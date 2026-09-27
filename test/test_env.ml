@@ -84,8 +84,8 @@ let fingerprint_pins =
     ("\xff\xfe\x00\x80", "8fe3ee65389d12b0");
   ]
 
-(* Runs before any THUMPER_MACHINE putenv below (tests run in declaration
-   order); the guard keeps it honest if the suite's environment already sets
+(* The tests below bind THUMPER_MACHINE with [setenv], which the runner undoes
+   when each test ends; the guard skips if the suite's own environment sets
    the override. *)
 let default_key_is_a_fingerprint () =
   if Sys.getenv_opt "THUMPER_MACHINE" <> None then
@@ -95,21 +95,21 @@ let default_key_is_a_fingerprint () =
   equal ~msg:"stable across calls" string key (Env.machine_key ())
 
 let override_is_used_verbatim () =
-  Unix.putenv "THUMPER_MACHINE" "ci-runner-01";
+  setenv "THUMPER_MACHINE" (Some "ci-runner-01");
   equal string "ci-runner-01" (Env.machine_key ());
   (* Not hashed, not normalized: every charset class passes through. *)
-  Unix.putenv "THUMPER_MACHINE" "A9.z_-";
+  setenv "THUMPER_MACHINE" (Some "A9.z_-");
   equal string "A9.z_-" (Env.machine_key ())
 
 let override_rejects_empty () =
-  Unix.putenv "THUMPER_MACHINE" "";
+  setenv "THUMPER_MACHINE" (Some "");
   raises
     (Invalid_argument
        "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])")
     (fun () -> Env.machine_key ())
 
 let override_rejects_bad_charset () =
-  Unix.putenv "THUMPER_MACHINE" "bad key!";
+  setenv "THUMPER_MACHINE" (Some "bad key!");
   raises
     (Invalid_argument
        "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over \
@@ -415,14 +415,14 @@ let lease_missing_directory_is_unusable () =
 
 let lock_dir_env_names_the_directory () =
   let dir = fresh_dir () in
-  Unix.putenv "THUMPER_LOCK_DIR" dir;
+  setenv "THUMPER_LOCK_DIR" (Some dir);
   expect_ok (Env.Lease.with_lease (fun () -> ()));
   is_true ~msg:"lock file created under THUMPER_LOCK_DIR"
     (Sys.file_exists (lock_path dir))
 
 let explicit_dir_wins_over_the_env () =
   let env_dir = fresh_dir () and dir = fresh_dir () in
-  Unix.putenv "THUMPER_LOCK_DIR" env_dir;
+  setenv "THUMPER_LOCK_DIR" (Some env_dir);
   expect_ok (Env.Lease.with_lease ~dir (fun () -> ()));
   is_true ~msg:"lock file created under ~dir" (Sys.file_exists (lock_path dir));
   is_false ~msg:"THUMPER_LOCK_DIR was not consulted"
@@ -465,7 +465,7 @@ let () =
           cases ~name:(Printf.sprintf "%S")
             "THUMPER_MACHINE rejects characters outside [A-Za-z0-9._-]"
             override_charset_table (fun key ->
-              Unix.putenv "THUMPER_MACHINE" key;
+              setenv "THUMPER_MACHINE" (Some key);
               raises_match Exn.invalid_arg (fun () -> Env.machine_key ()));
         ];
       group "identity"

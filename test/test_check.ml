@@ -533,8 +533,7 @@ let lease_failure_surfaces_as_error () =
      reentrant regardless of directory), so [Timeout] needs a second process
      — the CLI cram suite's territory. Here the lock path is a directory:
      opening it can never succeed. *)
-  let dir = Filename.concat scratch_root "unusable" in
-  Unix.mkdir dir 0o700;
+  let dir = temp_dir () in
   Unix.mkdir
     (Filename.concat dir (Printf.sprintf "thumper-%d.lock" (Unix.geteuid ())))
     0o700;
