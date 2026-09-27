@@ -102,7 +102,6 @@ let reason_name = function
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
-  | Stale_section -> "stale_section"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "candidate_unstable"
   | Candidate_drifted -> "candidate_drifted"
@@ -504,7 +503,7 @@ let stale_file () =
 let stale_trial () =
   trial [ (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 100) ]
 
-let stale_section_short_circuits_every_metric () =
+let stale_section_makes_every_row_new () =
   let file = stale_file () in
   let t =
     run_check
@@ -517,10 +516,9 @@ let stale_section_short_circuits_every_metric () =
       equal ~msg:"recorded" string "5.4.0 64-bit release" section;
       equal ~msg:"current" string "5.5.0 64-bit release" current
   | _ -> failf "expected a stale comparison");
-  check_rel ~msg:"sampled short-circuits" t ~case:"a" ~metric:m_wall
-    "inconclusive:stale_section";
-  check_rel ~msg:"exact short-circuits too" t ~case:"a" ~metric:m_alloc
-    "inconclusive:stale_section";
+  check_rel ~msg:"sampled is new" t ~case:"a" ~metric:m_wall "new";
+  check_rel ~msg:"exact is new too" t ~case:"a" ~metric:m_alloc "new";
+  check_overall ~msg:"new rows are not a verdict" t `Pass;
   equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
   equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t)
 
@@ -559,7 +557,7 @@ let unrecorded_compiler_identity_is_never_comparable () =
       equal ~msg:"recorded is empty" string "" recorded;
       equal ~msg:"current" string ident.Baseline.ocaml current
   | _ -> failf "expected a stale comparison");
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:stale_section";
+  check_rel t ~case:"a" ~metric:m_wall "new";
   let p =
     Verdict.judge
       ~identity:{ ident with Baseline.ocaml = "" }
@@ -1456,8 +1454,8 @@ let () =
         ];
       group "staleness"
         [
-          test "a compiler mismatch short-circuits every metric"
-            stale_section_short_circuits_every_metric;
+          test "a compiler mismatch makes every row new"
+            stale_section_makes_every_row_new;
           test "the candidate proposes a fresh section"
             stale_candidate_proposes_a_fresh_section;
           test "an unrecorded compiler identity is never comparable"

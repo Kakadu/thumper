@@ -12,7 +12,6 @@ type reason =
   | Environment
   | Unconfirmed
   | Exactness_lost
-  | Stale_section
   | Batch_drifted
   | Candidate_unstable
   | Candidate_drifted
@@ -385,7 +384,11 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
     ~ids:(List.map (fun (c, _) -> Bench.id c) cases);
   let section = Baseline.section file identity.Baseline.machine in
   let comparison = classify_comparison identity section in
-  let stale = match comparison with Stale _ -> true | _ -> false in
+  (* Only a current section is compared; a missing or stale one makes every
+     row NEW, and the candidate re-records the section wholesale. *)
+  let comparable =
+    match comparison with Compared -> section | No_baseline | Stale _ -> None
+  in
   let p_cases =
     List.map
       (fun (bench_case, trial) ->
@@ -400,12 +403,10 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
             (fun (metric, measurement) ->
               let budget = budget_for effective metric in
               let state =
-                if stale then Settled (Judged (Inconclusive Stale_section))
-                else
-                  match section with
-                  | None -> Settled New_row
-                  | Some s ->
-                      judge_metric ~gate s ~id ~trial metric measurement budget
+                match comparable with
+                | None -> Settled New_row
+                | Some s ->
+                    judge_metric ~gate s ~id ~trial metric measurement budget
               in
               (metric, state, budget))
             measured
@@ -628,7 +629,6 @@ let wire_reason = function
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
-  | Stale_section -> "stale_section"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "unstable"
   | Candidate_drifted -> "drifted"

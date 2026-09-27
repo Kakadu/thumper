@@ -146,7 +146,6 @@ and the reason names why and what to do. Exit 0 (1 under `--strict`).
 | `baseline_unstable` | the *stored* samples have severe outliers | re-baseline with `bless` |
 | `exactness_lost` | allocation was nondeterministic this run | fix the nondeterminism |
 | `batch_drifted` | the case's speed changed enough to need recalibration | `bless` to re-baseline it |
-| `stale_section` | the compiler changed | re-baseline by promoting |
 
 The report names each case's reason inline, in its verdict cell
 (`inconclusive: unconfirmed`), and the summary line counts them.

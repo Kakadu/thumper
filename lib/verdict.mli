@@ -59,8 +59,6 @@ type reason =
       (** A mixed exact/sampled comparison (either side), or a zero-tolerance
           relative budget on a downgraded exact-capable metric — never a rank
           test at r = 0. *)
-  | Stale_section
-      (** Staleness short-circuit rendering; see {!type:staleness}. *)
   | Batch_drifted
       (** The batch size recalibrated and the measured shift is bias-comparable,
           [|estimate| <= 2e]; for exact rows, the case's frozen k moved
@@ -111,7 +109,9 @@ type relation =
   | Inconclusive of reason
 
 type metric_verdict =
-  | New_row  (** No baseline row: the candidate proposes, never judges. *)
+  | New_row
+      (** No comparable baseline row — none in the section, or no current
+          section: the candidate proposes, never judges. *)
   | Judged of relation
 
 (** {1:reports Reports} *)
@@ -142,9 +142,8 @@ type staleness =
 type comparison =
   | No_baseline  (** No section for this machine: whole section is NEW. *)
   | Stale of staleness
-      (** Refuse to compare; propose a fresh section; exit 0. Every
-          per-metric judgment in the section short-circuits to
-          [Inconclusive Stale_section]. *)
+      (** Refuse to compare; propose a fresh section; exit 0. Every measured
+          metric is a [New_row], as with [No_baseline]. *)
   | Compared
 
 type t
@@ -187,9 +186,9 @@ val judge :
     Under a [Loaded] [gate], every sampled-metric comparison that would need a
     rank test is [Inconclusive Environment] and nothing queues for confirmation;
     exact metrics still compare and can still fail. Cells that never reach a
-    rank test keep their own reason under load — [Exactness_lost],
-    [Stale_section]: those defects are properties of the evidence, not the host,
-    and their remedies do not involve waiting for quiet.
+    rank test keep their own reason under load — [Exactness_lost] is a property
+    of the evidence, not the host, and its remedy does not involve waiting for
+    quiet.
 
     Raises [Invalid_argument] if two cases share an id. *)
 

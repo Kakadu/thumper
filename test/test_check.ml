@@ -145,7 +145,6 @@ let reason_name = function
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
-  | Stale_section -> "stale_section"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "candidate_unstable"
   | Candidate_drifted -> "candidate_drifted"

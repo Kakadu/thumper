@@ -344,7 +344,6 @@ let reason_short = function
   | Verdict.Environment -> "environment"
   | Verdict.Unconfirmed -> "unconfirmed"
   | Verdict.Exactness_lost -> "exactness lost"
-  | Verdict.Stale_section -> "stale section"
   | Verdict.Batch_drifted -> "batch drifted"
   | Verdict.Candidate_unstable -> "unstable"
   | Verdict.Candidate_drifted -> "drifted"
