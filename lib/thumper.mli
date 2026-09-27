@@ -502,9 +502,6 @@ module Baseline : sig
   (** The type for parsed baseline files: an optional suite header plus
       per-machine sections. Values are immutable. *)
 
-  type section
-  (** The type for one machine's identity header and evidence rows. *)
-
   (** The type for read and write errors. The three cases are decided where the
       failing system call is: a failure to read is never conflated with absence.
   *)
@@ -570,11 +567,8 @@ module Baseline : sig
       empty-file baseline, which has no header. *)
 
   val machines : t -> string list
-  (** [machines t] is the section keys, in ascending order. *)
-
-  val section : t -> string -> section option
-  (** [section t key] is [key]'s section, if any — [section t (machine_key ())]
-      is the section {!Check.run} judges against. *)
+  (** [machines t] is the section keys, in ascending order. The section keyed
+      [machine_key ()] is the one {!Check.run} judges against. *)
 end
 
 (** {1:verdicts Verdicts} *)

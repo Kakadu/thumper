@@ -242,7 +242,8 @@ let gate_flow_against_synthetic_file () =
     (Thumper.Baseline.suite file);
   let key = Thumper.Baseline.machine_key () in
   equal ~msg:"THUMPER_MACHINE override" string machine key;
-  is_none ~msg:"no section for this machine" (Thumper.Baseline.section file key);
+  is_false ~msg:"no section for this machine"
+    (List.mem key (Thumper.Baseline.machines file));
   let v =
     Thumper.Check.run ~config:Thumper.Config.quick
       ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
