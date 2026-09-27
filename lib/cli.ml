@@ -458,7 +458,6 @@ type render = {
   baseline_path : string;
   corrected_path : string;
   wrote_corrected : bool;
-  gate : Env.gate;
   rerun_flags : string;
 }
 
@@ -754,6 +753,10 @@ let render_check r v =
   let ident = Verdict.identity v in
   let comparison = Verdict.comparison v in
   let suite = Verdict.suite v in
+  (* The report's load message agrees with judgment: the gate the verdict
+     was decided under, never a pre-lease reading of somebody else's load
+     (the lease wait can be minutes long). *)
+  let gate = Verdict.gate v in
   let acceptance =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> true
@@ -781,7 +784,7 @@ let render_check r v =
                " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
                ident.Baseline.machine recorded current)
     in
-    match (comparison, r.gate) with
+    match (comparison, gate) with
     | Verdict.Compared, Env.Loaded { load; cores } ->
         [
           head;
@@ -844,7 +847,7 @@ let render_check r v =
       else [ Printf.sprintf "  ratchet the baseline:  %s" r.accept ]
     in
     let load =
-      match (acceptance && r.wrote_corrected, r.gate) with
+      match (acceptance && r.wrote_corrected, gate) with
       | true, Env.Loaded { load; cores } ->
           [
             styled ~color `Yellow
@@ -1131,10 +1134,6 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       baseline_path;
       corrected_path;
       wrote_corrected = Result.value written ~default:false;
-      (* The report's load message must agree with judgment: the gate the
-         verdict was decided under, never a pre-lease reading of somebody
-         else's load (the lease wait can be minutes long). *)
-      gate = Verdict.gate verdict;
       (* The rerun hint reproduces the invocation, not just the selection: an
          explicit --baseline and every --tag are carried (getting-started's
          "the exact command"); the default baseline re-resolves identically

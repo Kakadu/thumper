@@ -208,11 +208,6 @@ type render = {
   baseline_path : string;  (** The resolved baseline path, for the header. *)
   corrected_path : string;  (** The candidate path, for the prompts. *)
   wrote_corrected : bool;  (** Whether the candidate was written. *)
-  gate : Env.gate;
-      (** The gate the verdict was judged under — for [check], [Verdict.gate]
-          (the start gate, or the re-sample that degraded a pending
-          confirmation), so the run's one load message never contradicts the
-          cells. *)
   rerun_flags : string;
       (** Rendered flags the rerun hint must reproduce beyond selection — an
           explicit [--baseline] and every [--tag], shell-quoted, each with a
@@ -231,8 +226,9 @@ val render_check : render -> Verdict.t -> string
     - {b Header.} [thumper: <suite> — <N> cases vs <baseline> [<machine>]]
       (suite bold, the rest faint); the no-baseline form names the machine key
       and CPU model, the stale form the recorded and current compiler
-      identities. On a loaded {e compared} run one yellow warning line sits
-      directly under the header
+      identities. When the verdict was decided under a loaded gate
+      ([Verdict.gate], so the message never contradicts the cells), a
+      {e compared} run has one yellow warning line directly under the header
       ([warning: load L on C cores — timing verdicts degraded]); acceptance
       states (NEW, stale) put their load message in the actions block instead —
       one load message per run, never two.

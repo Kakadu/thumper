@@ -217,7 +217,7 @@ let e2e_env dir =
 
 let ctx ?(color = false) ?(accept = "dune promote") ?(exe = "bench.exe")
     ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
-    ?(gate = Env.Quiet) ?(rerun_flags = "") () =
+    ?(rerun_flags = "") () =
   {
     Cli.color;
     accept;
@@ -226,7 +226,6 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = "bench.exe")
     baseline_path = baseline;
     corrected_path = baseline ^ ".corrected";
     wrote_corrected = wrote;
-    gate;
     rerun_flags;
   }
 
@@ -707,10 +706,10 @@ let loaded_run_warns_under_the_header () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
   let v =
-    verdict_of ~gate:loaded ~file
+    verdict_of ~gate:loaded ~decide_gate:loaded ~file
       (bcase "alpha", trial (ties 5 2e-6))
   in
-  expect (Cli.render_check (ctx ~gate:loaded ()) v)
+  expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
@@ -724,9 +723,12 @@ warning: load 7.9 on 8 cores — timing verdicts degraded
 let loaded_new_run_warns_beside_the_prompt () =
   (* Acceptance states put the run's one load message in the actions block
      instead — never two load messages. *)
-  let v = new_fixture () in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
-  let out = Cli.render_check (ctx ~wrote:true ~gate:loaded ()) v in
+  let v =
+    verdict_of ~gate:loaded ~decide_gate:loaded
+      (bcase "alpha", trial (ties 5 1e-6))
+  in
+  let out = Cli.render_check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"prompt kept" out "accept:  dune promote";
   assert_contains ~msg:"load message beside the prompt" out
     "measured under load (7.9/8) — prefer a quiet host before accepting";
