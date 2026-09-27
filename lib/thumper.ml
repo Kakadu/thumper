@@ -48,6 +48,4 @@ module Check = Check
 let measure ?config ?filter benches = Check.measure ?config ?filter benches
 
 let run ?baseline ?config ?budgets ?(argv = Sys.argv) name benches =
-  match Cli.main ?baseline ?config ?budgets ~argv ~name benches with
-  | 0 -> ()
-  | code -> exit code
+  Cli.main ?baseline ?config ?budgets ~argv ~name benches

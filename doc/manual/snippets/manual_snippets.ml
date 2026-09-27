@@ -5,17 +5,19 @@
 
 (* Compiled mirrors of every OCaml snippet in doc/manual/ — a snippet that
    rots breaks the build. Build-only: nothing links or runs this library, so
-   no snippet ever measures. The chapters' toplevel [let () = Thumper.run ...]
-   entry points are mirrored as [main] functions. *)
+   no snippet ever measures. The chapters' toplevel
+   [let () = exit (Thumper.run ...)] entry points are mirrored as [main]
+   functions. *)
 
 (* README.md — the thirty-second example (input adapted). *)
 module Index = struct
   let input64 = String.make 64 '\xa5'
 
   let main () =
-    Thumper.run "digest"
-      ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-      [ Thumper.bench "string-64" (fun () -> Digest.string input64) ]
+    exit
+      (Thumper.run "digest"
+         ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+         [ Thumper.bench "string-64" (fun () -> Digest.string input64) ])
 end
 
 (* getting-started.md — the first suite. *)
@@ -24,20 +26,21 @@ module Getting_started = struct
   let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2)
 
   let main () =
-    Thumper.run "digest"
-      ~budgets:
-        [
-          Thumper.Budget.no_slower_than 0.05;
-          Thumper.Budget.no_more_alloc_than 0.0;
-        ]
-      [
-        Thumper.group "sha256"
-          [ Thumper.bench "string-64" (fun () -> Digest.string input64) ];
-        Thumper.group "fib"
-          (List.map
-             (fun n -> Thumper.bench (Int.to_string n) (fun () -> fib n))
-             [ 10; 20 ]);
-      ]
+    exit
+      (Thumper.run "digest"
+         ~budgets:
+           [
+             Thumper.Budget.no_slower_than 0.05;
+             Thumper.Budget.no_more_alloc_than 0.0;
+           ]
+         [
+           Thumper.group "sha256"
+             [ Thumper.bench "string-64" (fun () -> Digest.string input64) ];
+           Thumper.group "fib"
+             (List.map
+                (fun n -> Thumper.bench (Int.to_string n) (fun () -> fib n))
+                [ 10; 20 ]);
+         ])
 end
 
 (* checking.md — the budget list. *)

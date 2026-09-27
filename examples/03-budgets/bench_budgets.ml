@@ -44,35 +44,36 @@ let raw = String.make 64 '\xa5'
 let hex = hex_encode raw
 
 let () =
-  Thumper.run
-    "budgets" (* Suite level: wall-clock time may regress by at most 5%. *)
-    ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-    [
-      Thumper.group
-        "codec"
-        (* Group level: the exact-allocation gate. [no_more_alloc_than 0.0]
-           pins allocation growth — both codec cases allocate deterministic
-           amounts, the per-run probe proves the count exact, and an exact
-           integer that grew by even one word is a confirmed failure, no
-           statistics needed. When exactness is lost (the workload became
-           nondeterministic), the comparison degrades to inconclusive rather
-           than running a rank test at zero budget. *)
-        ~budgets:[ Thumper.Budget.no_more_alloc_than 0.0 ]
-        [
-          Thumper.bench "hex-encode" (fun () -> hex_encode raw);
-          (* Case level: decode tolerates 10% on wall_time. The merge is per
-             metric, so the group's allocation pin still applies here. *)
-          Thumper.bench "hex-decode"
-            ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
-            (fun () -> hex_decode hex);
-        ];
-      (* An absolute cap, in the metric's own units (words): no baseline is
-         consulted, and only proven exact evidence gates — a statistical
-         estimate crossing an absolute line is not an earned verdict.
-         [Array.make 63 0] allocates 64 words, well under the cap; grow it
-         past 256 and check fails on this budget alone. *)
-      Thumper.bench "scratch-table"
-        ~budgets:
-          [ Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words 256. ]
-        (fun () -> Array.make 63 0);
-    ]
+  exit
+    (Thumper.run
+       "budgets" (* Suite level: wall-clock time may regress by at most 5%. *)
+       ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+       [
+         Thumper.group
+           "codec"
+           (* Group level: the exact-allocation gate. [no_more_alloc_than 0.0]
+              pins allocation growth — both codec cases allocate deterministic
+              amounts, the per-run probe proves the count exact, and an exact
+              integer that grew by even one word is a confirmed failure, no
+              statistics needed. When exactness is lost (the workload became
+              nondeterministic), the comparison degrades to inconclusive rather
+              than running a rank test at zero budget. *)
+           ~budgets:[ Thumper.Budget.no_more_alloc_than 0.0 ]
+           [
+             Thumper.bench "hex-encode" (fun () -> hex_encode raw);
+             (* Case level: decode tolerates 10% on wall_time. The merge is per
+                metric, so the group's allocation pin still applies here. *)
+             Thumper.bench "hex-decode"
+               ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
+               (fun () -> hex_decode hex);
+           ];
+         (* An absolute cap, in the metric's own units (words): no baseline is
+            consulted, and only proven exact evidence gates — a statistical
+            estimate crossing an absolute line is not an earned verdict.
+            [Array.make 63 0] allocates 64 words, well under the cap; grow it
+            past 256 and check fails on this budget alone. *)
+         Thumper.bench "scratch-table"
+           ~budgets:
+             [ Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words 256. ]
+           (fun () -> Array.make 63 0);
+       ])

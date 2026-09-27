@@ -29,26 +29,27 @@ let fib n =
   go 0 1 n
 
 let () =
-  Thumper.run
-    "gate"
-    (* Suite-level budgets, the contract the gate enforces: wall-clock time
-       may regress by at most 5%, and allocation — an exact per-call integer
-       when the probe proves it — may not grow at all. Example 03 is about
-       budgets in depth. *)
-    ~budgets:
-      [
-        Thumper.Budget.no_slower_than 0.05;
-        Thumper.Budget.no_more_alloc_than 0.0;
-      ]
-    [
-      Thumper.group "md5"
-        [ Thumper.bench "string-64" (fun () -> Digest.string input64) ];
-      (* A parameterized family is just [List.map]. [black_box] hides the
-         constant from the compiler so the calls cannot be folded away. *)
-      Thumper.group "fib"
-        (List.map
-           (fun n ->
-             Thumper.bench (Int.to_string n) (fun () ->
-                 fib (Thumper.black_box n)))
-           [ 10; 20 ]);
-    ]
+  exit
+    (Thumper.run
+       "gate"
+       (* Suite-level budgets, the contract the gate enforces: wall-clock time
+          may regress by at most 5%, and allocation — an exact per-call integer
+          when the probe proves it — may not grow at all. Example 03 is about
+          budgets in depth. *)
+       ~budgets:
+         [
+           Thumper.Budget.no_slower_than 0.05;
+           Thumper.Budget.no_more_alloc_than 0.0;
+         ]
+       [
+         Thumper.group "md5"
+           [ Thumper.bench "string-64" (fun () -> Digest.string input64) ];
+         (* A parameterized family is just [List.map]. [black_box] hides the
+            constant from the compiler so the calls cannot be folded away. *)
+         Thumper.group "fib"
+           (List.map
+              (fun n ->
+                Thumper.bench (Int.to_string n) (fun () ->
+                    fib (Thumper.black_box n)))
+              [ 10; 20 ]);
+       ])

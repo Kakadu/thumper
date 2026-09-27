@@ -10,12 +10,13 @@
 
     {[
     let () =
-      Thumper.run "digest"
-        ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-        [
-          Thumper.group "sha256"
-            [ Thumper.bench "string-64" (fun () -> Digest.string input) ];
-        ]
+      exit
+        (Thumper.run "digest"
+           ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+           [
+             Thumper.group "sha256"
+               [ Thumper.bench "string-64" (fun () -> Digest.string input) ];
+           ])
     ]}
 
     One dune rule next to the executable:
@@ -697,11 +698,12 @@ val run :
   ?argv:string array ->
   string ->
   bench list ->
-  unit
-(** [run name benches] is the CLI: parses [argv] (default [Sys.argv]),
-    executes the selected subcommand, prints the report, writes the artifacts it
-    owns, and returns when the exit code is [0]; any other outcome exits the
-    process.
+  int
+(** [run name benches] is the CLI: parses [argv] (default [Sys.argv]), executes
+    the selected subcommand, prints the report, writes the artifacts it owns,
+    and is the exit code listed under {e Exit codes} below. It never exits the
+    process: a benchmark executable ends with
+    [let () = exit (Thumper.run name benches)].
 
     {b Grammar} — everything else is a usage error:
 
@@ -771,11 +773,21 @@ val run :
     [dune exec] — which sets [INSIDE_DUNE] but keeps the shell's cwd, staging
     nothing — gets the [mv CORRECTED BASELINE] hint.
 
-    Exit codes: [0] pass, NEW, inconclusive, and both of [list] and [bless]; [1]
-    confirmed regression or exact-metric budget violation (plus inconclusive,
-    NEW, and stale under [--strict]); [2] usage error, empty selection,
-    unreadable or corrupt baseline (never treated as absent), a baseline
-    naming another suite, lease timeout, or worker failure.
+    Exit codes:
+    - [0]: [list], [bless], [-h] or [-V] succeeded, or [check] passed: its
+      {!Verdict.exit_code} is [0] (pass, NEW, or inconclusive).
+    - [1]: [check] failed: its {!Verdict.exit_code} with [--strict] as [strict]
+      is [1] (a confirmed regression or an exact-metric budget violation; under
+      [--strict], also inconclusive, NEW, and stale).
+    - [2]: a usage error, or an operational stop: an invalid suite (duplicate
+      case ids, or a budget on a metric its scope does not collect); an empty
+      selection; [bless] with a malformed [THUMPER_MACHINE]; [bless] on a loaded
+      host without [--force]; a lease that timed out or whose lock file is
+      unusable; a worker failure (a dead or hung worker, a raising closure,
+      setup, or teardown, or a blown deadline); a baseline that is unreadable,
+      corrupt (never treated as absent), or names another suite; or an artifact
+      ([<baseline>.corrected] or the [--json] document) that cannot be removed
+      at startup or written.
 
     {b The baseline path.} [--baseline PATH] always wins; an explicit [baseline]
     argument behaves the same. The default — ["<name>.thumper"] — resolves next

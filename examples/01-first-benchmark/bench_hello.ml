@@ -25,12 +25,14 @@
 let input = List.init 1_000 Fun.id
 
 let () =
-  Thumper.run "hello"
-    [
-      (* [bench name f] is one case: each timed batch of size [k] calls [f]
-         [k] times. Results are sunk through [Sys.opaque_identity] by the
-         harness, so [f] is never dead code. The name doubles as the case's
-         stable id ("list-rev"), which baselines and [-f] selection key on. *)
-      Thumper.bench "list-rev" (fun () -> List.rev input);
-      Thumper.bench "list-sort" (fun () -> List.sort compare input);
-    ]
+  exit
+    (Thumper.run "hello"
+       [
+         (* [bench name f] is one case: each timed batch of size [k] calls [f]
+            [k] times. Results are sunk through [Sys.opaque_identity] by the
+            harness, so [f] is never dead code. The name doubles as the case's
+            stable id ("list-rev"), which baselines and [-f] selection key
+            on. *)
+         Thumper.bench "list-rev" (fun () -> List.rev input);
+         Thumper.bench "list-sort" (fun () -> List.sort compare input);
+       ])

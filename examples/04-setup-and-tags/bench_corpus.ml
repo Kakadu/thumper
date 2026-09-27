@@ -38,20 +38,21 @@ let scan_case kib =
     (fun corpus -> count_byte '\x2a' corpus)
 
 let () =
-  Thumper.run "corpus"
-    [
-      Thumper.group "scan" (List.map scan_case [ 4; 64; 256 ]);
-      (* The group tags every child: these cases carry "io", and
-         [--tag io] selects exactly them. *)
-      Thumper.group "io" ~tags:[ "io" ]
-        [
-          Thumper.bench_with_setup "read-4KiB"
-            ~setup:(fun () ->
-              let path = Filename.temp_file "thumper_corpus" ".dat" in
-              Out_channel.with_open_bin path (fun oc ->
-                  Out_channel.output_string oc (make_corpus 4096));
-              path)
-            ~teardown:Sys.remove
-            (fun path -> In_channel.with_open_bin path In_channel.input_all);
-        ];
-    ]
+  exit
+    (Thumper.run "corpus"
+       [
+         Thumper.group "scan" (List.map scan_case [ 4; 64; 256 ]);
+         (* The group tags every child: these cases carry "io", and
+            [--tag io] selects exactly them. *)
+         Thumper.group "io" ~tags:[ "io" ]
+           [
+             Thumper.bench_with_setup "read-4KiB"
+               ~setup:(fun () ->
+                 let path = Filename.temp_file "thumper_corpus" ".dat" in
+                 Out_channel.with_open_bin path (fun oc ->
+                     Out_channel.output_string oc (make_corpus 4096));
+                 path)
+               ~teardown:Sys.remove
+               (fun path -> In_channel.with_open_bin path In_channel.input_all);
+           ];
+       ])

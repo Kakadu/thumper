@@ -14,9 +14,10 @@ the workflows. Thirty seconds of it:
 
 ```ocaml
 let () =
-  Thumper.run "digest"
-    ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-    [ Thumper.bench "string-64" (fun () -> Digest.string input64) ]
+  exit
+    (Thumper.run "digest"
+       ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+       [ Thumper.bench "string-64" (fun () -> Digest.string input64) ])
 ```
 
 ```lisp

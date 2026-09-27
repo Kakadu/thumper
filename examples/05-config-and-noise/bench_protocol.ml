@@ -36,24 +36,27 @@
 let data = Array.init 100_000 (fun i -> i * 2_654_435_761 land 0xffff)
 
 let () =
-  Thumper.run
-    "protocol"
-    (* 30 batches tighten the intervals over the default 20; the deadline
-       caps one case's WHOLE measurement — raise it for genuinely slow
-       cases rather than letting a hung case wedge the run (it fails
-       operationally, exit 2, instead of stalling). [metrics] opts into
-       collection beyond the default wall_time + alloc_words pair. *)
-    ~config:
-      Thumper.Config.(
-        default |> samples 30 |> deadline 30.
-        |> metrics Thumper.Metric.[ wall_time; alloc_words; minor_collections ])
-    [
-      (* A millisecond-scale case: each call sorts a fresh 100k-element
-         copy, so one call already exceeds the 5 ms batch floor and a batch
-         is a single call. *)
-      Thumper.bench "sort-100k" (fun () -> Array.sort compare (Array.copy data));
-      (* A much faster case in the same suite (~200 us per call): calibration
-         doubles the batch size until one batch meets the floor, so the clock
-         read amortizes to nothing here too. *)
-      Thumper.bench "sum-100k" (fun () -> Array.fold_left ( + ) 0 data);
-    ]
+  exit
+    (Thumper.run
+       "protocol"
+       (* 30 batches tighten the intervals over the default 20; the deadline
+          caps one case's WHOLE measurement — raise it for genuinely slow
+          cases rather than letting a hung case wedge the run (it fails
+          operationally, exit 2, instead of stalling). [metrics] opts into
+          collection beyond the default wall_time + alloc_words pair. *)
+       ~config:
+         Thumper.Config.(
+           default |> samples 30 |> deadline 30.
+           |> metrics
+                Thumper.Metric.[ wall_time; alloc_words; minor_collections ])
+       [
+         (* A millisecond-scale case: each call sorts a fresh 100k-element
+            copy, so one call already exceeds the 5 ms batch floor and a batch
+            is a single call. *)
+         Thumper.bench "sort-100k" (fun () ->
+             Array.sort compare (Array.copy data));
+         (* A much faster case in the same suite (~200 us per call): calibration
+            doubles the batch size until one batch meets the floor, so the clock
+            read amortizes to nothing here too. *)
+         Thumper.bench "sum-100k" (fun () -> Array.fold_left ( + ) 0 data);
+       ])

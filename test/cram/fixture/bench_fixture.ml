@@ -122,23 +122,27 @@ let uncollected =
   | _ -> []
 
 let () =
-  Thumper.run "fixture" ~config
-    ~budgets:
-      [
-        Thumper.Budget.no_slower_than 0.05;
-        Thumper.Budget.no_more_alloc_than 0.0;
-      ]
-    ([
-       Thumper.group "busy" ~tags:[ "cpu" ]
+  exit
+    (Thumper.run "fixture" ~config
+       ~budgets:
          [
-           Thumper.bench "spin" (fun () ->
-               spin 0 (Thumper.black_box spin_iters));
-           Thumper.bench "half" ~tags:[ "lab" ] (fun () ->
-               spin 0 (Thumper.black_box half_iters));
-         ];
-       Thumper.group "alloc" ~tags:[ "lab" ] [ Thumper.bench "list" alloc_case ];
-       Thumper.group "err"
-         [ Thumper.bench "raise" raise_case; Thumper.bench "kill9" kill9_case ];
-       Thumper.group "nondet" [ Thumper.bench "flip" flip_case ];
-     ]
-    @ uncollected)
+           Thumper.Budget.no_slower_than 0.05;
+           Thumper.Budget.no_more_alloc_than 0.0;
+         ]
+       ([
+          Thumper.group "busy" ~tags:[ "cpu" ]
+            [
+              Thumper.bench "spin" (fun () ->
+                  spin 0 (Thumper.black_box spin_iters));
+              Thumper.bench "half" ~tags:[ "lab" ] (fun () ->
+                  spin 0 (Thumper.black_box half_iters));
+            ];
+          Thumper.group "alloc" ~tags:[ "lab" ]
+            [ Thumper.bench "list" alloc_case ];
+          Thumper.group "err"
+            [
+              Thumper.bench "raise" raise_case; Thumper.bench "kill9" kill9_case;
+            ];
+          Thumper.group "nondet" [ Thumper.bench "flip" flip_case ];
+        ]
+       @ uncollected))

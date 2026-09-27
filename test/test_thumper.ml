@@ -345,9 +345,12 @@ module Gate_example : sig end = struct
   (* The landing example ({!Thumper}'s module doc): pins [run]'s labels. *)
   let _landing_example () =
     let input = String.make 64 'x' in
-    Thumper.run "digest"
-      ~budgets:[ Budget.no_slower_than 0.05 ]
-      [ group "sha256" [ bench "string-64" (fun () -> Digest.string input) ] ]
+    exit
+      (Thumper.run "digest"
+         ~budgets:[ Budget.no_slower_than 0.05 ]
+         [
+           group "sha256" [ bench "string-64" (fun () -> Digest.string input) ];
+         ])
 end
 
 (* Deleted v1 surface — compile-only
