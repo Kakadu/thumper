@@ -29,7 +29,7 @@
 
     Parsing is strict: rows sort by (id, metric), sections by machine key,
     layout is canonical (one blank line before each section and between a
-    section's header comments and its rows). A missing file reads as {!Absent} —
+    section's header comments and its rows). A missing file reads as [None] —
     the ordinary first-run state — while an unreadable or corrupt file is always
     its own {{!type:error}error}, never conflated with absence. The empty
     (zero-byte) file is the valid zero-section baseline.
@@ -63,11 +63,6 @@ type error =
   | Io of string
       (** The file exists but could not be read, or could not be written. Never
           treated as an absent file — exit 2 at the CLI. *)
-  | Absent
-      (** No file exists at the path — the ordinary first-run state. Reported
-          only by {!read}; what absence means (the NEW-baseline flow) is the
-          caller's policy. An unreadable or corrupt file is never reported as
-          [Absent]. *)
 
 exception Error of error
 
@@ -93,16 +88,17 @@ val valid_segment : string -> bool
 
 (** {1:reading Reading} *)
 
-val read : string -> (t, error) result
-(** [read path] is the baseline stored at [path]. [Error Absent] if no file
-    exists at [path]; [Error (Io _)] if it exists but cannot be read;
-    [Error (Corrupt _)] if it does not parse as format v1. The three cases are
-    decided here, where the failing system call is — a failure to read is never
-    conflated with absence. *)
+val read : string -> (t option, error) result
+(** [read path] is the baseline stored at [path]: [Ok None] if no file exists at
+    [path] (the ordinary first-run state; what absence means, the NEW-baseline
+    flow, is the caller's policy); [Error (Io _)] if it exists but cannot be
+    read; [Error (Corrupt _)] if it does not parse as format v1. The three cases
+    are decided here, where the failing system call is — a failure to read is
+    never conflated with absence. *)
 
-val read_exn : string -> t
-(** [read_exn path] is [read path]. Raises {!Error}, including on an absent
-    file. *)
+val read_exn : string -> t option
+(** [read_exn path] is [read path]. Raises {!Error} if the file exists but
+    cannot be read or parsed; an absent file is [None]. *)
 
 val of_string : string -> (t, error) result
 (** [of_string s] parses [s] strictly as a format-v1 file. [""] is the valid

@@ -237,7 +237,7 @@ let first_batch_k text =
 
 let gate_flow_against_synthetic_file () =
   with_synthetic_file @@ fun path ->
-  let file = Thumper.Baseline.read_exn path in
+  let file = Option.get (Thumper.Baseline.read_exn path) in
   equal ~msg:"suite header" (option string) (Some "facade")
     (Thumper.Baseline.suite file);
   let key = Thumper.Baseline.machine_key () in
@@ -267,8 +267,8 @@ let gate_flow_against_synthetic_file () =
       let out = path ^ ".corrected" in
       Thumper.Baseline.write out corrected;
       (match Thumper.Baseline.read out with
-      | Error _ -> fail "the written candidate must re-read"
-      | Ok f ->
+      | Error _ | Ok None -> fail "the written candidate must re-read"
+      | Ok (Some f) ->
           equal ~msg:"sections" (list string) [ "otherkey"; machine ]
             (Thumper.Baseline.machines f));
       let text = In_channel.with_open_bin out In_channel.input_all in
@@ -285,9 +285,9 @@ let gate_flow_against_synthetic_file () =
 
 let read_distinguishes_absent () =
   match Thumper.Baseline.read "/nonexistent/thumper/facade.thumper" with
-  | Error Thumper.Baseline.Absent -> is_true true
-  | Error e -> failf "expected Absent, got: %a" Thumper.Baseline.pp_error e
-  | Ok _ -> fail "expected an error on an absent file"
+  | Ok None -> ()
+  | Error e -> failf "expected Ok None, got: %a" Thumper.Baseline.pp_error e
+  | Ok (Some _) -> fail "read a baseline from an absent file"
 
 let candidate_over_headerless_file_needs_a_name () =
   (* [Check.run]'s [name] defaults to [""]: a fresh candidate over the
@@ -297,7 +297,7 @@ let candidate_over_headerless_file_needs_a_name () =
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
     (fun () ->
-      let file = Thumper.Baseline.read_exn path in
+      let file = Option.get (Thumper.Baseline.read_exn path) in
       is_none ~msg:"empty file has no suite header"
         (Thumper.Baseline.suite file);
       let v =
@@ -330,7 +330,9 @@ module Gate_example : sig end = struct
     (* A CI gate, as a program. *)
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
-      let v = Check.run ~budgets ~filter:(`Tag "lab") ~baseline ~name:"nx" suite in
+      let v =
+        Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite
+      in
       (match Verdict.candidate v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());

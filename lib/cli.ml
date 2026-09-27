@@ -1018,14 +1018,14 @@ let with_status f =
 let machine_key () =
   try Env.machine_key () with Invalid_argument msg -> fail2 "%s" msg
 
-(* [Absent] is the ordinary first-run state: the empty-file baseline. Io and
+(* An absent file is the ordinary first-run state: the empty-file baseline. Io and
    Corrupt are exit 2, never treated as absent. A file whose
    header names another suite is refused the same way cross-machine
    comparison is: judging against the wrong ruler must be loud, not a page
    of NEW proposals. *)
 let read_baseline ~suite path =
   match Baseline.read path with
-  | Ok f -> (
+  | Ok (Some f) -> (
       match Baseline.suite f with
       | Some s when not (String.equal s suite) ->
           fail2
@@ -1034,7 +1034,7 @@ let read_baseline ~suite path =
              suite was renamed"
             path s suite
       | _ -> f)
-  | Error Baseline.Absent -> (
+  | Ok None -> (
       match Baseline.of_string "" with Ok f -> f | Error _ -> assert false)
   | Error e -> fail2 "%s: %s" path (pp_str Baseline.pp_error e)
 

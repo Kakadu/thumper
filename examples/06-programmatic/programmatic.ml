@@ -78,7 +78,7 @@ let () =
      corrected candidate iff there is one, and let JSON and exit code speak
      to the surrounding automation — plus the cleanup a demo needs. *)
   let baseline = Baseline.read_exn path in
-  let v2 = Check.run ~budgets ~baseline ~name:"programmatic" suite in
+  let v2 = Check.run ~budgets ?baseline ~name:"programmatic" suite in
   let corrected = path ^ ".corrected" in
   (match Verdict.candidate v2 with
   | Some f -> Baseline.write corrected f (* a real gate keeps this for review *)

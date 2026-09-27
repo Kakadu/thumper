@@ -93,7 +93,7 @@ let spec_path = "fixtures/spec_sample.thumper"
 let spec_machine = "9f3a1c2e8b4d6a07"
 
 let spec_sample_parses () =
-  let t = Baseline.read_exn spec_path in
+  let t = Option.get (Baseline.read_exn spec_path) in
   equal ~msg:"suite" (option string) (Some "digest") (Baseline.suite t);
   equal ~msg:"machines" (list string) [ spec_machine ] (Baseline.machines t);
   let sec = Option.get (Baseline.section t spec_machine) in
@@ -112,7 +112,8 @@ let spec_sample_parses () =
 
 let spec_sample_evidence () =
   let sec =
-    Option.get (Baseline.section (Baseline.read_exn spec_path) spec_machine)
+    Option.get
+      (Baseline.section (Option.get (Baseline.read_exn spec_path)) spec_machine)
   in
   let row id metric = Option.get (Baseline.find_row sec ~id ~metric) in
   equal ~msg:"exact 399" evidence (Baseline.Exact_int 399)
@@ -142,7 +143,7 @@ let empty_file_is_valid () =
   equal ~msg:"round-trips to empty" string "" (Baseline.to_string t)
 
 let empty_fixture_reads () =
-  let t = ok_exn (Baseline.read "fixtures/empty.thumper") in
+  let t = Option.get (ok_exn (Baseline.read "fixtures/empty.thumper")) in
   equal (list string) [] (Baseline.machines t)
 
 let empty_constructor_round_trips () =
@@ -579,18 +580,19 @@ let checksum_spec_sample_digit_flip () =
 
 let missing_file_reads_absent () =
   match Baseline.read "fixtures/definitely-missing.thumper" with
-  | Error Baseline.Absent -> ()
-  | Ok _ -> fail "read a missing file"
+  | Ok None -> ()
+  | Ok (Some _) -> fail "read a missing file"
   | Error e ->
-      failf "expected Absent, got %s" (Format.asprintf "%a" Baseline.pp_error e)
+      failf "expected Ok None, got %s"
+        (Format.asprintf "%a" Baseline.pp_error e)
 
 let unreadable_is_io_never_absent () =
   (* A directory at the baseline path exists but cannot be read: Io, and
-     emphatically not Absent. *)
+     emphatically not absent. *)
   match Baseline.read "fixtures" with
   | Error (Baseline.Io _) -> ()
-  | Ok _ -> fail "read a directory as a baseline"
-  | Error Baseline.Absent -> fail "an unreadable path was reported Absent"
+  | Ok (Some _) -> fail "read a directory as a baseline"
+  | Ok None -> fail "an unreadable path was reported absent"
   | Error (Baseline.Corrupt _) -> fail "expected Io for a directory"
 
 (* Row constructors and the print contract *)
@@ -800,7 +802,7 @@ let write_reads_back () =
   Baseline.write path t;
   equal ~msg:"bytes on disk" string (Baseline.to_string t) (read_file path);
   equal ~msg:"reads back" string (Baseline.to_string t)
-    (Baseline.to_string (Baseline.read_exn path))
+    (Baseline.to_string (Option.get (Baseline.read_exn path)))
 
 let write_overwrites_and_leaves_no_temp () =
   let dir = temp_dir () in
@@ -821,7 +823,7 @@ let write_failure_raises_io () =
 
 let permission_denied_read_is_io_never_absent () =
   (* [openfile] itself fails here (EACCES), unlike the directory case where
-     the failure comes from [read]: both must be Io, only ENOENT is Absent. *)
+     the failure comes from [read]: both must be Io, only ENOENT is absent. *)
   if Unix.geteuid () = 0 then
     skip ~reason:"file permissions are not enforced for root" ()
   else
@@ -831,9 +833,8 @@ let permission_denied_read_is_io_never_absent () =
     Unix.chmod path 0o000;
     match Baseline.read path with
     | Error (Baseline.Io _) -> ()
-    | Ok _ -> fail "read a permission-denied file"
-    | Error Baseline.Absent ->
-        fail "a permission-denied file was reported Absent"
+    | Ok (Some _) -> fail "read a permission-denied file"
+    | Ok None -> fail "a permission-denied file was reported absent"
     | Error (Baseline.Corrupt _) -> fail "expected Io"
 
 let write_into_readonly_dir_raises_io () =
@@ -1154,10 +1155,10 @@ let () =
         ];
       group "reading files"
         [
-          test "a missing file reads as Absent" missing_file_reads_absent;
-          test "an unreadable path is Io, never Absent"
+          test "a missing file reads as None" missing_file_reads_absent;
+          test "an unreadable path is Io, never absent"
             unreadable_is_io_never_absent;
-          test "a permission-denied file is Io, never Absent"
+          test "a permission-denied file is Io, never absent"
             permission_denied_read_is_io_never_absent;
         ];
       group "row constructors"

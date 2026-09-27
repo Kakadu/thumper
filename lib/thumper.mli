@@ -64,7 +64,9 @@
     (* A CI gate, as a program. *)
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
-      let v = Check.run ~budgets ~filter:(`Tag "lab") ~baseline ~name:"nx" suite in
+      let v =
+        Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite
+      in
       (match Verdict.candidate v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());
@@ -502,9 +504,9 @@ module Baseline : sig
   (** The type for parsed baseline files: an optional suite header plus
       per-machine sections. Values are immutable. *)
 
-  (** The type for read and write errors. The three cases are decided where the
-      failing system call is: a failure to read is never conflated with absence.
-  *)
+  (** The type for read and write errors. An absent file is not one ({!read} is
+      [Ok None]); both cases are decided where the failing system call is, so a
+      failure to read is never conflated with absence. *)
   type error =
     | Corrupt of { line : int; reason : string }
         (** The file violates the format-v1 grammar at the 1-based [line]:
@@ -513,11 +515,6 @@ module Baseline : sig
     | Io of string
         (** The file exists but could not be read, or could not be written.
             Never treated as an absent file — exit 2 at the CLI. *)
-    | Absent
-        (** No file exists at the path ([ENOENT]) — the ordinary first-run
-            state, reported only by {!read}. What absence means (the
-            NEW-baseline flow) is the caller's policy; an unreadable or corrupt
-            file is never reported as [Absent]. *)
 
   exception Error of error
   (** Raised by {!read_exn} and {!write}. *)
@@ -528,14 +525,16 @@ module Baseline : sig
 
   (** {2:reading Reading and writing} *)
 
-  val read : string -> (t, error) result
-  (** [read path] is the baseline stored at [path]. [Error Absent] if no file
-      exists at [path]; [Error (Io _)] if it exists but cannot be read;
-      [Error (Corrupt _)] if it does not parse as format v1. *)
+  val read : string -> (t option, error) result
+  (** [read path] is the baseline stored at [path]: [Ok None] if no file exists
+      at [path] ([ENOENT]) — the ordinary first-run state, whose meaning (the
+      NEW-baseline flow) is the caller's policy; [Error (Io _)] if it exists but
+      cannot be read; [Error (Corrupt _)] if it does not parse as format v1. *)
 
-  val read_exn : string -> t
-  (** [read_exn path] is [read path]. Raises {!Error}, including on an absent
-      file. *)
+  val read_exn : string -> t option
+  (** [read_exn path] is [read path]. Raises {!Error} if the file exists but
+      cannot be read or parsed; an absent file is [None], which {!Check.run}'s
+      [?baseline] takes as is. *)
 
   val write : string -> t -> unit
   (** [write path t] writes [t] to [path] atomically (temp file, fsync, rename):

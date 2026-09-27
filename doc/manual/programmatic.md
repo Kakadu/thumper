@@ -42,7 +42,7 @@ let budgets = [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
 
 let gate () =
   let baseline = Baseline.read_exn "nx.thumper" in
-  let v = Check.run ~budgets ~filter:(`Tag "lab") ~baseline ~name:"nx" suite in
+  let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite in
   (match Verdict.candidate v with
   | Some f -> Baseline.write "nx.thumper.corrected" f
   | None -> ());
@@ -80,9 +80,10 @@ Two kinds, deliberately distinct:
   another suite. These are bugs in the calling program, never
   measurement outcomes.
 
-`Baseline.read` returns `(t, error) result` with absent, corrupt, and
-I/O failure as distinct cases — a corrupt baseline is never treated as
-a missing one; take the first-run path only on `Absent`.
+`Baseline.read` returns `(t option, error) result`: `Ok None` for a
+missing file, which `Check.run ?baseline` takes as the first run, and
+an error for a corrupt or unreadable one — a corrupt baseline is never
+treated as a missing one.
 
 ## Where the public surface ends
 

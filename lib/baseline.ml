@@ -32,10 +32,7 @@ type t = {
   t_sections : section list; (* ascending machine key *)
 }
 
-type error =
-  | Corrupt of { line : int; reason : string }
-  | Io of string
-  | Absent
+type error = Corrupt of { line : int; reason : string } | Io of string
 
 exception Error of error
 
@@ -43,7 +40,6 @@ let pp_error ppf = function
   | Corrupt { line; reason } ->
       Format.fprintf ppf "corrupt baseline (line %d): %s" line reason
   | Io msg -> Format.fprintf ppf "baseline i/o error: %s" msg
-  | Absent -> Format.pp_print_string ppf "no baseline file"
 
 (* Grammar constants *)
 
@@ -419,7 +415,7 @@ let to_string t =
 
 (* Absence must be decided here, where the errno is: a caller probing with
    [Sys.file_exists] races the answer, and a caller pattern-matching [Io]
-   message text re-invents errno parsing. Only ENOENT is [Absent] — every
+   message text re-invents errno parsing. Only ENOENT is [Ok None] — every
    other failure (permissions, a directory at the path, I/O errors) is [Io],
    so an unreadable file can never be mistaken for a missing one. *)
 let read path =
@@ -429,7 +425,7 @@ let read path =
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> open_read ()
   in
   match open_read () with
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Stdlib.Error Absent
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
   | exception Unix.Unix_error (e, op, _) ->
       Stdlib.Error
         (Io
@@ -453,7 +449,7 @@ let read path =
       match drain () with
       | () ->
           close ();
-          of_string (Buffer.contents buf)
+          Result.map Option.some (of_string (Buffer.contents buf))
       | exception Unix.Unix_error (e, op, _) ->
           close ();
           Stdlib.Error

@@ -331,7 +331,7 @@ val main :
       empty-selection error names the unmatched patterns and tags
       ([no case matches 'explore']), so a deleted-subcommand word explains
       itself. [list] prints the ids and stops.
-    + [check]/[bless] read the baseline: [Absent] is the NEW flow (the
+    + [check]/[bless] read the baseline: an absent file is the NEW flow (the
       empty-file baseline; never an error), [Io]/[Corrupt] exit 2 with
       [Baseline]'s message. [--wait-quiet] then polls for a quiet host; expiry
       warns and proceeds — degradation, not refusal, is the specified fallback.
