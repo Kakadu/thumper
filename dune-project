@@ -31,7 +31,7 @@
   "Thumper measures OCaml micro-benchmarks under a frozen, reproducible protocol and stores the evidence - sorted timing samples and proven-exact allocation counts - in a committed baseline file, one section per machine. The build checks performance the way it checks correctness: verdicts come from rank statistics plus an in-run confirmation pass, regressions fail the build only after they reproduce, improvements ratchet the baseline through dune promote as a reviewable diff, and noise degrades to inconclusive rather than a red build. Unix-only; depends on the unix library alone.")
  (depends
   (ocaml
-   (>= 5.0))
+   (>= 5.2))
   (windtrap
    (and
     :with-test

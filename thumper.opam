@@ -10,7 +10,7 @@ homepage: "https://github.com/invariant-hq/thumper"
 bug-reports: "https://github.com/invariant-hq/thumper/issues"
 depends: [
   "dune" {>= "3.21"}
-  "ocaml" {>= "5.0"}
+  "ocaml" {>= "5.2"}
   "windtrap" {with-test & >= "0.2.0"}
   "odoc" {with-doc}
 ]

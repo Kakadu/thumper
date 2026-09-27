@@ -20,7 +20,7 @@ jobs:
         include:
           # The lowest OCaml that thumper.opam accepts.
           - os: ubuntu-latest
-            ocaml-compiler: "5.0"
+            ocaml-compiler: "5.2"
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
