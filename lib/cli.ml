@@ -1118,7 +1118,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
         with_status (fun tick ->
             with_lease_progress (fun () ->
                 Check.run_with ~on_progress:tick ~config ?budgets ?filter
-                  ~baseline:file ~name benches)))
+                  ~baseline:file name benches)))
   in
   (* The JSON document first: its contract is "present iff measurement
      completed", and measurement has — a candidate write that fails (disk

@@ -194,7 +194,7 @@ let planted_regression_confirms () =
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
     Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
-      ~name:"digest"
+      "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
   check_rel ~msg:"relation" v ~case:"a" ~metric:m_wall "regressed-confirmed";
@@ -212,7 +212,8 @@ let planted_improvement_pools_2n () =
      the decided relation carries both passes pooled at the frozen k. *)
   let baseline = baseline_of [ wall_row "a" (ties 4.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+      "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   (match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
@@ -234,7 +235,7 @@ let planted_improvement_pools_2n () =
 let no_section_is_all_new () =
   let w = world () in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   (match Verdict.comparison v with
@@ -258,7 +259,8 @@ let loaded_gate_at_start_degrades () =
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+      "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
   check_rel ~msg:"the sampled regression degrades" v ~case:"a" ~metric:m_wall
@@ -283,7 +285,8 @@ let loaded_resample_degrades_the_queue () =
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+      "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
   check_rel ~msg:"the pending regression degrades" v ~case:"a" ~metric:m_wall
@@ -319,7 +322,7 @@ let progress_ticks_both_sweeps () =
   let v =
     Check.run_with ~instruments:(scripted w) ~gate:quiet
       ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
-      ~config:base ~baseline ~name:"digest"
+      ~config:base ~baseline "digest"
       [
         Bench.bench "a" (stepper w (constant_ns (2 * ms_ns)));
         Bench.bench "b" (stepper w (constant_ns ms_ns));
@@ -343,7 +346,7 @@ let progress_skips_the_unmeasured_loaded_queue () =
   let v =
     Check.run_with ~instruments:(scripted w) ~gate
       ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
-      ~config:base ~baseline ~name:"digest"
+      ~config:base ~baseline "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
   check_rel ~msg:"the pending regression degraded" v ~case:"a" ~metric:m_wall
@@ -377,7 +380,8 @@ let sweep_freezes_the_rows_k () =
      proves the sweep passed the row's k to [Measure]. *)
   let baseline = baseline_of [ wall_row ~k:4 "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+      "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   equal ~msg:"trial measured at the row's k" int 4
@@ -402,7 +406,7 @@ let freeze_reads_the_first_sampled_row () =
   in
   let v =
     Check.run_with ~instruments:(scripted w) ~gate:quiet ~config
-      ~baseline:(baseline_of rows) ~name:"digest"
+      ~baseline:(baseline_of rows) "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   equal ~msg:"k frozen from the first sampled row (cpu_time)" int 2
@@ -422,7 +426,7 @@ let freeze_skips_exact_rows () =
   in
   let v =
     Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
-      ~baseline:(baseline_of rows) ~name:"digest"
+      ~baseline:(baseline_of rows) "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   equal ~msg:"k frozen from the sampled row, not the exact row" int 4
@@ -448,7 +452,8 @@ let confirmation_runs_at_the_provisional_k () =
   let step _call = if !slow then 750_000 else 300_000 in
   let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+      "digest"
       [ Bench.bench "a" (stepper w step) ]
   in
   match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
@@ -466,10 +471,11 @@ let empty_selection_is_an_error () =
   let is_empty = function Check.Empty_selection -> true | _ -> false in
   check_error is_empty (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
-        ~filter:(`Or [])
+        ~filter:(`Or []) "digest"
         [ bench () ]);
   check_error is_empty (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base []);
+      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+        []);
   check_error is_empty (fun () ->
       Check.measure ~instruments:(scripted w) ~config:base ~filter:(`Or [])
         [ bench () ])
@@ -488,13 +494,13 @@ let duplicate_ids_are_invalid_suite () =
     | _ -> false
   in
   check_error is_dup (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
         (suite ()));
   (* Detected on the whole suite before filtering: a narrowed selection never
      masks a broken suite. *)
   check_error is_dup (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
-        ~filter:(`Id "b") (suite ()))
+        ~filter:(`Id "b") "digest" (suite ()))
 
 let uncollected_budgets_are_invalid_suite () =
   (* [base] collects wall_time only. Refused before the lease, so nothing is
@@ -510,6 +516,7 @@ let uncollected_budgets_are_invalid_suite () =
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
         ~budgets:[ Budget.no_more_alloc_than 0.01 ]
+        "digest"
         [ bench () ]);
   check_error
     (function
@@ -538,21 +545,22 @@ let selection_plumbs_full_vs_partial () =
     List.exists (fun s -> contains ~sub:"dead" s) (Verdict.warnings v)
   in
   let v_full =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline ~name:"digest"
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+      "digest"
       [ bench_a () ]
   in
   is_true ~msg:"a full selection notices the dead row" (has_prune_notice v_full);
   (* A filter matching every case is still a full selection. *)
   let v_all =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline ~name:"digest"
-      ~filter:(`Id "")
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+      ~filter:(`Id "") "digest"
       [ bench_a () ]
   in
   is_true ~msg:"an all-matching filter is a full selection"
     (has_prune_notice v_all);
   let v_partial =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline ~name:"digest"
-      ~filter:(`Id "a")
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+      ~filter:(`Id "a") "digest"
       [ bench_a (); bench_b () ]
   in
   equal ~msg:"a narrowed selection never prunes" (list string) []
@@ -585,6 +593,7 @@ let lease_failure_surfaces_as_error () =
       in
       check_error is_unusable (fun () ->
           Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+            "digest"
             [ bench () ]);
       check_error is_unusable (fun () ->
           Check.measure ~instruments:(scripted w) ~config:base [ bench () ]))
@@ -602,8 +611,23 @@ let wrong_suite_raises_before_measuring () =
         suite's file, or update its '# suite:' header if the suite was renamed")
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
-        ~baseline ~name:"other"
+        ~baseline "other"
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
+  equal ~msg:"no case was measured" int 0 w.calls
+
+let invalid_names_raise_before_measuring () =
+  (* The name heads the fresh baseline a first run proposes: an empty or
+     multi-line one is refused on entry, before the lease and the sweep. *)
+  let w = world () in
+  List.iter
+    (fun name ->
+      raises
+        (Invalid_argument
+           "Check.run: suite name must be non-empty and single-line (it heads \
+            fresh baselines)") (fun () ->
+          Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base name
+            [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]))
+    [ ""; "two\nlines" ];
   equal ~msg:"no case was measured" int 0 w.calls
 
 let duplicate_budgets_raise_before_measuring () =
@@ -616,6 +640,7 @@ let duplicate_budgets_raise_before_measuring () =
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
+        "digest"
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
   equal ~msg:"no case was measured" int 0 w.calls
 
@@ -633,7 +658,8 @@ let a_failing_case_aborts_the_run () =
           contains ~sub:"kaboom" exn
       | _ -> false)
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base suite)
+      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+        suite)
 
 let a_failing_confirmation_aborts_the_run () =
   (* The .mli singles this sweep out: [Verdict.decide] reads an absent
@@ -664,7 +690,7 @@ let a_failing_confirmation_aborts_the_run () =
       | _ -> false)
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
-        ~name:"digest" [ case ]);
+        "digest" [ case ]);
   equal ~msg:"the failure came from the second sweep" int 2 !gate_samples
 
 (* Measuring (the numbers path) *)
@@ -710,9 +736,7 @@ let live_measure_smoke () =
   | None -> fail "wall_time samples missing"
 
 let live_run_smoke () =
-  let v =
-    Check.run ~config:live_config ~name:"smoke" [ Bench.bench "noop" ignore ]
-  in
+  let v = Check.run ~config:live_config "smoke" [ Bench.bench "noop" ignore ] in
   (match (report v ~case:"noop" ~metric:m_wall).Verdict.verdict with
   | Verdict.New_row -> ()
   | mv -> failf "expected New_row, got %s" (rel_name mv));
@@ -772,6 +796,8 @@ let () =
             lease_failure_surfaces_as_error;
           test "a wrong-suite baseline raises before measuring"
             wrong_suite_raises_before_measuring;
+          test "an invalid suite name raises before measuring"
+            invalid_names_raise_before_measuring;
           test "duplicate budgets raise before measuring"
             duplicate_budgets_raise_before_measuring;
           test "a failing case aborts the run" a_failing_case_aborts_the_run;

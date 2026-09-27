@@ -42,7 +42,7 @@ let budgets = [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
 
 let gate () =
   let baseline = Baseline.read_exn "nx.thumper" in
-  let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite in
+  let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
   (match Verdict.candidate v with
   | Some f -> Baseline.write "nx.thumper.corrected" f
   | None -> ());
@@ -63,7 +63,7 @@ let gate () =
 cannot accidentally judge against another machine's numbers, and the
 verdict keeps the baseline it was judged against — `Verdict.candidate`
 needs nothing but the verdict. A `baseline` whose header names a
-different suite than `name` raises. With no `baseline`, or no section
+different suite than the name you pass raises. With no `baseline`, or no section
 yet for this machine, every case is new and the update proposes the
 whole section.
 

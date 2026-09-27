@@ -247,7 +247,7 @@ let gate_flow_against_synthetic_file () =
   let v =
     Thumper.Check.run ~config:Thumper.Config.quick
       ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-      ~filter:(`Tag "lab") ~baseline:file ~name:"facade" suite
+      ~filter:(`Tag "lab") ~baseline:file "facade" suite
   in
   equal ~msg:"NEW is exit 0" int 0 (Thumper.Verdict.exit_code v);
   equal ~msg:"NEW is exit 1 under strict" int 1
@@ -289,10 +289,9 @@ let read_distinguishes_absent () =
   | Error e -> failf "expected Ok None, got: %a" Thumper.Baseline.pp_error e
   | Ok (Some _) -> fail "read a baseline from an absent file"
 
-let candidate_over_headerless_file_needs_a_name () =
-  (* [Check.run]'s [name] defaults to [""]: a fresh candidate over the
-     header-less (zero-byte) baseline has no valid [# suite:] body to write,
-     so [Verdict.candidate] must raise rather than propose a broken file. *)
+let candidate_over_headerless_file_takes_the_name () =
+  (* The header-less (zero-byte) baseline has no [# suite:] line: the fresh
+     candidate over it is headed by [Check.run]'s required name. *)
   let path = Filename.temp_file "thumper_facade_empty" ".thumper" in
   Fun.protect
     ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
@@ -302,9 +301,13 @@ let candidate_over_headerless_file_needs_a_name () =
         (Thumper.Baseline.suite file);
       let v =
         Thumper.Check.run ~config:Thumper.Config.quick ~filter:(`Id "alloc2")
-          ~baseline:file suite
+          ~baseline:file "facade" suite
       in
-      invalid (fun () -> ignore (Thumper.Verdict.candidate v)))
+      match Thumper.Verdict.candidate v with
+      | None -> fail "a first run must yield a candidate"
+      | Some f ->
+          equal ~msg:"the candidate is headed by the run's name" (option string)
+            (Some "facade") (Thumper.Baseline.suite f))
 
 (* Published-surface pins — compile-only
 
@@ -330,9 +333,7 @@ module Gate_example : sig end = struct
     (* A CI gate, as a program. *)
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
-      let v =
-        Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite
-      in
+      let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
       (match Verdict.candidate v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());
@@ -432,7 +433,7 @@ module Deleted_surface : sig end = struct
           ?budgets:Thumper.Budget.t list ->
           ?filter:Thumper.filter ->
           ?baseline:Thumper.Baseline.t ->
-          ?name:string ->
+          string ->
           Thumper.bench list ->
           Thumper.Verdict.t);
     ignore (run_with : deleted);
@@ -501,8 +502,8 @@ let () =
           test "the gate flow runs against a synthetic file"
             gate_flow_against_synthetic_file;
           test "read distinguishes an absent file" read_distinguishes_absent;
-          test "a fresh candidate over a header-less file needs a suite name"
-            candidate_over_headerless_file_needs_a_name;
+          test "a fresh candidate over a header-less file takes the name"
+            candidate_over_headerless_file_takes_the_name;
         ];
     ]
   |> exit

@@ -65,9 +65,10 @@ let () =
   let path = Filename.temp_file "programmatic" ".thumper" in
   (* First pass, under the default check protocol: no [baseline], so every
      case is NEW. The candidate — retained by the verdict, no file to thread
-     back — is this machine's complete first section; [name] heads the fresh
-     file. Writing it is the bootstrap the CLI drives with `dune promote`. *)
-  let v1 = Check.run ~budgets ~name:"programmatic" suite in
+     back — is this machine's complete first section; the suite name heads
+     the fresh file. Writing it is the bootstrap the CLI drives with
+     `dune promote`. *)
+  let v1 = Check.run ~budgets "programmatic" suite in
   (match Verdict.candidate v1 with
   | Some fresh -> Baseline.write path fresh
   | None -> assert false (* an all-NEW verdict always proposes *));
@@ -78,7 +79,7 @@ let () =
      corrected candidate iff there is one, and let JSON and exit code speak
      to the surrounding automation — plus the cleanup a demo needs. *)
   let baseline = Baseline.read_exn path in
-  let v2 = Check.run ~budgets ?baseline ~name:"programmatic" suite in
+  let v2 = Check.run ~budgets ?baseline "programmatic" suite in
   let corrected = path ^ ".corrected" in
   (match Verdict.candidate v2 with
   | Some f -> Baseline.write corrected f (* a real gate keeps this for review *)

@@ -68,9 +68,7 @@ module Programmatic = struct
 
   let gate () =
     let baseline = Baseline.read_exn "nx.thumper" in
-    let v =
-      Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite
-    in
+    let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
     (match Verdict.candidate v with
     | Some f -> Baseline.write "nx.thumper.corrected" f
     | None -> ());

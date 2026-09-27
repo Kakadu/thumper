@@ -64,9 +64,7 @@
     (* A CI gate, as a program. *)
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
-      let v =
-        Check.run ~budgets ~filter:(`Tag "lab") ?baseline ~name:"nx" suite
-      in
+      let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
       (match Verdict.candidate v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());
@@ -628,16 +626,10 @@ module Verdict : sig
       confirmation's batch size; exact: the new integer), NEW rows and sections
       added, a stale section replaced wholesale with this run's evidence, rows
       of deleted cases pruned on full selections, and everything else —
-      including other machines' sections — byte-preserved. [Some] iff the
-      result differs from the judged baseline. Regressed, inconclusive, and
-      unconfirmed evidence is unrepresentable in the result: promoting a
-      candidate is always safe.
-
-      Raises [Invalid_argument] when a header-less judged baseline — the
-      empty-file baseline — must be replaced by a fresh suite-headed one but
-      the verdict's suite name ({!Check.run}'s [name], default [""]) is not a
-      valid [# suite:] header body: a fresh candidate over a header-less file
-      needs a real name. *)
+      including other machines' sections — byte-preserved. [Some] iff the result
+      differs from the judged baseline. Regressed, inconclusive, and unconfirmed
+      evidence is unrepresentable in the result: promoting a candidate is always
+      safe. *)
 end
 
 (** {1:checking Checking} *)
@@ -668,31 +660,32 @@ module Check : sig
     ?budgets:Budget.t list ->
     ?filter:filter ->
     ?baseline:Baseline.t ->
-    ?name:string ->
+    string ->
     bench list ->
     Verdict.t
-  (** [run benches] measures the cases [filter] selects (default: all) under the
-      per-user measurement lease and judges them against this machine's section
-      of [baseline] — derived here, so judging another machine's evidence is
-      unrepresentable: measure every case, judge, re-measure provisional strong
-      relations in fresh workers at each provisional trial's batch size (spaced
-      to the end of the suite), and decide. First-pass batch sizes are frozen
-      from the section's rows; without [baseline] (or on a machine with no
-      section yet) every case is NEW and the verdict's candidate proposes this
-      machine's first section. The environment gate is sampled at run start and
-      again before the confirmation queue: on a loaded host, sampled-metric
-      comparisons degrade to inconclusive ([environment]) rather than failing —
-      exact comparisons still gate.
+  (** [run name benches] measures the cases [filter] selects (default: all)
+      under the per-user measurement lease and judges them against this
+      machine's section of [baseline] — derived here, so judging another
+      machine's evidence is unrepresentable: measure every case, judge,
+      re-measure provisional strong relations in fresh workers at each
+      provisional trial's batch size (spaced to the end of the suite), and
+      decide. First-pass batch sizes are frozen from the section's rows; without
+      [baseline] (or on a machine with no section yet) every case is NEW and the
+      verdict's candidate proposes this machine's first section. The environment
+      gate is sampled at run start and again before the confirmation queue: on a
+      loaded host, sampled-metric comparisons degrade to inconclusive
+      ([environment]) rather than failing — exact comparisons still gate.
 
       [config] defaults to {!Config.default}. [budgets] are the suite-level
       budgets (default: none — cases without their own get {!Budget}'s default);
       per-case and per-group budgets override per metric. [name] is the suite
-      name recorded in fresh candidates (default [""]).
+      name, the header of the fresh baseline a first run proposes.
 
       Raises {!Error} on operational failure ({!type:error}), and
-      [Invalid_argument] if [budgets] holds two budgets for one metric or if
-      [baseline]'s header names another suite than [name] — the wrong-ruler
-      class, refused before any measurement. *)
+      [Invalid_argument] if [name] is empty or not single-line, if [budgets]
+      holds two budgets for one metric, or if [baseline]'s header names another
+      suite than [name] — the wrong-ruler class — all refused before any
+      measurement. *)
 end
 
 (** {1:entry Entry points} *)

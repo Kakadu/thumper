@@ -91,10 +91,10 @@ val run :
   ?budgets:Budget.t list ->
   ?filter:Bench.filter ->
   ?baseline:Baseline.t ->
-  ?name:string ->
+  string ->
   Bench.t list ->
   Verdict.t
-(** [run benches] is the whole loop against [baseline] — this machine's
+(** [run name benches] is the whole loop against [baseline] — this machine's
     section is derived from it here, so judging another machine's evidence is
     unrepresentable — and is the decided verdict. In order:
 
@@ -133,14 +133,14 @@ val run :
 
     Defaults: [config] is {!Config.default}; [budgets] is [[]] (suite-level —
     per-case budgets come from each case, and a case with none from any level
-    gets [Budget.defaults]; [Verdict.judge]'s contract); no [baseline] means
-    the empty-file baseline — every case is NEW; [name] is [""] — the suite
-    name recorded in fresh candidates (the CLI always passes it).
+    gets [Budget.defaults]; [Verdict.judge]'s contract); no [baseline] means the
+    empty-file baseline — every case is NEW. [name] is the suite's name, the
+    header of the fresh baseline a first run proposes.
 
-    [baseline], when given, must be this suite's: [run] raises
-    [Invalid_argument] if its header names another suite (the wrong-ruler class
-    — the CLI refuses the same mismatch with exit 2 at read time), and if
-    [budgets] holds two budgets for one metric ({!Budget.check_distinct}). Both
+    [run] raises [Invalid_argument] if [name] is empty or not single-line, if
+    [baseline]'s header names another suite than [name] (the wrong-ruler class —
+    the CLI refuses the same mismatch with exit 2 at read time), and if
+    [budgets] holds two budgets for one metric ({!Budget.check_distinct}). The
     checks run before the lease: a programmer error must not cost a wait plus a
     full measurement sweep to surface. [Verdict.judge] relies on them and does
     not repeat them.
@@ -156,11 +156,11 @@ val run_with :
   ?budgets:Budget.t list ->
   ?filter:Bench.filter ->
   ?baseline:Baseline.t ->
-  ?name:string ->
+  string ->
   Bench.t list ->
   Verdict.t
-(** [run_with benches] is {!run} with the loop's two OS seams exposed, mirroring
-    [Measure]'s, plus the progress tap:
+(** [run_with name benches] is {!run} with the loop's two OS seams exposed,
+    mirroring [Measure]'s, plus the progress tap:
 
     - [instruments] (default {!Measure.default_instruments}) drives every clock
       and counter read of both measurement sweeps ({!Measure.case}'s seam);

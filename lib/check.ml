@@ -93,8 +93,11 @@ let empty_file =
   match Baseline.of_string "" with Ok f -> f | Error _ -> assert false
 
 let run_with ?instruments ?gate ?(on_progress = ignore)
-    ?(config = Config.default) ?(budgets = []) ?filter ?baseline ?(name = "")
-    benches =
+    ?(config = Config.default) ?(budgets = []) ?filter ?baseline name benches =
+  if name = "" || String.contains name '\n' then
+    invalid_arg
+      "Check.run: suite name must be non-empty and single-line (it heads fresh \
+       baselines)";
   let sample_gate = Option.value gate ~default:Env.gate in
   Budget.check_distinct ~fname:"Check.run" budgets;
   let selected, selection =
@@ -176,5 +179,5 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
               in
               Verdict.decide ~gate:quiet ~confirmations provisional))
 
-let run ?config ?budgets ?filter ?baseline ?name benches =
-  run_with ?config ?budgets ?filter ?baseline ?name benches
+let run ?config ?budgets ?filter ?baseline name benches =
+  run_with ?config ?budgets ?filter ?baseline name benches
