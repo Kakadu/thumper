@@ -217,7 +217,7 @@ let e2e_env dir =
 
 let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
-    ?(rerun_flags = "") () =
+    ?(rerun_flags = "") ?(strict = false) () =
   {
     Cli.color;
     accept;
@@ -227,6 +227,7 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     corrected_path = baseline ^ ".corrected";
     wrote_corrected = wrote;
     rerun_flags;
+    strict;
   }
 
 (* Parsing *)
@@ -912,6 +913,23 @@ let color_uses_ansi_only_when_enabled () =
     (Cli.render_check (ctx ~color:true ()) pass)
     "\027[2mequivalent\027[0m"
 
+let summary_color_follows_the_exit_code () =
+  (* An inconclusive run exits 0 and ends yellow; under --strict it exits 1,
+     and its summary is red like any failing run's. The words stay. *)
+  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
+  let loaded = Env.Loaded { load = 7.9; cores = 8 } in
+  let v =
+    verdict_of ~gate:loaded ~decide_gate:loaded ~file
+      (bcase "alpha", trial (ties 5 2e-6))
+  in
+  equal ~msg:"strict exits 1" int 1 (Verdict.exit_code ~strict:true v);
+  assert_contains ~msg:"yellow without --strict"
+    (Cli.render_check (ctx ~color:true ()) v)
+    "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m";
+  assert_contains ~msg:"red under --strict"
+    (Cli.render_check (ctx ~color:true ~strict:true ()) v)
+    "\027[31m1 case: 0 passed, 1 inconclusive.\027[0m"
+
 (* Main: validation, unlinks, list, exits *)
 
 let rejects_a_bad_suite_name () =
@@ -1355,6 +1373,8 @@ let () =
           test "an absolute cap on sampled evidence agrees with the exit code"
             absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
           test "ANSI color only when enabled" color_uses_ansi_only_when_enabled;
+          test "the summary's color follows the exit code"
+            summary_color_follows_the_exit_code;
         ];
       group "main"
         [

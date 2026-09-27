@@ -459,6 +459,7 @@ type render = {
   corrected_path : string;
   wrote_corrected : bool;
   rerun_flags : string;
+  strict : bool;
 }
 
 (* The CPU-model component of a host description ("hostname · cpu · arch ·
@@ -860,7 +861,9 @@ let render_check r v =
     in
     rerun @ prompt @ load
   in
-  (* Summary, compared runs only, colored whole-line by the worst state. *)
+  (* Summary, compared runs only. Its color is the outcome's: red iff the run
+     exits 1, so a [--strict] run that fails on inconclusive cases does not
+     end on a yellow line. *)
   let summary =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> []
@@ -876,7 +879,9 @@ let render_check r v =
           @ if n_inc > 0 then [ Printf.sprintf "%d inconclusive" n_inc ] else []
         in
         let style =
-          if n_fail > 0 then `Red else if n_inc > 0 then `Yellow else `Green
+          if Verdict.exit_code ~strict:r.strict v <> 0 then `Red
+          else if n_inc > 0 then `Yellow
+          else `Green
         in
         [
           "  "
@@ -1150,6 +1155,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
           | Some p -> " --baseline " ^ shell_arg p
           | None -> "")
         ^ String.concat "" (List.map (fun t -> " --tag " ^ shell_arg t) o.tags);
+      strict = o.strict;
     }
   in
   print_string (render_check r verdict);

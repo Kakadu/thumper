@@ -216,6 +216,8 @@ type render = {
           [--tag], shell-quoted, each with a leading space; [""] when the run
           used only defaults (the default baseline re-resolves identically from
           the exe path). *)
+  strict : bool;
+      (** The run's [--strict], which decides the summary's colour. *)
 }
 (** The type for check-report rendering inputs: everything {!render_check} needs
     beyond the verdict, resolved by {!main}. *)
@@ -278,7 +280,9 @@ val render_check : render -> Verdict.t -> string
       yellow) beside the prompt.
     - {b Summary} (compared runs):
       [<N> cases: <a> passed[, <b> regressed][, <c> inconclusive].] — the whole
-      line colored by the worst state (red > yellow > green).
+      line red iff the run exits 1 ([Verdict.exit_code ~strict:r.strict], so a
+      [--strict] run failed by inconclusive cases ends red), else yellow if any
+      case is inconclusive, else green.
 
     [::error::] annotations (when [r.github]) end the report and use the same
     gate predicate as the cells (every non-pass names its reason; NEW
