@@ -50,7 +50,7 @@
     The same machinery is ordinary values, and the CLI is one client of it:
     {!measure} collects a {!Run.t} with no file interaction, {!Check.run} judges
     a suite against a {!Baseline.t} into a {!Verdict.t}, and
-    {!Verdict.candidate} is the pure ratchet:
+    {!Verdict.corrected} is the pure ratchet:
 
     {[
     open Thumper
@@ -66,7 +66,7 @@
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
       let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
-      (match Verdict.candidate v with
+      (match Verdict.corrected v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());
       print_string (Verdict.to_json v);
@@ -615,10 +615,10 @@ module Verdict : sig
       [status: "pass"] — NEW is a promotion prompt, not a verdict. This is a
       deliberate change from v1, which reported NEW rows as [inconclusive]. *)
 
-  val candidate : t -> Baseline.t option
-  (** [candidate t] is the corrected candidate — the ratchet — over the
-      baseline the verdict was judged against, which the verdict retains, so a
-      candidate over the wrong file is unrepresentable: each confirmed-improved
+  val corrected : t -> Baseline.t option
+  (** [corrected t] is the corrected candidate — the ratchet — over the baseline
+      the verdict was judged against, which the verdict retains, so a candidate
+      over the wrong file is unrepresentable: each confirmed-improved
       case-metric row advanced (sampled: both passes' pooled samples at the
       confirmation's batch size; exact: the new integer), NEW rows and sections
       added, a stale section replaced wholesale with this run's evidence, rows
@@ -634,7 +634,7 @@ end
 (** The orchestrator: the loop the CLI's [check] subcommand is, as a function —
     measure under the lease, judge, confirm, decide. It renders nothing and
     touches no files: baseline reading and artifact writing compose around it
-    ({!Baseline.read}, {!Verdict.candidate}, {!Baseline.write}). *)
+    ({!Baseline.read}, {!Verdict.corrected}, {!Baseline.write}). *)
 module Check : sig
   type error
   (** The type for operational failures: a lease that timed out or whose lock
@@ -716,7 +716,7 @@ val run :
     [check]):
     - [check] — measure the selection, judge against [baseline]'s section for
       this machine, print the report, and write [<baseline>.corrected] iff the
-      ratchet candidate differs from the baseline ({!Verdict.candidate}): NEW
+      ratchet candidate differs from the baseline ({!Verdict.corrected}): NEW
       evidence and confirmed improvements are proposed for [dune promote], never
       installed. The baseline itself is never written.
     - [bless] — write a [<baseline>.corrected] candidate re-recording this

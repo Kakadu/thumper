@@ -43,7 +43,7 @@ let budgets = [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
 let gate () =
   let baseline = Baseline.read_exn "nx.thumper" in
   let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
-  (match Verdict.candidate v with
+  (match Verdict.corrected v with
   | Some f -> Baseline.write "nx.thumper.corrected" f
   | None -> ());
   print_string (Verdict.to_json v);
@@ -52,7 +52,7 @@ let gate () =
 
 - `Check.run` is the whole check — measurement, judgment, confirmation
   — and returns a `Verdict.t`. It renders nothing and touches no files.
-- `Verdict.candidate` is the proposed baseline update: `Some` exactly
+- `Verdict.corrected` is the proposed baseline update: `Some` exactly
   when there is something to update, and a regressed, inconclusive, or
   unconfirmed case can never appear in it — writing what it gives you
   is always safe.
@@ -61,7 +61,7 @@ let gate () =
 
 `Check.run` finds this machine's section in `baseline` itself, so you
 cannot accidentally judge against another machine's numbers, and the
-verdict keeps the baseline it was judged against — `Verdict.candidate`
+verdict keeps the baseline it was judged against — `Verdict.corrected`
 needs nothing but the verdict. A `baseline` whose header names a
 different suite than the name you pass raises. With no `baseline`, or no section
 yet for this machine, every case is new and the update proposes the

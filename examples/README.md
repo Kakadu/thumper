@@ -20,7 +20,7 @@ to a build-failing regression gate, to the library underneath the CLI.
   `--quick` / `--precise`, what inconclusive means, `--wait-quiet` /
   `--strict` / `--color`, and `THUMPER_MACHINE` CI lanes.
 - `06-programmatic` — the library without the CLI: `measure`, `Run`
-  projections, `Baseline`, `Check.run`, and `Verdict.candidate` / `to_json` /
+  projections, `Baseline`, `Check.run`, and `Verdict.corrected` / `to_json` /
   `exit_code` — the CI gate as a program.
 
 Everything compiles under plain `dune build`; nothing here runs under

@@ -16,9 +16,10 @@
     {!confirmations} lists the cases to re-measure, {!decide} folds the
     confirmation trials into a decided {!type:t}. [Check.run] is the only
     production caller of the triple; tests and offline re-judging drive it
-    directly with synthetic trials. The two write paths — {!candidate} (the ratchet) and {!bless} — are pure functions from a
-    verdict (or run) and a parsed file to a new file; reading and writing files
-    is the caller's business. *)
+    directly with synthetic trials. The two write paths — {!corrected} (the
+    ratchet) and {!bless} — are pure functions from a verdict (or run) and a
+    parsed file to a new file; reading and writing files is the caller's
+    business. *)
 
 (** {1:relations Shifts, reasons, and relations} *)
 
@@ -171,7 +172,7 @@ val judge :
   provisional
 (** First pass over all measured trials, against [identity.machine]'s section of
     [file] — derived here, so judging another machine's evidence is
-    unrepresentable, and the verdict retains [file] as {!candidate}'s input. No
+    unrepresentable, and the verdict retains [file] as {!corrected}'s input. No
     section (the empty-file baseline included) means every row is NEW.
     [selection = `Full] licenses pruning of dead ids in the candidate and, when
     the comparison is [Compared], records one prune notice per dead id in the
@@ -182,7 +183,7 @@ val judge :
     measure are dropped (a case that narrows its metrics sheds the inherited
     budgets on the others, and the default binds only a case that measures
     [wall_time]). [suite] names fresh candidates built over the empty-file
-    baseline (see {!candidate}).
+    baseline (see {!corrected}).
 
     The entry points check their inputs before measuring, and [judge] relies on
     it: [budgets] binds each metric at most once ([Budget.check_distinct]), and
@@ -312,17 +313,17 @@ val to_json : t -> string
 
 (** {1:write The write path } *)
 
-val candidate : t -> Baseline.t option
-(** [candidate t] is [ratchet(file, t)] over the baseline [t] was judged
-    against — retained by {!judge}, so a candidate over the wrong file is
-    unrepresentable: advance each confirmed-improved case-metric row
-    (sampled: the pooled 2n samples at the confirmation's k; exact: the new
-    integer), add NEW rows, replace a missing or stale section wholesale with
-    this run's evidence, prune rows of dead case ids on full selections,
-    byte-preserve every other row and every other machine's section. [Some]
-    iff the result differs from the judged file (byte compare of the rendered
-    files). Regressed, inconclusive, and unconfirmed case-metrics are
-    unrepresentable in the result — promoting is always safe.
+val corrected : t -> Baseline.t option
+(** [corrected t] is [ratchet(file, t)] over the baseline [t] was judged against
+    — retained by {!judge}, so a candidate over the wrong file is
+    unrepresentable: advance each confirmed-improved case-metric row (sampled:
+    the pooled 2n samples at the confirmation's k; exact: the new integer), add
+    NEW rows, replace a missing or stale section wholesale with this run's
+    evidence, prune rows of dead case ids on full selections, byte-preserve
+    every other row and every other machine's section. [Some] iff the result
+    differs from the judged file (byte compare of the rendered files).
+    Regressed, inconclusive, and unconfirmed case-metrics are unrepresentable in
+    the result — promoting is always safe.
 
     {b Note.} Proposed {e first} evidence — NEW rows and missing/stale-section
     replacements — records this run's trials verbatim, including trials measured

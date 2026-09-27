@@ -1126,7 +1126,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
      not take the verdict document down with it. *)
   Option.iter (fun p -> write_json p (Verdict.to_json verdict ^ "\n")) o.json;
   let wrote =
-    match Verdict.candidate verdict with
+    match Verdict.corrected verdict with
     | Some cand ->
         write_baseline corrected_path cand;
         true

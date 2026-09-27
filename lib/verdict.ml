@@ -864,7 +864,7 @@ let with_suite_header ~suite file =
   | None -> Baseline.empty ~suite
   | Some _ -> file
 
-let candidate t =
+let corrected t =
   let file = t.core.cr_file in
   let machine = t.core.cr_identity.Baseline.machine in
   let result =

@@ -168,7 +168,7 @@ Two consequences worth knowing:
 ## Using the library directly
 
 The command line is one client of an ordinary library. `measure` collects
-timings with no baseline and no files; `Check.run` and `Verdict.candidate`
+timings with no baseline and no files; `Check.run` and `Verdict.corrected`
 are the whole check-and-update pipeline as three function calls:
 
 ```ocaml

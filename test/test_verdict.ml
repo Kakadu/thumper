@@ -363,7 +363,7 @@ let unconfirmed_improvement_is_inconclusive_and_never_ratchets () =
       [ (bcase "a", wall_trial (ties 5 0.5)) ]
   in
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed";
-  is_none ~msg:"no candidate" (Verdict.candidate t)
+  is_none ~msg:"no candidate" (Verdict.corrected t)
 
 let queue_lists_only_sampled_strongs_in_case_order () =
   let file =
@@ -602,7 +602,7 @@ let stale_candidate_proposes_a_fresh_section () =
   let t =
     run_check ~file [ (bcase "a", stale_trial ()) ]
   in
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected a fresh-section candidate"
   | Some result ->
       let s = section_of result in
@@ -721,7 +721,7 @@ let recalibrated_improvement_stands_and_records_new_k () =
       [ (bcase "a", wall_trial ~k:16 (ties 5 0.5)) ]
   in
   check_rel t ~case:"a" ~metric:m_wall "improved-confirmed";
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected an advanced candidate"
   | Some result -> (
       match
@@ -900,7 +900,7 @@ let no_cross_metric_forgiveness () =
   check_rel ~msg:"time improved" t ~case:"a" ~metric:m_wall "improved-confirmed";
   check_rel ~msg:"alloc regressed" t ~case:"a" ~metric:m_alloc "regressed-exact";
   check_overall t `Fail;
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "the unrelated improvement must still write a candidate"
   | Some result -> (
       equal ~msg:"alloc row not advanced" (option string) (row_line file "a")
@@ -951,7 +951,7 @@ let new_section_proposes_everything () =
   check_overall ~msg:"NEW is not a verdict" t `Pass;
   equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
   equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t);
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected a proposed section"
   | Some result ->
       equal ~msg:"suite header added" (option string) (Some "digest")
@@ -974,7 +974,7 @@ let new_metric_row_is_added_on_compared_runs () =
   check_rel ~msg:"new metric" t ~case:"a" ~metric:m_alloc "new";
   equal ~msg:"strict exits 1 on a NEW row" int 1
     (Verdict.exit_code ~strict:true t);
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected the new row to be proposed"
   | Some result ->
       equal ~msg:"row added" (option string) (Some "a\talloc_words\texact\t54")
@@ -995,7 +995,7 @@ let proposals_record_gated_and_flagged_evidence () =
     run_check ~gate:loaded
       [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
   in
-  (match Verdict.candidate fresh with
+  (match Verdict.corrected fresh with
   | None -> failf "expected a fresh-section proposal"
   | Some result ->
       is_some ~msg:"gated drifted trial still proposes first evidence"
@@ -1014,7 +1014,7 @@ let proposals_record_gated_and_flagged_evidence () =
   in
   check_rel ~msg:"drift never affects a NEW judgment" compared ~case:"a"
     ~metric:m_cpu "new";
-  match Verdict.candidate compared with
+  match Verdict.corrected compared with
   | None -> failf "expected the drifted NEW row to be proposed"
   | Some result ->
       is_some ~msg:"cpu row proposed from the drifted trial"
@@ -1028,7 +1028,7 @@ let equivalent_run_writes_nothing () =
     run_check ~file
       [ (bcase "a", wall_trial (ties 5 1.0)) ]
   in
-  is_none (Verdict.candidate t)
+  is_none (Verdict.corrected t)
 
 let advance_is_a_one_row_diff () =
   let file = file_of [ wall_row "a" (ties 5 1.0); wall_row "b" (ties 5 1.0) ] in
@@ -1040,7 +1040,7 @@ let advance_is_a_one_row_diff () =
         (bcase "b", wall_trial (ties 5 1.0));
       ]
   in
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected an advanced candidate"
   | Some result ->
       is_true ~msg:"a's row changed" (row_line file "a" <> row_line result "a");
@@ -1063,7 +1063,7 @@ let partial_selection_never_prunes () =
       [ (bcase "a", wall_trial (ties 5 0.5)) ]
   in
   equal ~msg:"no prune notice" (list string) [] (Verdict.warnings t);
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected an advanced candidate"
   | Some result ->
       equal ~msg:"dead row kept" (option string) (row_line file "dead")
@@ -1089,7 +1089,7 @@ let stale_partial_selection_warns_about_dropped_rows () =
       is_true ~msg:"warning names the drop"
         (contains ~sub:"drops the rows of the 1 unselected case" w)
   | ws -> failf "expected one stale-partial warning, got %d" (List.length ws));
-  (match Verdict.candidate t with
+  (match Verdict.corrected t with
   | None -> failf "expected a fresh-section candidate"
   | Some result ->
       is_none ~msg:"unselected row dropped (the specified semantics)"
@@ -1115,7 +1115,7 @@ let full_selection_prunes_dead_ids_with_a_notice () =
   (match Verdict.warnings t with
   | [ w ] -> is_true ~msg:"notice names the id" (contains ~sub:"dead" w)
   | ws -> failf "expected one prune notice, got %d" (List.length ws));
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> failf "expected a pruning candidate"
   | Some result ->
       is_none ~msg:"dead row pruned" (row_line result "dead");
@@ -1228,7 +1228,7 @@ let monotone_ratchet s =
       (fun (_, o) -> o = Improve_confirmed || o = Fresh || (o = Dead && s.full))
       s.outcomes
   in
-  match Verdict.candidate t with
+  match Verdict.corrected t with
   | None -> is_false ~msg:"None only when nothing may change" expect_some
   | Some result ->
       is_true ~msg:"Some only when something may change" expect_some;
@@ -1327,7 +1327,7 @@ let pooling_copies_and_sorts_without_mutating_inputs () =
     (interior first_trial);
   equal ~msg:"confirmation trial's evidence unmutated" (array float_exact) conf
     (interior conf_trial);
-  ignore (Verdict.candidate t);
+  ignore (Verdict.corrected t);
   equal ~msg:"still unmutated after the write path" (array float_exact) conf
     (interior conf_trial)
 

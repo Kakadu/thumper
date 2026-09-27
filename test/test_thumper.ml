@@ -7,7 +7,7 @@
 
    Everything here goes through the public API only: authoring constructors,
    config and budget validation, [Thumper.measure] as a real measurement, and
-   the gate flow (read a baseline, [Check.run], [Verdict.candidate],
+   the gate flow (read a baseline, [Check.run], [Verdict.corrected],
    [Baseline.write]) against a synthetic file. Measurement assertions are
    about evidence SHAPES — sample counts, exact integers, batch sizes — never
    about timings. *)
@@ -261,7 +261,7 @@ let gate_flow_against_synthetic_file () =
   is_true ~msg:"NEW row status is pass"
     (contains ~sub:"\"status\":\"pass\"" json);
   is_true ~msg:"machine field" (contains ~sub:machine json);
-  match Thumper.Verdict.candidate v with
+  match Thumper.Verdict.corrected v with
   | None -> fail "a NEW section must yield a candidate"
   | Some corrected ->
       let out = path ^ ".corrected" in
@@ -303,7 +303,7 @@ let candidate_over_headerless_file_takes_the_name () =
         Thumper.Check.run ~config:Thumper.Config.quick ~filter:(`Id "alloc2")
           ~baseline:file "facade" suite
       in
-      match Thumper.Verdict.candidate v with
+      match Thumper.Verdict.corrected v with
       | None -> fail "a first run must yield a candidate"
       | Some f ->
           equal ~msg:"the candidate is headed by the run's name" (option string)
@@ -334,7 +334,7 @@ module Gate_example : sig end = struct
     let gate () =
       let baseline = Baseline.read_exn "nx.thumper" in
       let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
-      (match Verdict.candidate v with
+      (match Verdict.corrected v with
       | Some f -> Baseline.write "nx.thumper.corrected" f
       | None -> ());
       print_string (Verdict.to_json v);
@@ -418,9 +418,9 @@ module Deleted_surface : sig end = struct
     and bless = Deleted in
     let open Thumper.Verdict in
     ignore (to_json : t -> string);
-    (* [candidate] takes only the verdict: the judged baseline is retained,
+    (* [corrected] takes only the verdict: the judged baseline is retained,
        so the old [~file] threading (and its wrong-file class) is gone. *)
-    ignore (candidate : t -> Thumper.Baseline.t option);
+    ignore (corrected : t -> Thumper.Baseline.t option);
     ignore (judge : deleted);
     ignore (decide : deleted);
     ignore (confirmations : deleted);

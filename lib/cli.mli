@@ -10,7 +10,7 @@
     both owned artifacts (the [.corrected] candidate and the [--json] target), baseline reading, the [--wait-quiet] wait, the lease and status lines,
     terminal and GitHub-annotation rendering, the [--json] atomic write, and the
     exit mapping. Measurement and judgment are [Check]'s and [Verdict]'s; the
-    two write paths are [Verdict.candidate] and [Verdict.bless] — this module
+    two write paths are [Verdict.corrected] and [Verdict.bless] — this module
     only composes them around file I/O.
 
     {b Streams.} stdout is the report — the stable artifact a run leaves in a
@@ -342,7 +342,7 @@ val main :
       stderr, the {!status_line} ticker ([Check]'s [on_progress]); the line is
       erased before anything else prints. [Check.Error] — lease timeout, worker
       failure, deadline — is exit 2.
-    + [check] writes [<baseline>.corrected] iff [Verdict.candidate] differs
+    + [check] writes [<baseline>.corrected] iff [Verdict.corrected] differs
       ([Baseline.write], atomic), writes [--json] atomically (temp + rename;
       present iff measurement completed), renders {!render_check}, and exits
       [Verdict.exit_code ~strict]. [bless] writes the [Verdict.bless] candidate

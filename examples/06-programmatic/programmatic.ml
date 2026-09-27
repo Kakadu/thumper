@@ -11,7 +11,7 @@
    - [measure] collects a [Run.t] with no baseline or file interaction;
    - [Check.run] measures and judges a suite against a baseline section,
      producing a [Verdict.t];
-   - [Verdict.candidate] is the pure ratchet: the corrected baseline a run
+   - [Verdict.corrected] is the pure ratchet: the corrected baseline a run
      may propose (promoting it is always safe — regressed, inconclusive,
      and unconfirmed evidence is unrepresentable in a candidate);
    - [Verdict.to_json] and [Verdict.exit_code] are the automation surface.
@@ -69,7 +69,7 @@ let () =
      the fresh file. Writing it is the bootstrap the CLI drives with
      `dune promote`. *)
   let v1 = Check.run ~budgets "programmatic" suite in
-  (match Verdict.candidate v1 with
+  (match Verdict.corrected v1 with
   | Some fresh -> Baseline.write path fresh
   | None -> assert false (* an all-NEW verdict always proposes *));
   Printf.printf "recorded first section for machine %s\n"
@@ -81,7 +81,7 @@ let () =
   let baseline = Baseline.read_exn path in
   let v2 = Check.run ~budgets ?baseline "programmatic" suite in
   let corrected = path ^ ".corrected" in
-  (match Verdict.candidate v2 with
+  (match Verdict.corrected v2 with
   | Some f -> Baseline.write corrected f (* a real gate keeps this for review *)
   | None -> ());
   print_endline (Verdict.to_json v2);

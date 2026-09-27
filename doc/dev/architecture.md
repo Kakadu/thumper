@@ -20,7 +20,7 @@ reading; the **adapters** own paths, argv, and rendering.
 | `bench` | pure | authoring constructors, id validation, inheritance, the filter algebra, `resolve`, `prepare` |
 | `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, the drift flag, warnings), `Run.t` |
 | `baseline` | pure¹ | the format-v1 codec: strict parse with the median checksum, byte-identical re-emission, the mechanical mutators `set_section`/`update_rows`, one atomic `write` |
-| `verdict` | pure | judgment (`judge`/`confirmations`/`decide`), relations with confirmation evidence in the type, JSON, exit codes, and both write paths: `candidate` (the ratchet) and `bless` |
+| `verdict` | pure | judgment (`judge`/`confirmations`/`decide`), relations with confirmation evidence in the type, JSON, exit codes, and both write paths: `corrected` (the ratchet) and `bless` |
 | `env` | OS edge | machine key, host/ocaml identity strings, load average, the gate predicate, `wait_quiet`, the per-user lease |
 | `measure` | OS edge | one case → one trial: calibration with frozen-k reuse, warmup, GC discipline, fixed-n sampling, the k/2k exactness probe, the fork worker and its pipe `Protocol`; the `instruments` seam |
 | `check` | OS edge | the orchestrator: lease → gate → measure → judge → gate → confirm → decide. Thin by design — anything longer means policy leaked out of `verdict` |
@@ -50,10 +50,10 @@ discipline.
 **`Check.run` lives at the OS edge because confirmation *is*
 measurement**: only the runner can collect the second sample the
 decision needs. It renders nothing, writes nothing, reads no files —
-the CLI composes `Baseline.read`, `Verdict.candidate`,
+the CLI composes `Baseline.read`, `Verdict.corrected`,
 `Baseline.write`, and exit codes around it.
 
-**The write path is two pure functions.** `Verdict.candidate` is the
+**The write path is two pure functions.** `Verdict.corrected` is the
 ratchet — its doc comment in `verdict.mli` is the sole normative
 spelling of the write rule — and `Verdict.bless` the wholesale
 re-record. Both map (verdict/run, parsed file) → new file; `baseline`
