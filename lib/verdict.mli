@@ -265,6 +265,11 @@ val identity : t -> Baseline.identity
 (** [identity t] is the machine identity judged against; [machine] is the JSON
     [machine] field. *)
 
+val gate : t -> Env.gate
+(** [gate t] is the gate {!decide} ran under — [Check.run]'s start sample when
+    nothing was pending, else its re-sample before the confirmation queue: the
+    last sample judgment saw, which a report's load message must agree with. *)
+
 val exit_code : ?strict:bool -> t -> int
 (** [exit_code t] is the exit table: [0] pass / NEW / inconclusive; [1] confirmed
     regression or exact budget violation. With [strict] (default [false]): also

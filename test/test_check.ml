@@ -202,7 +202,9 @@ let planted_regression_confirms () =
   equal ~msg:"exit code" int 1 (Verdict.exit_code v);
   equal ~msg:"suite name plumbs to the verdict" string "digest"
     (Verdict.suite v);
-  equal ~msg:"gate sampled at start and before the queue" int 2 !gate_samples
+  equal ~msg:"gate sampled at start and before the queue" int 2 !gate_samples;
+  is_true ~msg:"the verdict records the quiet re-sample"
+    (Verdict.gate v = Env.Quiet)
 
 let planted_improvement_pools_2n () =
   let w = world () in
@@ -264,7 +266,8 @@ let loaded_gate_at_start_degrades () =
   check_overall ~msg:"a budgeted inconclusive metric" v `Inconclusive;
   equal ~msg:"exit 0 without --strict" int 0 (Verdict.exit_code v);
   equal ~msg:"nothing queued under load: the gate is not re-sampled" int 1
-    !gate_samples
+    !gate_samples;
+  is_true ~msg:"the verdict records the start gate" (Verdict.gate v = loaded ())
 
 let loaded_resample_degrades_the_queue () =
   let w = world () in
@@ -288,7 +291,9 @@ let loaded_resample_degrades_the_queue () =
   check_overall ~msg:"overall" v `Inconclusive;
   equal ~msg:"gate re-sampled before the queue" int 2 !gate_samples;
   equal ~msg:"the queue is not measured under load" int !calls_at_resample
-    w.calls
+    w.calls;
+  is_true ~msg:"the verdict records the loaded re-sample"
+    (Verdict.gate v = loaded ())
 
 (* Progress ticks
 

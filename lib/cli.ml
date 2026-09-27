@@ -1113,25 +1113,13 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
        benches);
   let file = read_baseline ~suite:name baseline_path in
   wait_for_quiet o.wait_quiet;
-  (* The report's load message must agree with judgment, and the lease wait
-     between here and the measurement sweep can be minutes long: tap the gate
-     seam so the rendered gate is the last sample [Check] judged under (the
-     start gate, or the re-sample that degraded a pending confirmation) —
-     never a pre-lease reading of somebody else's load. *)
-  let gate = ref (Env.gate ()) in
-  let sample_gate () =
-    let g = Env.gate () in
-    gate := g;
-    g
-  in
   let verdict =
     checked (fun () ->
         with_status (fun tick ->
             with_lease_progress (fun () ->
-                Check.run_with ~gate:sample_gate ~on_progress:tick ~config
-                  ?budgets ?filter ~baseline:file ~name benches)))
+                Check.run_with ~on_progress:tick ~config ?budgets ?filter
+                  ~baseline:file ~name benches)))
   in
-  let gate = !gate in
   (* The JSON document first: its contract is "present iff measurement
      completed", and measurement has — a candidate write that fails (disk
      full; check's conditional target is deliberately not preflighted) must
@@ -1153,7 +1141,10 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       baseline_path;
       corrected_path;
       wrote_corrected = wrote;
-      gate;
+      (* The report's load message must agree with judgment: the gate the
+         verdict was decided under, never a pre-lease reading of somebody
+         else's load (the lease wait can be minutes long). *)
+      gate = Verdict.gate verdict;
       (* The rerun hint reproduces the invocation, not just the selection: an
          explicit --baseline and every --tag are carried (getting-started's
          "the exact command"); the default baseline re-resolves identically
@@ -1191,7 +1182,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   (* The gate refusal is bless's own guard: a noisy bless poisons
      the ruler; [--force] overrides and is recorded in the section header.
      The gate is sampled under the lease, directly before measurement — the
-     same principle as check's seam tap: a lease wait can be minutes long,
+     same principle as check's [Verdict.gate]: a lease wait can be minutes long,
      and a decision taken on a pre-lease sample would refuse on somebody
      else's load, or worse, record an unannotated noisy bless after a
      quiet-to-loaded transition. Residual, accepted: [--wait-quiet] still

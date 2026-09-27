@@ -177,9 +177,9 @@ val run_with :
     testable in-process. The seams cannot ride on {!run} itself: the facade
     re-exports {!run} with the facade's exact type, and module inclusion cannot
     erase optional arguments. Library callers use {!run}; the CLI is the seams'
-    one production caller — [on_progress] drives its status line, and it taps
-    [gate] (still {!Env.gate} underneath) to learn the sample its report's load
-    message must agree with. Raises {!Error}. *)
+    one production caller, for [on_progress], which drives its status line (the
+    gate its report's load message must agree with is [Verdict.gate]). Raises
+    {!Error}. *)
 
 (** {1:measuring Measuring (the numbers path)} *)
 

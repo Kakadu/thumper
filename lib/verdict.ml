@@ -101,7 +101,7 @@ type core = {
 }
 
 type provisional = { p_core : core; p_cases : pcase list }
-type t = { core : core; v_cases : case_report list }
+type t = { core : core; v_gate : Env.gate; v_cases : case_report list }
 
 (* Small helpers *)
 
@@ -529,7 +529,7 @@ let decide ~gate ~confirmations:confs p =
         })
       p.p_cases
   in
-  { core = p.p_core; v_cases }
+  { core = p.p_core; v_gate = gate; v_cases }
 
 (* Observers *)
 
@@ -538,6 +538,7 @@ let cases t = t.v_cases
 let warnings t = t.core.cr_warnings
 let suite t = t.core.cr_suite
 let identity t = t.core.cr_identity
+let gate t = t.v_gate
 
 let exact_evidence case_report metric =
   match Run.Trial.measurement case_report.trial metric with

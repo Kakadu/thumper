@@ -209,10 +209,10 @@ type render = {
   corrected_path : string;  (** The candidate path, for the prompts. *)
   wrote_corrected : bool;  (** Whether the candidate was written. *)
   gate : Env.gate;
-      (** The gate the verdict was judged under — for [check], the last sample
-          [Check] took through its gate seam (the start gate, or the re-sample
-          that degraded a pending confirmation), so the run's one load message
-          never contradicts the cells. *)
+      (** The gate the verdict was judged under — for [check], [Verdict.gate]
+          (the start gate, or the re-sample that degraded a pending
+          confirmation), so the run's one load message never contradicts the
+          cells. *)
   rerun_flags : string;
       (** Rendered flags the rerun hint must reproduce beyond selection — an
           explicit [--baseline] and every [--tag], shell-quoted, each with a
