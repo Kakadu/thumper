@@ -671,7 +671,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
               Printf.sprintf "within budget%s %s" tag (pct s.Verdict.estimate);
             style = None;
           } )
-  | Verdict.Judged (Verdict.Inconclusive reason) ->
+  | Verdict.Judged (Verdict.Inconclusive { reason; _ }) ->
       Some
         ( 2,
           {

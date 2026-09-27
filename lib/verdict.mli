@@ -106,7 +106,11 @@ type relation =
   | Regressed of strong
   | Equivalent of shift option  (** [None]: exact integer equality. *)
   | Within_budget of shift  (** Demonstrated but budgeted slowdown. *)
-  | Inconclusive of reason
+  | Inconclusive of { reason : reason; shift : shift option }
+      (** [shift] is the first-pass shift iff the row reached the rank test
+          ([Wide_interval] from the table, [Batch_drifted] on sampled evidence,
+          the two unstable reasons, and [Unconfirmed] or [Environment] from
+          {!decide}), whatever the relation; [None] where no comparison ran. *)
 
 type metric_verdict =
   | New_row
@@ -287,13 +291,15 @@ val to_json : t -> string
       relations: [improved], [regressed], [equivalent], [changed_within_budget]
       (terminal renders "within_budget"), [inconclusive]; [null] for [New_row],
       which reports [reason: "missing_baseline"] (v1's spelling) and
-      [status: "pass"] — NEW is a promotion prompt, not a verdict.
-      [reason] is otherwise non-null exactly for [inconclusive] relations, with
-      the wire values ([Candidate_unstable] is ["unstable"],
-      [Candidate_drifted] is ["drifted"]). [delta] is [0.0] for exact equality
-      and [null] for inconclusive relations, [New_row], and a zero baseline;
-      exact evidence always has [null] interval bounds. [status] is the metric's
-      contribution to the case gate ([fail] only under a budget). *)
+      [status: "pass"] — NEW is a promotion prompt, not a verdict. [reason] is
+      otherwise non-null exactly for [inconclusive] relations, with the wire
+      values ([Candidate_unstable] is ["unstable"], [Candidate_drifted] is
+      ["drifted"]). [delta] is [0.0] for exact equality and [null] for
+      [New_row], a zero baseline, and inconclusive relations no rank test ran
+      for (an inconclusive row that reached the rank test reports its first-pass
+      shift, and contributes to [geomean_delta]); exact evidence always has
+      [null] interval bounds. [status] is the metric's contribution to the case
+      gate ([fail] only under a budget). *)
 
 (** {1:write The write path } *)
 

@@ -30,7 +30,7 @@ type relation =
   | Regressed of strong
   | Equivalent of shift option
   | Within_budget of shift
-  | Inconclusive of reason
+  | Inconclusive of { reason : reason; shift : shift option }
 
 type metric_verdict = New_row | Judged of relation
 
@@ -106,6 +106,10 @@ type t = { core : core; v_cases : case_report list }
 (* Small helpers *)
 
 let invalid fmt = Printf.ksprintf invalid_arg fmt
+
+(* An inconclusive relation keeps the first-pass shift iff the rank test ran:
+   the estimate and interval are reported whatever the relation. *)
+let inconclusive ?shift reason = Inconclusive { reason; shift }
 let log_all a = Array.map log a
 let all_positive a = Array.for_all (fun x -> x > 0.) a
 
@@ -179,29 +183,29 @@ let table ~e ~r ~l ~u sh =
     if u < 0. then Strong `Improved
     else if l > 0. then Strong `Regressed
     else if u <= 0. then Demonstrated sh
-    else Tame (Inconclusive Wide_interval)
+    else Tame (inconclusive ~shift:sh Wide_interval)
   else if u < -.e then Strong `Improved
   else if l > r then Strong `Regressed
   else if -.e <= l && u <= e then Tame (Equivalent (Some sh))
   else if l > e && u <= r then Demonstrated sh
-  else Tame (Inconclusive Wide_interval)
+  else Tame (inconclusive ~shift:sh Wide_interval)
 
 (* First-pass judgment of one sampled comparison. *)
 let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
     ~trial_k =
   let e, r = relative_params budget in
-  if is_loaded gate then Settled (Judged (Inconclusive Environment))
+  if is_loaded gate then Settled (Judged (inconclusive Environment))
   else if cand.Run.drifted then
-    Settled (Judged (Inconclusive Candidate_drifted))
+    Settled (Judged (inconclusive Candidate_drifted))
   else if
     (* Defensive: public constructors require n >= 3. *)
     Array.length baseline < 3
-  then Settled (Judged (Inconclusive Wide_interval))
+  then Settled (Judged (inconclusive Wide_interval))
   else if
     (* A zero sample breaks the log-space comparison, and no amount of
        re-measurement prices it: its own reason, with an honest remedy. *)
     (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
-  then Settled (Judged (Inconclusive Non_positive))
+  then Settled (Judged (inconclusive Non_positive))
   else
     let baseline_log = log_all baseline in
     let sh =
@@ -214,15 +218,15 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
     if k_moved && Float.abs sh.estimate <= bias_comparability_factor *. e then
       (* After recalibration only a bias-comparable shift degrades; a
          large shift is a verdict, not a calibration event. *)
-      Settled (Judged (Inconclusive Batch_drifted))
+      Settled (Judged (inconclusive ~shift:sh Batch_drifted))
     else
       (* Instability undermines a demonstrated direction: unstable
          trials support equivalent or inconclusive only. *)
       let unless_unstable settle =
         if baseline_unstable baseline then
-          Settled (Judged (Inconclusive Baseline_unstable))
+          Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
         else if cand.Run.unstable then
-          Settled (Judged (Inconclusive Candidate_unstable))
+          Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
         else settle ()
       in
       match table ~e ~r ~l ~u sh with
@@ -246,7 +250,7 @@ let judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c =
   let k_moved = match case_k with Some kb -> kb <> trial_k | None -> false in
   if k_moved && b <> c then
     (* Amortized allocators can be k-phase-dependent. *)
-    Inconclusive Batch_drifted
+    inconclusive Batch_drifted
   else
     let strong = Exact_change { baseline = b; candidate = c } in
     let better = c < b in
@@ -320,10 +324,10 @@ let judge_metric ~gate section ~id ~trial metric measurement budget =
           let case_k = Baseline.case_frozen_k section ~id in
           Settled (Judged (judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c))
       | Baseline.Exact_int _, Run.Samples _ | Baseline.Sampled _, Run.Exact _ ->
-          Settled (Judged (Inconclusive Exactness_lost))
+          Settled (Judged (inconclusive Exactness_lost))
       | Baseline.Sampled { k = row_k; samples }, Run.Samples cand ->
           if zero_tolerance_downgrade metric budget then
-            Settled (Judged (Inconclusive Exactness_lost))
+            Settled (Judged (inconclusive Exactness_lost))
           else
             judge_sampled ~gate ~metric ~budget ~row_k ~baseline:samples ~cand
               ~trial_k)
@@ -451,10 +455,11 @@ let confirmations p =
 (* Deciding *)
 
 let resolve_pending ~gate ~conf metric pd =
-  if is_loaded gate then Inconclusive Environment
+  let first = pd.p_first in
+  if is_loaded gate then inconclusive ~shift:first Environment
   else
     match conf with
-    | None -> Inconclusive Unconfirmed
+    | None -> inconclusive ~shift:first Unconfirmed
     | Some trial -> (
         match Run.Trial.measurement trial metric with
         | Some (Run.Samples s)
@@ -471,7 +476,7 @@ let resolve_pending ~gate ~conf metric pd =
               | `Improved -> u < -.pd.p_e
               | `Regressed -> l > pd.p_r
             in
-            if not reproduced then Inconclusive Unconfirmed
+            if not reproduced then inconclusive ~shift:first Unconfirmed
             else
               (* Pool both passes for the ratchet; [Array.append] is a fresh
                  array, so neither trial's evidence is sorted in place. *)
@@ -490,7 +495,7 @@ let resolve_pending ~gate ~conf metric pd =
               | `Improved -> Improved strong
               | `Regressed -> Regressed strong)
         | Some (Run.Samples _) | Some (Run.Exact _) | None ->
-            Inconclusive Unconfirmed)
+            inconclusive ~shift:first Unconfirmed)
 
 let decide ~gate ~confirmations:confs p =
   let queue = confirmations p in
@@ -650,12 +655,15 @@ let strong_estimate = function
           /. float_of_int baseline)
 
 (* The reported deltas: the first-pass shift for confirmed strongs, the
-   relation's shift otherwise; exact evidence has no interval bounds. *)
+   relation's shift otherwise (an inconclusive row's first-pass shift when its
+   rank test ran); exact evidence has no interval bounds. *)
 let deltas_of_verdict ~exact = function
   | New_row -> (None, None, None)
-  | Judged (Inconclusive _) -> (None, None, None)
+  | Judged (Inconclusive { shift = None; _ }) -> (None, None, None)
   | Judged (Equivalent None) -> (Some 0.0, None, None)
-  | Judged (Equivalent (Some sh)) | Judged (Within_budget sh) ->
+  | Judged (Equivalent (Some sh))
+  | Judged (Within_budget sh)
+  | Judged (Inconclusive { shift = Some sh; _ }) ->
       if exact then (Some sh.estimate, None, None)
       else (Some sh.estimate, Some sh.lower, Some sh.upper)
   | Judged (Improved (Confirmed { first; _ }))
@@ -682,7 +690,7 @@ let json_metric buf case_report report =
   Buffer.add_string buf ",\"reason\":";
   (match report.verdict with
   | New_row -> json_string buf "missing_baseline"
-  | Judged (Inconclusive reason) -> json_string buf (wire_reason reason)
+  | Judged (Inconclusive { reason; _ }) -> json_string buf (wire_reason reason)
   | Judged _ -> Buffer.add_string buf "null");
   (match report.verdict with
   | Judged _ -> (
@@ -715,10 +723,11 @@ let json_metric buf case_report report =
 (* The per-case ratio a report contributes to the geomean, v1's guard: only
    finite, strictly positive ratios participate. *)
 let ratio_of_verdict = function
-  | New_row | Judged (Inconclusive _) -> None
+  | New_row | Judged (Inconclusive { shift = None; _ }) -> None
   | Judged (Equivalent None) -> Some 1.0
   | ( Judged (Equivalent (Some _))
     | Judged (Within_budget _)
+    | Judged (Inconclusive { shift = Some _; _ })
     | Judged (Improved _)
     | Judged (Regressed _) ) as v -> (
       (* Only the point delta matters; the [exact] flag shapes bounds only. *)

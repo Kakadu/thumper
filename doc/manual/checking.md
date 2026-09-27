@@ -189,8 +189,10 @@ schema is frozen; automation may rely on every field below:
   is `relation: null`, `reason: "missing_baseline"`, `status: "pass"`.
 
 Numeric fields are `null` where they are undefined: the interval bounds
-of exact counts, the deltas of inconclusive and new rows, and
-`geomean_delta` when no row of the metric was comparable.
+of exact counts, the deltas of new rows and of inconclusive rows no
+comparison ran for, and `geomean_delta` when no row of the metric was
+comparable. An inconclusive row that reached the rank test reports its
+first estimate and interval.
 
 ```json
 { "overall": "fail", "machine": "9f3a1c2e8b4d6a07",

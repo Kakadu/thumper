@@ -115,7 +115,7 @@ let rel_name = function
   | Judged (Equivalent None) -> "equivalent-exact"
   | Judged (Equivalent (Some _)) -> "equivalent"
   | Judged (Within_budget _) -> "within_budget"
-  | Judged (Inconclusive r) -> "inconclusive:" ^ reason_name r
+  | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
 
 let overall_name = function
   | `Pass -> "pass"
@@ -1352,6 +1352,70 @@ let json_unconfirmed_counts_inconclusive () =
   is_true ~msg:"summary bucket" (contains ~sub:"\"n_inconclusive\":1" json);
   is_true ~msg:"never improved" (contains ~sub:"\"n_improved\":0" json)
 
+let inconclusive_shift t =
+  match verdict_of t ~case:"a" ~metric:m_wall with
+  | Judged (Inconclusive { shift; _ }) -> shift
+  | v -> failf "expected an inconclusive relation, got %s" (rel_name v)
+
+let rank_tested_inconclusive_keeps_its_shift () =
+  (* Every row that reached the rank test keeps its first-pass estimate and
+     interval, whatever its relation; a row no comparison ran for has none. *)
+  let first_is_doubling msg t =
+    match inconclusive_shift t with
+    | Some sh -> is_true ~msg (Float.abs (sh.Verdict.estimate -. 1.0) < 1e-9)
+    | None -> failf "%s: expected the first-pass shift" msg
+  in
+  first_is_doubling "unconfirmed"
+    (regression_scenario ~confirm:(fun _ -> None) ());
+  first_is_doubling "environment at confirmation"
+    (let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+     run_check ~file
+       ~decide_gate:(Env.Loaded { load = 8.; cores = 8 })
+       [ (bcase "a", wall_trial (ties 5 2.0)) ]);
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  (match
+     inconclusive_shift (run_check ~file [ (bcase "a", wall_trial spread) ])
+   with
+  | Some sh ->
+      is_true ~msg:"wide interval: a real interval"
+        (sh.Verdict.lower < sh.Verdict.upper)
+  | None -> failf "wide interval: expected the first-pass shift");
+  is_none ~msg:"environment at the first pass: no comparison ran"
+    (inconclusive_shift
+       (run_check ~file
+          ~gate:(Env.Loaded { load = 8.; cores = 8 })
+          [ (bcase "a", wall_trial (ties 5 2.0)) ]));
+  is_none ~msg:"drifted candidate: no comparison ran"
+    (inconclusive_shift
+       (run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]))
+
+let json_rank_tested_inconclusive_reports_its_deltas () =
+  let d = expm1 (log 2.0) in
+  let f v = Printf.sprintf "%.17g" v in
+  let json =
+    Verdict.to_json (regression_scenario ~confirm:(fun _ -> None) ())
+  in
+  is_true ~msg:"deltas"
+    (contains
+       ~sub:
+         ("\"delta\":" ^ f d ^ ",\"lower_delta\":" ^ f d ^ ",\"upper_delta\":"
+        ^ f d)
+       json);
+  is_true ~msg:"in the geomean"
+    (contains ~sub:("\"geomean_delta\":" ^ f d) json);
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let json =
+    Verdict.to_json
+      (run_check ~file
+         ~gate:(Env.Loaded { load = 8.; cores = 8 })
+         [ (bcase "a", wall_trial (ties 5 2.0)) ])
+  in
+  is_true ~msg:"no comparison: null deltas"
+    (contains ~sub:"\"delta\":null,\"lower_delta\":null,\"upper_delta\":null"
+       json);
+  is_true ~msg:"no comparison: null geomean"
+    (contains ~sub:"\"geomean_delta\":null" json)
+
 let json_candidate_side_reason_wire_strings () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let drifted =
@@ -1432,6 +1496,8 @@ let () =
         ];
       group "quality degradations"
         [
+          test "a rank-tested inconclusive row keeps its shift"
+            rank_tested_inconclusive_keeps_its_shift;
           test "a drifting candidate trial never produces a verdict"
             drifted_candidate_never_produces_a_verdict;
           test "an unstable candidate blocks demonstrated directions only"
@@ -1530,6 +1596,8 @@ let () =
       group "exit codes" [ test "the exit table incl. strict" exit_code_table ];
       group "json"
         [
+          test "a rank-tested inconclusive row reports its deltas"
+            json_rank_tested_inconclusive_reports_its_deltas;
           test "golden document: field names, order, nullability"
             json_golden_document;
           test "confirmed regression document"

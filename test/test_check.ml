@@ -158,7 +158,7 @@ let rel_name = function
   | Judged (Equivalent None) -> "equivalent-exact"
   | Judged (Equivalent (Some _)) -> "equivalent"
   | Judged (Within_budget _) -> "within_budget"
-  | Judged (Inconclusive r) -> "inconclusive:" ^ reason_name r
+  | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
 
 let overall_name = function
   | `Pass -> "pass"
