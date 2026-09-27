@@ -45,11 +45,15 @@ let other_ident =
 
 let ties n v = Array.make n v
 
-let sam ?(outliers = 0) ?(drifted = false) ?(unstable = false) sorted =
-  Run.sampled ~sorted ~outliers ~drifted ~unstable
+let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
 
-let wall_trial ?(k = 8) ?(drifted = false) ?(unstable = false) samples =
-  Run.Trial.make ~k [ (m_wall, Run.Samples (sam ~drifted ~unstable samples)) ]
+let wall_trial ?(k = 8) ?(drifted = false) samples =
+  Run.Trial.make ~k [ (m_wall, Run.Samples (sam ~drifted samples)) ]
+
+(* Unstable evidence at [v] per call: nineteen samples at [v] and one at
+   [100 v]. Judgment reads the instability from the sorted vector itself;
+   the rank shift against tied rows at [x] stays exactly [log v -. log x]. *)
+let spiked v = Array.append (Array.make 19 v) [| 100. *. v |]
 
 let trial ?(k = 8) ms = Run.Trial.make ~k ms
 
@@ -271,9 +275,7 @@ let drifted_confirmation_is_inconclusive () =
 
 let unstable_confirmation_is_inconclusive () =
   let t =
-    regression_scenario
-      ~confirm:(fun _ -> Some (wall_trial ~unstable:true (ties 5 2.0)))
-      ()
+    regression_scenario ~confirm:(fun _ -> Some (wall_trial (spiked 2.0))) ()
   in
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
 
@@ -362,7 +364,7 @@ let decide_rejects_unrequested_or_duplicate_ids () =
 
 (* Quality degradations *)
 
-let unstable_baseline = Array.append (ties 19 1.0) [| 100.0 |]
+let unstable_baseline = spiked 1.0
 
 let drifted_candidate_never_produces_a_verdict () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
@@ -379,19 +381,13 @@ let drifted_candidate_never_produces_a_verdict () =
 
 let unstable_candidate_blocks_demonstrated_directions () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let strong =
-    run_check ~file [ (bcase "a", wall_trial ~unstable:true (ties 5 2.0)) ]
-  in
+  let strong = run_check ~file [ (bcase "a", wall_trial (spiked 2.0)) ] in
   check_rel ~msg:"strong" strong ~case:"a" ~metric:m_wall
     "inconclusive:candidate_unstable";
-  let within =
-    run_check ~file [ (bcase "a", wall_trial ~unstable:true (ties 5 1.03)) ]
-  in
+  let within = run_check ~file [ (bcase "a", wall_trial (spiked 1.03)) ] in
   check_rel ~msg:"within_budget" within ~case:"a" ~metric:m_wall
     "inconclusive:candidate_unstable";
-  let equiv =
-    run_check ~file [ (bcase "a", wall_trial ~unstable:true (ties 5 1.0)) ]
-  in
+  let equiv = run_check ~file [ (bcase "a", wall_trial (spiked 1.0)) ] in
   check_rel ~msg:"equivalent survives" equiv ~case:"a" ~metric:m_wall
     "equivalent"
 
@@ -1423,9 +1419,7 @@ let json_candidate_side_reason_wire_strings () =
   in
   is_true ~msg:"drifted wire string"
     (contains ~sub:"\"reason\":\"drifted\"" (Verdict.to_json drifted));
-  let unstable =
-    run_check ~file [ (bcase "a", wall_trial ~unstable:true (ties 5 2.0)) ]
-  in
+  let unstable = run_check ~file [ (bcase "a", wall_trial (spiked 2.0)) ] in
   is_true ~msg:"unstable wire string"
     (contains ~sub:"\"reason\":\"unstable\"" (Verdict.to_json unstable))
 

@@ -67,10 +67,6 @@ let golden_tests () =
                   in
                   equal ~msg:"lower" exactly lo lower;
                   equal ~msg:"upper" exactly hi upper)
-          | [ "outliers"; data; count ] ->
-              let v = vec data and count = int_of_string count in
-              test (name "outliers") (fun () ->
-                  equal int count (Stats.outlier_count_sorted v))
           | [ "severe"; data; expected ] ->
               let v = vec data and expected = expected = "1" in
               test (name "severe") (fun () ->
@@ -358,14 +354,16 @@ let units =
           Array.init 20 (fun i -> 1.0 +. if i mod 2 = 0 then 0.001 else -0.001)
         in
         is_false (Stats.drifted ~alpha:0.01 v));
-    test "outlier count of a constant vector is 0" (fun () ->
-        equal int 0 (Stats.outlier_count_sorted (Array.make 10 1.0)));
-    test "outlier count sees one planted spike" (fun () ->
-        let v = Array.append (Array.make 19 1.0) [| 100.0 |] in
-        equal int 1 (Stats.outlier_count_sorted v));
     test "a single huge spike is severe outlier inflation" (fun () ->
         let v = Array.append (Array.make 19 1.0) [| 100.0 |] in
         is_true (Stats.severe_outlier_inflation_sorted v));
+    test "one mild spike sits just below the severe grade" (fun () ->
+        (* Its minimal outlier-explained fraction is about 0.48: flipping
+           either subtraction in the variance model tips it past 0.5. *)
+        let v = Array.append (Array.make 19 1.0) [| 1.5 |] in
+        is_false (Stats.severe_outlier_inflation_sorted v));
+    test "a zero first sample is not a negative one" (fun () ->
+        is_false (Stats.severe_outlier_inflation_sorted [| 0.; 0.; 0. |]));
     test "a tight jitter vector is not severe" (fun () ->
         let v =
           sorted
@@ -392,8 +390,6 @@ let validation =
         let v = [| 1.; 2.; 3. |] in
         invalid (fun () -> Stats.median_ci_sorted ~alpha:0. v);
         invalid (fun () -> Stats.median_ci_sorted ~alpha:1. v));
-    test "outlier_count_sorted rejects n < 3" (fun () ->
-        invalid (fun () -> Stats.outlier_count_sorted [| 1.; 2. |]));
     test "severe_outlier_inflation_sorted rejects negative samples" (fun () ->
         invalid (fun () ->
             Stats.severe_outlier_inflation_sorted [| -1.; 0.; 1. |]));

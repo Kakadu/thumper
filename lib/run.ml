@@ -3,17 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type sampled = {
-  sorted : float array;
-  outliers : int;
-  drifted : bool;
-  unstable : bool;
-}
+type sampled = { sorted : float array; drifted : bool }
 
 (* Loud [Invalid_argument]s throughout, [Stats] style: broken evidence here is
    a harness bug, never data (measurement guarantees sorted, finite, n >= 3). *)
 
-let sampled ~sorted ~outliers ~drifted ~unstable =
+let sampled ~sorted ~drifted =
   (* Copy before validating: the checks below then hold for the array actually
      stored, by construction — never for a caller's alias whose mutation could
      revoke the invariant between check and store. *)
@@ -33,10 +28,7 @@ let sampled ~sorted ~outliers ~drifted ~unstable =
     if not (sorted.(i) <= sorted.(i + 1)) then
       invalid_arg "Run.sampled: vector not sorted ascending"
   done;
-  if outliers < 0 || outliers > n then
-    invalid_arg
-      (Printf.sprintf "Run.sampled: outlier count %d outside [0;%d]" outliers n);
-  { sorted; outliers; drifted; unstable }
+  { sorted; drifted }
 
 type measurement = Samples of sampled | Exact of int
 

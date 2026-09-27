@@ -7,17 +7,16 @@
 
     A {e trial} is one case's evidence: the frozen batch size k, one sorted
     sample vector per sampled metric, one proven integer per exact metric, plus
-    quality flags and warnings recorded at measurement time. A {e run} is an
+    the drift flag and warnings recorded at measurement time. A {e run} is an
     ordered list of (case id, trial) pairs — the value measurement produces and
     judgment consumes. Pure data: no judgment, no I/O, no host identity
     (identity is [Env]'s business and travels beside the run, not in it).
 
-    The quality flags ([outliers], [drifted], [unstable]) are computed by
-    [Stats] at measurement time and stored as data. For [drifted] storage is the
-    only option — the rank test needs the collection order, which dies when the
-    vector is sorted; the other two are re-derivable from the sorted vector
-    (judgment recomputes them for baseline rows) and are recorded here with the
-    evidence they describe. *)
+    The one quality flag, [drifted], is computed by [Stats] at measurement time
+    and stored as data: its rank test needs the collection order, which dies
+    when the vector is sorted. Everything else judgment asks of a trial (outlier
+    inflation included) it derives from the sorted vector itself, for baseline
+    rows and trials alike. *)
 
 (** {1:sampled Sampled evidence} *)
 
@@ -25,16 +24,10 @@ type sampled = private {
   sorted : float array;
       (** Per-call values, sorted ascending, all finite. Owned by the evidence
           value: consumers read it in place and must never mutate it. *)
-  outliers : int;
-      (** Number of samples outside the Tukey 1.5×IQR fences, in
-          \[[0];[Array.length sorted]\]. Outliers are counted, never removed. *)
   drifted : bool;
       (** [true] iff the first and second halves of the samples
           {e in collection order} differed by the Mann–Whitney rank test at α =
           0.01. *)
-  unstable : bool;
-      (** [true] iff outliers inflated the sample variance severely (criterion's
-          measure). *)
 }
 (** The type for one sampled metric's evidence. The record is private: only
     {!val:sampled} constructs it, so every value reaching judgment or the
@@ -42,19 +35,16 @@ type sampled = private {
     precondition of [Stats]'s judgment battery. Consumers project fields
     directly. *)
 
-val sampled :
-  sorted:float array -> outliers:int -> drifted:bool -> unstable:bool -> sampled
-(** [sampled ~sorted ~outliers ~drifted ~unstable] is validated sampled
-    evidence. The constructor copies [sorted] before validating; the result does
-    not alias the argument, so a caller mutating its array afterwards cannot
-    invalidate evidence already constructed, and the invariants are checked on
-    the array actually stored. (A vector is a few dozen floats at the preset
-    sample counts — the copy is nothing next to the measurement that produced
-    it.)
+val sampled : sorted:float array -> drifted:bool -> sampled
+(** [sampled ~sorted ~drifted] is validated sampled evidence. The constructor
+    copies [sorted] before validating; the result does not alias the argument,
+    so a caller mutating its array afterwards cannot invalidate evidence already
+    constructed, and the invariants are checked on the array actually stored. (A
+    vector is a few dozen floats at the preset sample counts — the copy is
+    nothing next to the measurement that produced it.)
 
     Raises [Invalid_argument] if [sorted] has fewer than 3 samples (measurement
-    guarantees n >= 3), contains a non-finite value, is not ascending,
-    or if [outliers] is outside \[[0];[Array.length sorted]\].
+    guarantees n >= 3), contains a non-finite value, or is not ascending.
 
     Non-finite entries are rejected here, at the evidence boundary, because
     nothing downstream reliably excludes them: an infinity sits in ascending

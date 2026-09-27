@@ -44,11 +44,10 @@ type reason =
           for metrics that are genuinely zero per call. [--precise] cannot
           help; budget the exact form of the metric or drop the budget. *)
   | Baseline_unstable
-      (** Severe outlier variance inflation, recomputed from the stored sorted
-          vector (the flag's other input, collection order, dies at measurement
-          time). Baseline rows get no drift check: the
-          stored vector is sorted, and the check already ran when the trial was
-          measured. *)
+      (** Severe outlier variance inflation of the stored sorted vector, by the
+          test the candidate's sorted vector gets for [Candidate_unstable].
+          Baseline rows get no drift check: the stored vector is sorted, and the
+          check already ran when the trial was measured. *)
   | Environment  (** The gate was [Loaded]; sampled metrics only. *)
   | Unconfirmed
       (** The confirmation pass did not reproduce the provisional strong

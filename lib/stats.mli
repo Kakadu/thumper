@@ -62,26 +62,17 @@ val median_ci_sorted : alpha:float -> float array -> interval
 
 (** {1:stability Stability diagnostics}
 
-    The three trial-quality flags: outlier count, severe
-    outlier-variance inflation ([unstable]), and the collection-order drift
-    check. Outliers are counted, never removed. *)
-
-val outlier_count_sorted : float array -> int
-(** [outlier_count_sorted v] is the number of samples strictly outside the Tukey
-    fences [Q1 -. 1.5 *. IQR] and [Q3 +. 1.5 *. IQR], where the quartiles are
-    linearly interpolated order statistics (quantile type 7, the numpy default):
-    at rank [h = p *. float (n - 1)], the quartile is
-    [v.(i) +. (h -. float i) *. (v.(i + 1) -. v.(i))] with [i = floor h].
-
-    Raises [Invalid_argument] if [Array.length v < 3] or [v] is not sorted
-    ascending. *)
+    The two trial-quality predicates: severe outlier-variance inflation
+    ([unstable]), which judgment reads from a sorted vector, and the
+    collection-order drift check, which measurement runs before sorting.
+    Outliers are never removed. *)
 
 val severe_outlier_inflation_sorted : float array -> bool
 (** [severe_outlier_inflation_sorted v] is [true] iff outliers inflate the
     sample variance severely — criterion's outlier-variance measure, [true] iff
     the minimal fraction of variance explainable by outliers is at least 0.5
-    (criterion's [Severe] grade). A [true] marks the trial unstable: it may
-    support [equivalent] or [inconclusive], never a strong verdict.
+    (criterion's [Severe] grade). A [true] marks the trial unstable; what an
+    unstable trial may support is [Verdict]'s rule.
 
     [v] must contain raw (nonnegative) per-call values, not logs: the measure
     compares the sample mean against dispersion and is not

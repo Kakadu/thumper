@@ -90,7 +90,7 @@ let ident =
   }
 
 let ties n v = Array.make n v
-let sam sorted = Run.sampled ~sorted ~outliers:0 ~drifted:false ~unstable:false
+let sam sorted = Run.sampled ~sorted ~drifted:false
 
 let trial ?(k = 8) ?(alloc = Some 54) wall =
   let ms = [ (m_wall, Run.Samples (sam wall)) ] in

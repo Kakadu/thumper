@@ -291,8 +291,7 @@ let probe_exact_with_real_instruments () =
 
 (* Steady 5 ms calls, then 5.25 ms from the 15th call on: with k = 1 and
    warmup 0 the twenty samples are calls 5..24, so the two halves sit on
-   opposite sides of the step. A 5% step drifts the rank test without
-   tripping the outlier-inflation measure. *)
+   opposite sides of the step. A 5% step drifts the rank test. *)
 let drift_flag_on_planted_step () =
   let w = world () in
   let case =
@@ -302,13 +301,12 @@ let drift_flag_on_planted_step () =
   let config = Config.(wall_only |> warmup 0.) in
   let t = trial_ok (measure ~config w case) in
   let s = samples_of t Metric.wall_time in
-  is_true ~msg:"drifted" s.Run.drifted;
-  is_false ~msg:"unstable" s.Run.unstable;
-  equal ~msg:"outliers" int 0 s.Run.outliers
+  is_true ~msg:"drifted" s.Run.drifted
 
-(* Two 200 ms spikes among 5 ms samples, one planted in each half: severe
-   outlier-variance inflation without drift. *)
-let unstable_flag_on_planted_outliers () =
+(* Two 200 ms spikes among 5 ms samples, one planted in each half: no drift,
+   and the spikes stay in the evidence (outliers are never removed; judgment
+   reads the inflation from the sorted vector). *)
+let planted_outliers_are_kept () =
   let w = world () in
   let case =
     bench_stepping w (fun call ->
@@ -317,9 +315,9 @@ let unstable_flag_on_planted_outliers () =
   let config = Config.(wall_only |> warmup 0.) in
   let t = trial_ok (measure ~config w case) in
   let s = samples_of t Metric.wall_time in
-  is_true ~msg:"unstable" s.Run.unstable;
   is_false ~msg:"drifted" s.Run.drifted;
-  equal ~msg:"outliers" int 2 s.Run.outliers
+  equal ~msg:"both spikes kept" int 2
+    (Array.fold_left (fun n x -> if x > 0.1 then n + 1 else n) 0 s.Run.sorted)
 
 let clean_case_has_no_flags () =
   let w = world () in
@@ -327,9 +325,7 @@ let clean_case_has_no_flags () =
   let config = Config.(wall_only |> warmup 0.) in
   let t = trial_ok (measure ~config w case) in
   let s = samples_of t Metric.wall_time in
-  is_false ~msg:"drifted" s.Run.drifted;
-  is_false ~msg:"unstable" s.Run.unstable;
-  equal ~msg:"outliers" int 0 s.Run.outliers
+  is_false ~msg:"drifted" s.Run.drifted
 
 (* Alternating 5 ms / 6 ms calls: both collection-order halves hold five of
    each, so there is no drift — but the {e sorted} halves are all-5s vs
@@ -345,9 +341,7 @@ let alternating_samples_do_not_drift () =
   let config = Config.(wall_only |> warmup 0.) in
   let t = trial_ok (measure ~config w case) in
   let s = samples_of t Metric.wall_time in
-  is_false ~msg:"drifted" s.Run.drifted;
-  is_false ~msg:"unstable" s.Run.unstable;
-  equal ~msg:"outliers" int 0 s.Run.outliers
+  is_false ~msg:"drifted" s.Run.drifted
 
 (* The deadline *)
 
@@ -524,9 +518,7 @@ let parse = Measure.Protocol.parse ~case:"c"
 
 let protocol_round_trip () =
   let sorted =
-    Run.sampled
-      ~sorted:[| 6.883e-7; 6.911e-7; 7.084e-7 |]
-      ~outliers:1 ~drifted:true ~unstable:false
+    Run.sampled ~sorted:[| 6.883e-7; 6.911e-7; 7.084e-7 |] ~drifted:true
   in
   let trial =
     Run.Trial.make ~k:8192
@@ -547,9 +539,7 @@ let protocol_round_trip () =
   equal ~msg:"samples survive %h exactly" (array float_exact)
     [| 6.883e-7; 6.911e-7; 7.084e-7 |]
     s.Run.sorted;
-  equal ~msg:"outliers" int 1 s.Run.outliers;
-  is_true ~msg:"drifted" s.Run.drifted;
-  is_false ~msg:"unstable" s.Run.unstable
+  is_true ~msg:"drifted" s.Run.drifted
 
 let failure_round_trips =
   [
@@ -579,7 +569,7 @@ let write_rejects_parent_side_failures () =
 
 let valid_wire =
   "k 8\n\
-   samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+   samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
    exact alloc_words 54\n\
    end\n"
 
@@ -602,71 +592,66 @@ let malformed_wire =
     ("unparseable batch size", "k eight\nend\n");
     ( "k below 1",
       "k 0\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "unknown metric",
       "k 8\n\
        exact bogus 54\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        end\n" );
     ( "exact for a clock metric",
       "k 8\nexact wall_time 5\nexact alloc_words 54\nend\n" );
     ( "unparseable exact value",
       "k 8\n\
        exact alloc_words fifty\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        end\n" );
     ("missing metric", "k 8\nexact alloc_words 54\nend\n");
     ( "duplicate metric",
       "k 8\n\
        exact alloc_words 54\n\
        exact alloc_words 54\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        end\n" );
     ( "hostile sample count",
       "k 8\n\
-       samples wall_time 999999999 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 999999999 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "short sample count",
       "k 8\n\
-       samples wall_time 2 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 2 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "unparseable sample",
       "k 8\n\
-       samples wall_time 3 0,0,0 0x1p-21 six 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 six 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "unsorted samples",
       "k 8\n\
-       samples wall_time 3 0,0,0 0x1p-20 0x1.8p-21 0x1p-21\n\
+       samples wall_time 3 0 0x1p-20 0x1.8p-21 0x1p-21\n\
        exact alloc_words 54\n\
        end\n" );
     ( "non-finite sample",
       "k 8\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 inf\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 inf\n\
        exact alloc_words 54\n\
        end\n" );
-    ( "outliers out of range",
-      "k 8\n\
-       samples wall_time 3 7,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "unparseable flags",
+    ( "unparseable drifted flag",
       "k 8\n\
        samples wall_time 3 0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "non-boolean flag",
       "k 8\n\
-       samples wall_time 3 0,2,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 2 0x1p-21 0x1.8p-21 0x1p-20\n\
        exact alloc_words 54\n\
        end\n" );
     ( "metric line after warnings",
       "k 8\n\
-       samples wall_time 3 0,0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        warning w\n\
        exact alloc_words 54\n\
        end\n" );
@@ -809,8 +794,8 @@ let () =
           test "drift on a planted step" drift_flag_on_planted_step;
           test "alternating samples do not drift (order preserved)"
             alternating_samples_do_not_drift;
-          test "unstable on planted severe outliers"
-            unstable_flag_on_planted_outliers;
+          test "planted outliers are kept, without drift"
+            planted_outliers_are_kept;
           test "clean case has no flags" clean_case_has_no_flags;
         ];
       group "deadline"

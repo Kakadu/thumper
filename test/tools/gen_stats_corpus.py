@@ -15,8 +15,8 @@ reference implementations:
   cases; scipy's exact method is not tie-corrected either) and for the Moses
   cutoff k (one-sided exact p-values at constructed statistics ARE the null
   CDF, so k is re-derived from scipy alone), `numpy.median` over the pairwise
-  differences for the Hodges-Lehmann estimate, `scipy.stats.binom` for the
-  binomial median-CI cutoffs, and `numpy.percentile` for the Tukey quartiles.
+  differences for the Hodges-Lehmann estimate, and `scipy.stats.binom` for the
+  binomial median-CI cutoffs.
 
 Determinism: sample data is produced by a fixed LCG on the dyadic grid
 k/2^16 and every expected value except `geomean` involves only IEEE-exact
@@ -39,7 +39,6 @@ comma-separated vectors are C99 hex floats (lossless round-trip). Vectors for
 Rows:
     median      <data> <expected>
     median_ci   <alpha> <data> <lower> <upper>
-    outliers    <data> <count>
     severe      <data> <0|1>
     mw_p        <x> <y> <p>
     drifted     <alpha> <data> <0|1>
@@ -136,22 +135,6 @@ def binom_ci_l(n: int, alpha: float) -> int:
 def median_ci(v: list[float], alpha: float) -> tuple[float, float]:
     l = binom_ci_l(len(v), alpha)
     return v[l - 1], v[len(v) - l]
-
-
-def quartile(v: list[float], p: float) -> float:
-    """Type-7 (linear interpolation) quantile of sorted v; mirrors stats.ml."""
-    h = p * float(len(v) - 1)
-    i = int(math.floor(h))
-    frac = h - float(i)
-    return v[i] if frac == 0.0 else v[i] + frac * (v[i + 1] - v[i])
-
-
-def outlier_count(v: list[float]) -> int:
-    q1, q3 = quartile(v, 0.25), quartile(v, 0.75)
-    iqr = q3 - q1
-    lo = q1 - (1.5 * iqr)
-    hi = q3 + (1.5 * iqr)
-    return sum(1 for x in v if x < lo or x > hi)
 
 
 def severe_inflation(v: list[float]) -> bool:
@@ -327,16 +310,6 @@ def xcheck_hl(b: list[float], c: list[float], est: float) -> None:
     xcheck("hl np.median", float(np.median(diffs)) == est)
 
 
-def xcheck_quartiles(v: list[float]) -> None:
-    if not HAVE_SCIPY:
-        checks["skipped"] += 1
-        return
-    for p, pct in ((0.25, 25), (0.75, 75)):
-        ours = quartile(v, p)
-        ref = float(np.percentile(np.array(v), pct))
-        xcheck("percentile", abs(ours - ref) <= 1e-9 * max(1.0, abs(ref)))
-
-
 def sample_with_u(m: int, n: int, c: int) -> tuple[list[float], list[float]]:
     """Tie-free samples (x of size m, y of size n) with #{x_i > y_j} = c."""
     q, r = divmod(c, n)
@@ -436,21 +409,13 @@ def build() -> str:
         xcheck_median_ci(v, alpha)
         emit("median_ci", repr(alpha), hexv(v), hexf(lo), hexf(hi))
 
-    # --- outliers -----------------------------------------------------------
-    clean20 = sorted(uvec(rng, 20, 6_500_000, 6_600_000))
-    spiky20 = sorted(
-        uvec(rng, 17, 6_500_000, 6_600_000)
-        + [grid(9_000_000), grid(9_500_000), grid(4_000_000)]
-    )
-    for v in [
-        clean20,
-        spiky20,
-        sorted(uvec(rng, 20, 95, 105, step=32_768)),  # ties
-        [grid(6_553_600)] * 10,  # constant
-        sorted(uvec(rng, 37, 1_000_000, 1_100_000) + [grid(2_000_000)] * 3),
-    ]:
-        xcheck_quartiles(v)
-        emit("outliers", hexv(v), str(outlier_count(v)))
+    # --- (retired) outlier counts --------------------------------------------
+    # The outlier count left the measurement protocol, and its rows with it.
+    # The section's draws stay, so every later row keeps its bytes.
+    uvec(rng, 20, 6_500_000, 6_600_000)
+    uvec(rng, 17, 6_500_000, 6_600_000)
+    uvec(rng, 20, 95, 105, step=32_768)
+    uvec(rng, 37, 1_000_000, 1_100_000)
 
     # --- severe -------------------------------------------------------------
     stable20 = sorted(uvec(rng, 20, 6_500_000, 6_600_000))

@@ -196,9 +196,9 @@ val measure :
     baseline is consulted (every case calibrates freely: there is no row to
     freeze against), no verdict is formed, and the environment gate is not
     sampled — there is no judgment to degrade, and trial quality travels with
-    the evidence ({!Run.sampled}'s flags). Selection and failure behave as in
-    {!run}: resolution happens before the lease, an empty selection and
-    duplicate ids are {!Error}s, and the first measurement failure aborts the
-    run. [instruments] is {!Measure.case}'s seam and [on_progress] the per-case
-    tick (always [`Measuring] — there is no confirmation sweep), as in
-    {!run_with}; [config] defaults to {!Config.default}. Raises {!Error}. *)
+    the evidence ({!Run.sampled}'s drift flag and sorted vector). Selection and
+    failure behave as in {!run}: resolution happens before the lease, an empty
+    selection and duplicate ids are {!Error}s, and the first measurement failure
+    aborts the run. [instruments] is {!Measure.case}'s seam and [on_progress]
+    the per-case tick (always [`Measuring] — there is no confirmation sweep), as
+    in {!run_with}; [config] defaults to {!Config.default}. Raises {!Error}. *)

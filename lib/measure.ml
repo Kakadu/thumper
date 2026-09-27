@@ -106,11 +106,9 @@ module Protocol = struct
             match meas with
             | Run.Exact v -> Printf.bprintf buf "exact %s %d\n" (Metric.id m) v
             | Run.Samples s ->
-                Printf.bprintf buf "samples %s %d %d,%d,%d" (Metric.id m)
+                Printf.bprintf buf "samples %s %d %d" (Metric.id m)
                   (Array.length s.Run.sorted)
-                  s.Run.outliers
-                  (if s.Run.drifted then 1 else 0)
-                  (if s.Run.unstable then 1 else 0);
+                  (if s.Run.drifted then 1 else 0);
                 Array.iter (fun x -> Printf.bprintf buf " %h" x) s.Run.sorted;
                 Buffer.add_char buf '\n')
           (Run.Trial.measurements trial);
@@ -133,21 +131,10 @@ module Protocol = struct
       | Some m -> m
       | None -> malformed "unknown metric %S" mid
     in
-    let parse_flags s =
-      match String.split_on_char ',' s with
-      | [ o; d; u ] ->
-          let outliers =
-            match int_of_string_opt o with
-            | Some o -> o
-            | None -> malformed "unparseable outlier count %S" o
-          in
-          let flag name = function
-            | "0" -> false
-            | "1" -> true
-            | v -> malformed "unparseable %s flag %S" name v
-          in
-          (outliers, flag "drifted" d, flag "unstable" u)
-      | _ -> malformed "unparseable flags %S" s
+    let parse_drifted = function
+      | "0" -> false
+      | "1" -> true
+      | v -> malformed "unparseable drifted flag %S" v
     in
     let parse_metric_line line =
       match String.split_on_char ' ' line with
@@ -156,14 +143,14 @@ module Protocol = struct
           match int_of_string_opt v with
           | Some v -> (m, Run.Exact v)
           | None -> malformed "unparseable exact value %S" v)
-      | "samples" :: mid :: count :: flags :: values ->
+      | "samples" :: mid :: count :: drifted :: values ->
           let m = resolve mid in
           let n =
             match int_of_string_opt count with
             | Some n -> n
             | None -> malformed "unparseable sample count %S" count
           in
-          let outliers, drifted, unstable = parse_flags flags in
+          let drifted = parse_drifted drifted in
           (* Compare the claimed count against the values actually present
              before materializing anything: a hostile count allocates
              nothing. *)
@@ -180,7 +167,7 @@ module Protocol = struct
                  values)
           in
           let s =
-            try Run.sampled ~sorted ~outliers ~drifted ~unstable
+            try Run.sampled ~sorted ~drifted
             with Invalid_argument m -> malformed "invalid samples: %s" m
           in
           (m, Run.Samples s)
@@ -469,16 +456,14 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
              "wall_time %.3g ns/call: possibly folded: wrap the input in \
               black_box"
              (wall_median *. 1e9));
-      (* Quality flags: drift on the collection-order vector, outliers and
-         inflation on the raw sorted values — all before judgment ever sees
-         the evidence. *)
+      (* Drift is the one quality flag that needs the collection order, so it
+         is computed here, before sorting; judgment derives the rest from the
+         sorted vector. *)
       let sampled_of collection =
         let drifted = Stats.drifted ~alpha:drift_alpha collection in
         let sorted = Array.copy collection in
         Array.sort Float.compare sorted;
-        let outliers = Stats.outlier_count_sorted sorted in
-        let unstable = Stats.severe_outlier_inflation_sorted sorted in
-        Run.sampled ~sorted ~outliers ~drifted ~unstable
+        Run.sampled ~sorted ~drifted
       in
       (* The k/2k differencing probe: per-call words
          a = (d2k - dk) / k, exact iff the division has residue < 1 word and

@@ -13,12 +13,12 @@ reading; the **adapters** own paths, argv, and rendering.
 
 | module | layer | contents |
 | --- | --- | --- |
-| `stats` | pure | order statistics: median + binomial CI, Tukey outliers, severe-inflation predicate, Mann–Whitney drift test, Hodges–Lehmann/Moses shift, geomean. Unit-agnostic; no RNG |
+| `stats` | pure | order statistics: median + binomial CI, severe-inflation predicate, Mann–Whitney drift test, Hodges–Lehmann/Moses shift, geomean. Unit-agnostic; no RNG |
 | `metric` | pure | metric identity and *how* a quantity is read (`Wall_clock`, `Cpu_clock`, `Gc_counter`); the `gc_snapshot` record the seam traffics in |
 | `budget` | pure | contracts (`Relative` with resolved band, `Absolute_max`); the default budget constants |
 | `config` | pure | the protocol knob container (private record): n, batch floor, warmup, deadline, metrics, fork |
 | `bench` | pure | authoring constructors, id validation, inheritance, the filter algebra, `resolve`, `prepare` |
-| `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, quality flags, warnings), `Run.t` |
+| `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, the drift flag, warnings), `Run.t` |
 | `baseline` | pure¹ | the format-v1 codec: strict parse with the median checksum, byte-identical re-emission, the mechanical mutators `set_section`/`update_rows`, one atomic `write` |
 | `verdict` | pure | judgment (`judge`/`confirmations`/`decide`), relations with confirmation evidence in the type, JSON, exit codes, and both write paths: `candidate` (the ratchet) and `bless` |
 | `env` | OS edge | machine key, host/ocaml identity strings, load average, the gate predicate, `wait_quiet`, the per-user lease |

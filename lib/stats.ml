@@ -273,20 +273,6 @@ let median_ci_sorted ~alpha v =
   in
   { lower = v.(l - 1); upper = v.(n - l) }
 
-let quartile_of_sorted v p =
-  (* Linearly interpolated order statistic (quantile type 7). *)
-  let h = p *. float_of_int (Array.length v - 1) in
-  let i = int_of_float (floor h) in
-  let frac = h -. float_of_int i in
-  if frac = 0. then v.(i) else v.(i) +. (frac *. (v.(i + 1) -. v.(i)))
-
-let outlier_count_sorted v =
-  check_sorted "outlier_count_sorted" ~min_n:3 v;
-  let q1 = quartile_of_sorted v 0.25 and q3 = quartile_of_sorted v 0.75 in
-  let iqr = q3 -. q1 in
-  let lo = q1 -. (1.5 *. iqr) and hi = q3 +. (1.5 *. iqr) in
-  Array.fold_left (fun acc x -> if x < lo || x > hi then acc + 1 else acc) 0 v
-
 (* Criterion's outlier-variance measure (ported from Brent Boyer's "Robust
    Java benchmarking" via criterion): the minimal fraction of the sample
    variance explainable by outlier contamination, computed from the sample

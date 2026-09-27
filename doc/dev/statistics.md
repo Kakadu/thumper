@@ -26,23 +26,22 @@ floor absorbs most residual dependence, the drift check rejects
 trials whose halves disagree, and the environment gate rejects hosts
 whose load makes exchangeability a fiction.
 
-## Per-trial diagnostics (measurement time)
+## Per-trial diagnostics
 
 For each sampled metric, a trial holds n per-batch samples
-(per-call = interval / k). Before sorting, `measure` computes and
-stores three flags:
+(per-call = interval / k). Outliers are never removed. Two
+diagnostics decide whether a trial can support a direction:
 
-- **outliers** — count outside the Tukey 1.5×IQR fences (quantile
-  type 7). Counted, never removed.
-- **unstable** — criterion's severe outlier-variance inflation (≥ 0.5
-  of variance explainable by outliers). An unstable trial may support
-  `equivalent` or `inconclusive`, never a demonstrated direction.
-- **drifted** — two-sided Mann–Whitney between the first and second
-  half *in collection order*, α = 0.01. A drifting trial cannot
-  produce a verdict. Collection order dies at sorting, so this flag
-  must be computed at measurement time; baseline rows get no drift
-  check (already performed when they were measured) and have
-  `unstable` recomputed from the stored sorted vector.
+- **drifted** (measurement time) — two-sided Mann–Whitney between the
+  first and second half *in collection order*, α = 0.01. A drifting
+  trial cannot produce a verdict. Collection order dies at sorting, so
+  this is the one flag `measure` computes and stores; baseline rows get
+  no drift check (already performed when they were measured).
+- **unstable** (judgment time) — criterion's severe outlier-variance
+  inflation (≥ 0.5 of variance explainable by outliers), computed from
+  the sorted vector, the same way for a stored baseline row and for a
+  trial. An unstable trial may support `equivalent` or `inconclusive`,
+  never a demonstrated direction.
 
 ## The comparison
 

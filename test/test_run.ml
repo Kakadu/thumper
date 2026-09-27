@@ -15,8 +15,7 @@ module Run = Thumper.Private.Run
 let invalid fn =
   raises_match (function Invalid_argument _ -> true | _ -> false) fn
 
-let sam ?(outliers = 0) ?(drifted = false) ?(unstable = false) sorted =
-  Run.sampled ~sorted ~outliers ~drifted ~unstable
+let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
 
 let pp_measurement ppf = function
   | Run.Samples s ->
@@ -32,11 +31,9 @@ let measurement = Testable.make ~pp:pp_measurement ~equal:( = )
 (* The sampled constructor *)
 
 let sampled_accepts_sorted () =
-  let s = sam ~outliers:1 ~drifted:true ~unstable:true [| 1.; 2.; 3. |] in
+  let s = sam ~drifted:true [| 1.; 2.; 3. |] in
   equal ~msg:"sorted" (array float_exact) [| 1.; 2.; 3. |] s.Run.sorted;
-  equal ~msg:"outliers" int 1 s.Run.outliers;
-  is_true ~msg:"drifted" s.Run.drifted;
-  is_true ~msg:"unstable" s.Run.unstable
+  is_true ~msg:"drifted" s.Run.drifted
 
 let sampled_accepts_ties () =
   let s = sam [| 1.; 1.; 1. |] in
@@ -62,12 +59,6 @@ let sampled_rejects_nan () =
 let sampled_rejects_infinite () =
   invalid (fun () -> sam [| Float.neg_infinity; 1.; 2. |]);
   invalid (fun () -> sam [| 1.; 2.; Float.infinity |])
-
-let sampled_outlier_range () =
-  invalid (fun () -> sam ~outliers:(-1) [| 1.; 2.; 3. |]);
-  invalid (fun () -> sam ~outliers:4 [| 1.; 2.; 3. |]);
-  equal ~msg:"0 accepted" int 0 (sam ~outliers:0 [| 1.; 2.; 3. |]).Run.outliers;
-  equal ~msg:"n accepted" int 3 (sam ~outliers:3 [| 1.; 2.; 3. |]).Run.outliers
 
 (* Array ownership *)
 
@@ -251,7 +242,6 @@ let () =
           test "rejects an unsorted vector" sampled_rejects_unsorted;
           test "rejects NaN at any position" sampled_rejects_nan;
           test "rejects infinities" sampled_rejects_infinite;
-          test "rejects an outlier count outside [0;n]" sampled_outlier_range;
         ];
       group "ownership"
         [

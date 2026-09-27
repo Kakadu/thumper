@@ -8,12 +8,12 @@
     {!case} measures one benchmark case under the frozen protocol, in order:
     calibration with frozen-k reuse, fixed warmup, one [Gc.full_major] then
     free-running GC, n timed batches, and the k/2k exactness probe in
-    differencing form. Quality flags ([outliers], [drifted], [unstable])
-    are computed on collection-order data before sorting; GC-parameter mutation
-    and suspected constant folding are detected and warned, never judged. By
-    default each case runs in a forked worker (fresh heap, counters and probes
-    read in the child) that reports over the line-oriented {!Protocol};
-    [config.fork = false] runs the same driver in-process.
+    differencing form. The drift flag is computed on collection-order data
+    before sorting; GC-parameter mutation and suspected constant folding are
+    detected and warned, never judged. By default each case runs in a forked
+    worker (fresh heap, counters and probes read in the child) that reports over
+    the line-oriented {!Protocol}; [config.fork = false] runs the same driver
+    in-process.
 
     Knows nothing about baselines ([frozen_k] arrives as data), budgets,
     verdicts, or the lease (the caller holds it). *)
@@ -33,12 +33,10 @@ type instruments = {
     successive reads of [now_ns] and [cpu_ns] are non-decreasing, and every [gc]
     counter is non-decreasing across reads. Per-call samples are interval
     differences divided by the batch size, so the contract is what makes them
-    non-negative — the precondition of the outlier-inflation check
-    ([Stats.severe_outlier_inflation_sorted]). An instrument that violates it is
-    a programmer error: the statistics it feeds can raise [Invalid_argument],
-    and the exactness probe raises [Invalid_argument] outright when a counter
-    decreases across a probe batch (in a forked worker the child dies and the
-    case fails as {!Worker_died}).
+    non-negative. An instrument that violates it is a programmer error: the
+    exactness probe raises [Invalid_argument] when a counter decreases across a
+    probe batch (in a forked worker the child dies and the case fails as
+    {!Worker_died}).
 
     One termination precondition rides on the clock: the timed warmup arm waits
     for [now_ns] to advance by [config.warmup_time], so a scripted clock that
@@ -108,9 +106,8 @@ val case :
       for the measured region. GC parameters are snapshotted at start; a case
       that mutates them gets a warning naming each changed parameter.
     - {b Sampling.} [config.n] timed batches on the instruments' clock; per-call
-      sample = batch interval / [k]. Quality flags are computed on the
-      collection-order vector (drift) and its raw values (outlier inflation)
-      before sorting.
+      sample = batch interval / [k]. The drift flag is computed on the
+      collection-order vector before sorting.
     - {b Exactness probe.} Around batches of [k] and [2k] calls the allocation
       counters are diffed: per-call words [a = (Δ2k - Δk) / k], exact iff the
       division has residue < 1 word, [a >= 0] (an allocator whose [2k] batch
@@ -162,7 +159,7 @@ val case :
     {v
     k <int>
     exact <metric-id> <int>
-    samples <metric-id> <n> <outliers>,<drifted>,<unstable> <h1> <h2> ...
+    samples <metric-id> <n> <drifted> <h1> <h2> ...
     warning <text>
     end
     v}
@@ -170,8 +167,8 @@ val case :
     A successful trial is [k], one [exact] or [samples] line per metric (in
     measurement order; [samples] values are sorted ascending, printed as [%h]
     hex floats — lossless), the [warning] lines in emission order, then [end].
-    [<drifted>] and [<unstable>] are [0] or [1]. A failed measurement is a
-    single line instead: [raised <text>] ([Case_raised]). *)
+    [<drifted>] is [0] or [1]. A failed measurement is a single line instead:
+    [raised <text>] ([Case_raised]). *)
 
 module Protocol : sig
   val write : Buffer.t -> (Run.Trial.t, failure) result -> unit

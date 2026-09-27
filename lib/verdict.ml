@@ -128,7 +128,10 @@ let oriented _metric (sh : shift) = (sh.lower, sh.upper)
 
 let is_loaded = function Env.Loaded _ -> true | Env.Quiet -> false
 
-let baseline_unstable samples =
+(* One reading for both sides, from the sorted vector alone: a stored
+   baseline row and a trial are unstable by the same test. A negative
+   sample is never unstable here; it is [Non_positive] evidence. *)
+let unstable samples =
   Array.length samples >= 3
   && samples.(0) >= 0.
   && Stats.severe_outlier_inflation_sorted samples
@@ -223,9 +226,9 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
       (* Instability undermines a demonstrated direction: unstable
          trials support equivalent or inconclusive only. *)
       let unless_unstable settle =
-        if baseline_unstable baseline then
+        if unstable baseline then
           Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
-        else if cand.Run.unstable then
+        else if unstable cand.Run.sorted then
           Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
         else settle ()
       in
@@ -463,7 +466,8 @@ let resolve_pending ~gate ~conf metric pd =
     | Some trial -> (
         match Run.Trial.measurement trial metric with
         | Some (Run.Samples s)
-          when (not s.Run.drifted) && (not s.Run.unstable)
+          when (not s.Run.drifted)
+               && (not (unstable s.Run.sorted))
                && all_positive s.Run.sorted -> (
             let confirmation =
               fractional_of_stats
