@@ -246,10 +246,11 @@ module Lease = struct
   let same_file (a : Unix.stats) (b : Unix.stats) =
     a.st_dev = b.st_dev && a.st_ino = b.st_ino
 
-  (* In-process reentrancy depth: fcntl locks are per-process, so a nested
-     OS-level acquisition would silently succeed and its release would drop
-     the outer lock. Guarded by running measurement single-domain (.mli). *)
-  let depth = ref 0
+  (* Whether this process holds the lease: fcntl locks are per-process, so a
+     nested OS-level acquisition would silently succeed and its release would
+     drop the outer lock. Guarded by running measurement single-domain
+     (.mli). *)
+  let held = ref false
 
   (* The holder stamp: unique per acquisition (pid + monotonic timestamp),
      written into the file under the lock. Waiters detect an ownership change
@@ -410,20 +411,17 @@ module Lease = struct
            "Thumper.Env.Lease.with_lease: wait_s %g (need a non-negative wait \
             in seconds)"
            wait_s);
-    if !depth > 0 then begin
-      (* Reentrant: the lease is already held by this process (.mli). *)
-      incr depth;
-      Fun.protect ~finally:(fun () -> decr depth) (fun () -> Ok (f ()))
-    end
+    if !held then (* Reentrant: this process holds the lease (.mli). *)
+      Ok (f ())
     else
       let path = lock_path ?dir () in
       match acquire_fd ~path ~wait_s ~on_wait with
       | Error _ as error -> error
       | Ok fd ->
-          depth := 1;
+          held := true;
           Fun.protect
             ~finally:(fun () ->
-              depth := 0;
+              held := false;
               release fd)
             (fun () -> Ok (f ()))
 end
