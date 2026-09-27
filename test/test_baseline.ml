@@ -815,6 +815,32 @@ let write_overwrites_and_leaves_no_temp () =
   equal ~msg:"no temp litter" (list string) [ "suite.thumper" ]
     (List.sort String.compare (Array.to_list (Sys.readdir dir)))
 
+(* A leftover temporary file (a killed writer's, same pid) is skipped, never
+   reused or clobbered; a hundred of them exhaust the bound and fail as Io
+   instead of looping. White-box: the name is the writer's own scheme. *)
+let write_skips_leftover_temporary_files () =
+  let dir = temp_dir () in
+  let path = Filename.concat dir "suite.thumper" in
+  let leftover i =
+    Filename.concat dir (Printf.sprintf ".thumper-%d-%d.tmp" (Unix.getpid ()) i)
+  in
+  let plant i =
+    Out_channel.with_open_bin (leftover i) (fun oc ->
+        output_string oc "leftover")
+  in
+  plant 0;
+  Baseline.write path (base_two_rows ());
+  equal ~msg:"written past the leftover" string
+    (Baseline.to_string (base_two_rows ()))
+    (read_file path);
+  equal ~msg:"leftover untouched" string "leftover" (read_file (leftover 0));
+  for i = 1 to 99 do
+    plant i
+  done;
+  raises_match
+    (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
+    (fun () -> Baseline.write path (Baseline.empty ~suite:"s2"))
+
 let write_failure_raises_io () =
   raises_match
     (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
@@ -1197,6 +1223,8 @@ let () =
           test "writes and reads back byte-identically" write_reads_back;
           test "overwrites atomically and leaves no temp file"
             write_overwrites_and_leaves_no_temp;
+          test "skips leftover temporary files, within a bound"
+            write_skips_leftover_temporary_files;
           test "raises Error (Io _) when the directory is missing"
             write_failure_raises_io;
           test "raises Error (Io _) in a read-only directory"

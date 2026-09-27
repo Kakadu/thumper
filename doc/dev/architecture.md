@@ -21,14 +21,15 @@ reading; the **adapters** own paths, argv, and rendering.
 | `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, the drift flag, warnings), `Run.t` |
 | `baseline` | pure¹ | the format-v1 codec: strict parse with the median checksum, byte-identical re-emission, the mechanical mutators `set_section`/`update_rows`, one atomic `write` |
 | `verdict` | pure | judgment (`judge`/`confirmations`/`decide`), relations with confirmation evidence in the type, JSON, exit codes, and both write paths: `corrected` (the ratchet) and `bless` |
+| `os` | OS edge | the monotonic clock in seconds, the EINTR-restarting full write, the atomic file publish (temp + fsync + rename) that both artifacts use. A leaf |
 | `env` | OS edge | machine key, host/ocaml identity strings, load average, the gate predicate, `wait_quiet`, the per-user lease |
 | `measure` | OS edge | one case → one trial: calibration with frozen-k reuse, warmup, GC discipline, fixed-n sampling, the k/2k exactness probe, the fork worker and its pipe `Protocol`; the `instruments` seam |
 | `check` | OS edge | the orchestrator: lease → gate → measure → judge → gate → confirm → decide. Thin by design — anything longer means policy leaked out of `verdict` |
 | `cli` | adapter | subcommand grammar, startup unlinks, baseline I/O, terminal + GitHub rendering, `--json`, exit mapping |
 | `thumper` | facade | re-exports exactly the public surface; everything else stays a private module |
 
-¹ `baseline` is a pure codec plus exactly one Unix call site (the
-atomic temp+fsync+rename write).
+¹ `baseline` is a pure codec plus its reader and one call to
+`Os.write_atomic`.
 
 Vendored: `vendor/mtime` (`thumper_clock`) — the monotonic-raw clock
 stubs plus a `getloadavg` stub. The dependency cone is `unix` +

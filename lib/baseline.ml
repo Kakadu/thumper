@@ -460,87 +460,16 @@ let read path =
 let read_exn path =
   match read path with Ok t -> t | Stdlib.Error e -> raise (Error e)
 
-let io_error fmt = Printf.ksprintf (fun m -> raise (Error (Io m))) fmt
-
-let rec write_retry fd s off len =
-  match Unix.write_substring fd s off len with
-  | n -> n
-  | exception Unix.Unix_error (Unix.EINTR, _, _) -> write_retry fd s off len
-
-let write_all fd s =
-  let len = String.length s in
-  let rec loop off =
-    if off < len then begin
-      let n = write_retry fd s off (len - off) in
-      if n = 0 then raise (Unix.Unix_error (Unix.EIO, "write", ""));
-      loop (off + n)
-    end
-  in
-  loop 0
-
-let rec fsync_retry fd =
-  match Unix.fsync fd with
-  | () -> ()
-  | exception Unix.Unix_error (Unix.EINTR, _, _) -> fsync_retry fd
-
-(* Atomic publish: fresh temp in the target's directory, write + fsync, then
-   rename over the target. Temp + rename is pinned — the lease serializes
-   writers, so no-clobber link games are unnecessary. *)
+(* The file is published whole or not at all (Os.write_atomic); the lease
+   serializes measurement, not writes, so concurrent writers are last-wins. *)
 let write path t =
-  let data = to_string t in
-  let dir = Filename.dirname path in
-  let rec fresh_temp attempt =
-    if attempt = 100 then
-      io_error "cannot create a temporary file in %S for %S" dir path
-    else
-      let temp =
-        Filename.concat dir
-          (Printf.sprintf ".thumper-baseline-%d-%d.tmp" (Unix.getpid ()) attempt)
-      in
-      match
-        Unix.openfile temp
-          [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC ]
-          0o644
-      with
-      | fd -> (temp, fd)
-      | exception Unix.Unix_error (Unix.EEXIST, _, _) -> fresh_temp (attempt + 1)
-      | exception Unix.Unix_error (e, op, _) ->
-          io_error "cannot write %S: %s (%s)" path (Unix.error_message e) op
-  in
-  let temp, fd = fresh_temp 0 in
-  let fd_open = ref true in
-  let close () =
-    if !fd_open then begin
-      fd_open := false;
-      Unix.close fd
-    end
-  in
-  let cleanup () =
-    (try close () with Unix.Unix_error _ -> ());
-    try Unix.unlink temp with Unix.Unix_error _ -> ()
-  in
-  (* An atomic replace must not change the target's permission bits: align
-     the temp with an existing target before the rename publishes it. A
-     fresh baseline keeps the 0o644-under-umask default. *)
-  let preserve_mode () =
-    match Unix.stat path with
-    | stat -> Unix.fchmod fd stat.Unix.st_perm
-    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
-  in
-  match
-    preserve_mode ();
-    write_all fd data;
-    fsync_retry fd;
-    close ();
-    Unix.rename temp path
-  with
-  | () -> ()
-  | exception Unix.Unix_error (e, op, _) ->
-      cleanup ();
-      io_error "cannot write %S: %s (%s)" path (Unix.error_message e) op
-  | exception exn ->
-      cleanup ();
-      raise exn
+  try Os.write_atomic path (to_string t)
+  with Unix.Unix_error (e, op, _) ->
+    raise
+      (Error
+         (Io
+            (Printf.sprintf "cannot write %S: %s (%s)" path
+               (Unix.error_message e) op)))
 
 (* File and section observers *)
 

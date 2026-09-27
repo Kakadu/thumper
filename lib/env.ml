@@ -3,14 +3,10 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Shared time helpers: deadlines run on the vendored monotonic clock (the
-   only monotonic source this library links; nanosecond precision is
-   irrelevant here), and sleeps restart on EINTR until the wake time. *)
-
-let monotonic_s () = Int64.to_float (Thumper_clock.now_ns ()) *. 1e-9
+(* Sleeps restart on EINTR until the wake time. *)
 
 let rec sleep_until wake =
-  let remaining = wake -. monotonic_s () in
+  let remaining = wake -. Os.monotonic_s () in
   if remaining > 0. then
     match Unix.sleepf remaining with
     | () -> ()
@@ -199,12 +195,12 @@ let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?gate:(sample = gate) () =
          "Thumper.Env.wait_quiet: poll_s %g (need a positive finite poll \
           interval in seconds)"
          poll_s);
-  let deadline = monotonic_s () +. timeout_s in
+  let deadline = Os.monotonic_s () +. timeout_s in
   let rec loop () =
     match sample () with
     | Quiet -> Ok ()
     | Loaded _ ->
-        let now = monotonic_s () in
+        let now = Os.monotonic_s () in
         if now >= deadline then Error `Timeout
         else begin
           sleep_until (now +. Float.min poll_s (deadline -. now));
@@ -273,27 +269,21 @@ module Lease = struct
     in
     Unix.ftruncate fd 0;
     ignore (Unix.lseek fd 0 Unix.SEEK_SET);
-    let bytes = Bytes.of_string stamp in
-    let rec write off remaining =
-      if remaining > 0 then
-        match Unix.write fd bytes off remaining with
-        | n -> write (off + n) (remaining - n)
-        | exception Unix.Unix_error (Unix.EINTR, _, _) -> write off remaining
-    in
-    write 0 (Bytes.length bytes)
+    Os.write_all fd stamp
 
   (* Non-blockingly re-attempt [lockf F_TLOCK] until acquired or the
      per-holder deadline expires; the lock region starts at offset 0, so seek
      back before every attempt (reading the stamp moves the offset). *)
   let acquire ~path ~wait_s ~on_wait fd =
-    let deadline = ref (monotonic_s () +. wait_s) in
+    let deadline = ref (Os.monotonic_s () +. wait_s) in
     let last_stamp = ref None in
     let rec attempt () =
       ignore (Unix.lseek fd 0 Unix.SEEK_SET);
       match Unix.lockf fd Unix.F_TLOCK 0 with
       | () -> Ok ()
       | exception Unix.Unix_error (Unix.EINTR, _, _) ->
-          if monotonic_s () >= !deadline then Error (Timeout { path; wait_s })
+          if Os.monotonic_s () >= !deadline then
+            Error (Timeout { path; wait_s })
           else attempt ()
       | exception Unix.Unix_error ((Unix.EACCES | Unix.EAGAIN), _, _) ->
           let stamp = read_stamp fd in
@@ -302,12 +292,12 @@ module Lease = struct
             | None -> false
             | Some previous -> not (String.equal previous stamp)
           in
-          if owner_changed then deadline := monotonic_s () +. wait_s;
+          if owner_changed then deadline := Os.monotonic_s () +. wait_s;
           last_stamp := Some stamp;
           (match on_wait with
           | Some notify -> notify ~owner_changed
           | None -> ());
-          let now = monotonic_s () in
+          let now = Os.monotonic_s () in
           if now >= !deadline then Error (Timeout { path; wait_s })
           else begin
             sleep_until (now +. Float.min poll_s (!deadline -. now));

@@ -12,6 +12,7 @@
   env
   measure
   metric
+  os
   run
   stats
   verdict))

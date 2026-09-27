@@ -950,32 +950,12 @@ let preflight_target path =
   | exception Unix.Unix_error (e, _, _) ->
       fail2 "cannot write %s: %s: %s" path dir (Unix.error_message e)
 
-(* Atomic [--json] write: temp + rename in the target directory, so the file
-   is present iff measurement completed and no reader sees a partial one. The
-   temp file is created 0600; restore the ordinary umask-derived mode so the
-   target does not surprise its readers. *)
+(* The [--json] document is present iff measurement completed: an atomic
+   publish, so no reader sees a partial one. *)
 let write_json path doc =
-  try
-    let dir = Filename.dirname path in
-    let tmp =
-      Filename.temp_file ~temp_dir:dir (Filename.basename path) ".tmp"
-    in
-    try
-      let oc = open_out_bin tmp in
-      Fun.protect
-        ~finally:(fun () -> close_out_noerr oc)
-        (fun () -> output_string oc doc);
-      let umask = Unix.umask 0 in
-      let _ = Unix.umask umask in
-      Unix.chmod tmp (0o666 land lnot umask);
-      Sys.rename tmp path
-    with e ->
-      (try Sys.remove tmp with Sys_error _ -> ());
-      raise e
-  with
-  | Sys_error msg -> fail2 "cannot write %s: %s" path msg
-  | Unix.Unix_error (e, _, _) ->
-      fail2 "cannot write %s: %s" path (Unix.error_message e)
+  try Os.write_atomic path doc
+  with Unix.Unix_error (e, _, _) ->
+    fail2 "cannot write %s: %s" path (Unix.error_message e)
 
 (* All measurement runs under the CLI's lease acquisition so the progress line
    is ours; [Check]'s inner acquisition is reentrant (Env.Lease). *)

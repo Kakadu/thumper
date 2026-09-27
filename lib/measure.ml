@@ -530,8 +530,6 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
 
 (* The fork worker *)
 
-let monotonic_s () = Int64.to_float (Thumper_clock.now_ns ()) *. 1e-9
-
 let rec waitpid_retry pid =
   match Unix.waitpid [] pid with
   | _, status -> status
@@ -564,12 +562,6 @@ let signal_name s =
   | Some n -> n
   | None -> Printf.sprintf "signal %d" s
 
-let rec write_all fd bytes off len =
-  if len > 0 then
-    match Unix.write fd bytes off len with
-    | n -> write_all fd bytes (off + n) (len - n)
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> write_all fd bytes off len
-
 (* The child: null stdin, run the whole protocol — setup, batches, counter
    reads, probes, teardown — then report over the pipe and [_exit] (no
    at_exit, no shared-channel flushing). Harness bugs escape to stderr and a
@@ -585,8 +577,7 @@ let run_child ~instruments ~config ~frozen_k bcase w =
       in
       let buf = Buffer.create 1024 in
       Protocol.write buf result;
-      let s = Buffer.to_bytes buf in
-      write_all w s 0 (Bytes.length s);
+      Os.write_all w (Buffer.contents buf);
       (try Unix.close w with Unix.Unix_error _ -> ());
       0
     with e ->
@@ -604,14 +595,14 @@ let run_child ~instruments ~config ~frozen_k bcase w =
 let parent_collect ~deadline_s ~case pid r =
   let chunk = Bytes.create 65536 in
   let buf = Buffer.create 4096 in
-  let deadline_at = Option.map (fun s -> monotonic_s () +. s) deadline_s in
+  let deadline_at = Option.map (fun s -> Os.monotonic_s () +. s) deadline_s in
   let kill_and_reap () =
     (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
     ignore (waitpid_retry pid)
   in
   let rec wait_readable () =
     let timeout =
-      match deadline_at with None -> -1. | Some d -> d -. monotonic_s ()
+      match deadline_at with None -> -1. | Some d -> d -. Os.monotonic_s ()
     in
     if timeout <= 0. && deadline_at <> None then
       (* Past the deadline: take anything already delivered, else hung. *)
