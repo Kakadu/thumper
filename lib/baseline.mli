@@ -86,6 +86,12 @@ val valid_segment : string -> bool
 (** [valid_segment s] is [true] iff [s] is nonempty and every character
     satisfies {!is_id_char}. *)
 
+val check_suite : fname:string -> string -> unit
+(** [check_suite ~fname name] checks that [name] can be the [# suite:] header's
+    body: non-empty and single-line. This is the one statement of the rule:
+    {!empty}, [Check.run] and the CLI entry point all call it. Raises
+    [Invalid_argument], prefixed with [fname]. *)
+
 (** {1:reading Reading} *)
 
 val read : string -> (t option, error) result

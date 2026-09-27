@@ -73,6 +73,15 @@ let valid_id s =
 let valid_metric = valid_segment
 let valid_key = valid_segment
 
+(* The suite name is the [# suite:] header's body. *)
+let check_suite ~fname name =
+  if name = "" || String.contains name '\n' then
+    invalid_arg
+      (Printf.sprintf
+         "%s: suite name must be non-empty and single-line (it heads fresh \
+          baselines)"
+         fname)
+
 (* The print contract
 
    Samples print [%.3e]; the stored median is re-derived from the {e stored}
@@ -474,8 +483,7 @@ let write path t =
 (* File and section observers *)
 
 let empty ~suite =
-  if suite = "" || String.contains suite '\n' then
-    invalid_arg "Baseline.empty: suite must be non-empty and single-line";
+  check_suite ~fname:"Baseline.empty" suite;
   { t_suite = Some suite; t_sections = [] }
 
 let suite t = t.t_suite

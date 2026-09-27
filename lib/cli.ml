@@ -1062,12 +1062,6 @@ let wait_for_quiet = function
              %!"
             secs)
 
-let validate_name name =
-  if name = "" || String.contains name '\n' then
-    invalid_arg
-      "Thumper.run: suite name must be non-empty and single-line (it heads \
-       fresh baselines)"
-
 let validate_budgets budgets =
   Option.iter (Budget.check_distinct ~fname:"Thumper.run") budgets
 
@@ -1315,7 +1309,7 @@ let help_text exe =
     ]
 
 let main ?baseline ?config ?budgets ~argv ~name benches =
-  validate_name name;
+  Baseline.check_suite ~fname:"Thumper.run" name;
   validate_budgets budgets;
   match parse argv with
   | Help ->

@@ -94,10 +94,7 @@ let empty_file =
 
 let run_with ?instruments ?gate ?(on_progress = ignore)
     ?(config = Config.default) ?(budgets = []) ?filter ?baseline name benches =
-  if name = "" || String.contains name '\n' then
-    invalid_arg
-      "Check.run: suite name must be non-empty and single-line (it heads fresh \
-       baselines)";
+  Baseline.check_suite ~fname:"Check.run" name;
   let sample_gate = Option.value gate ~default:Env.gate in
   Budget.check_distinct ~fname:"Check.run" budgets;
   let selected, selection =
