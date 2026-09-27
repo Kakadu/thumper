@@ -98,8 +98,9 @@ rest ([`testing.md`](testing.md)).
    exception. *Prevents:* one noisy draw overwriting blessed evidence;
    unsafe promotes.
 3. **Verdicts are earned.** `regressed`/`improved` arise only from an
-   exact-integer comparison or a rank test plus confirmation; unstable
-   or drifting trials and gated environments yield `inconclusive`.
+   exact-integer comparison or a rank test plus confirmation; drifting
+   trials, unstable trials within 2e, and gated environments yield
+   `inconclusive`.
    *Prevents:* flaky CI; consumers re-implementing statistics.
 4. **Comparability or refusal.** Comparison requires the same machine
    key, same compiler identity, and the frozen protocol; a stale

@@ -223,10 +223,15 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
          large shift is a verdict, not a calibration event. *)
       Settled (Judged (inconclusive ~shift:sh Batch_drifted))
     else
-      (* Instability undermines a demonstrated direction: unstable
-         trials support equivalent or inconclusive only. *)
+      (* Instability undermines a demonstrated direction within 2e: there,
+         unstable trials support equivalent or inconclusive only. A shift
+         beyond 2e is judged as on a stable row — the batch-drift test above;
+         one outlier barely moves a rank interval, and at the derived band
+         (where r >= 2e) a strong regression must not hide behind a heavy
+         tail. *)
       let unless_unstable settle =
-        if unstable baseline then
+        if Float.abs sh.estimate > bias_comparability_factor *. e then settle ()
+        else if unstable baseline then
           Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
         else if unstable cand.Run.sorted then
           Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
@@ -466,9 +471,7 @@ let resolve_pending ~gate ~conf metric pd =
     | Some trial -> (
         match Run.Trial.measurement trial metric with
         | Some (Run.Samples s)
-          when (not s.Run.drifted)
-               && (not (unstable s.Run.sorted))
-               && all_positive s.Run.sorted -> (
+          when (not s.Run.drifted) && all_positive s.Run.sorted -> (
             let confirmation =
               fractional_of_stats
                 (Stats.shift ~alpha_per_side:alpha_confirmation
@@ -480,7 +483,14 @@ let resolve_pending ~gate ~conf metric pd =
               | `Improved -> u < -.pd.p_e
               | `Regressed -> l > pd.p_r
             in
-            if not reproduced then inconclusive ~shift:first Unconfirmed
+            (* An unstable confirmation counts only beyond 2e, as on the
+               first pass. *)
+            if
+              (not reproduced)
+              || unstable s.Run.sorted
+                 && Float.abs confirmation.estimate
+                    <= bias_comparability_factor *. pd.p_e
+            then inconclusive ~shift:first Unconfirmed
             else
               (* Pool both passes for the ratchet; [Array.append] is a fresh
                  array, so neither trial's evidence is sorted in place. *)

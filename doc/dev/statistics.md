@@ -41,7 +41,8 @@ diagnostics decide whether a trial can support a direction:
   inflation (≥ 0.5 of variance explainable by outliers), computed from
   the sorted vector, the same way for a stored baseline row and for a
   trial. An unstable trial may support `equivalent` or `inconclusive`,
-  never a demonstrated direction.
+  never a demonstrated direction within 2e of zero; a shift beyond 2e
+  is judged as on a stable trial, the bound `batch_drifted` uses.
 
 ## The comparison
 

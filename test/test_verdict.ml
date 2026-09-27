@@ -273,11 +273,51 @@ let drifted_confirmation_is_inconclusive () =
   in
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
 
-let unstable_confirmation_is_inconclusive () =
+let unstable_confirmation_counts_beyond_2e () =
+  (* As on the first pass: an unstable confirmation of a 5x regression
+     reproduces it, while one within 2e (here 2e = 20%, the band widened to
+     e = r = 10%) does not, though its interval clears r. *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
-    regression_scenario ~confirm:(fun _ -> Some (wall_trial (spiked 2.0))) ()
+    run_check ~file
+      ~confirm:(fun _ -> Some (wall_trial (spiked 5.0)))
+      [ (bcase "a", wall_trial (ties 5 5.0)) ]
   in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
+  check_rel ~msg:"5x" t ~case:"a" ~metric:m_wall "regressed-confirmed";
+  let budgets =
+    [
+      Budget.relative ~metric:m_wall ~equivalent_within:0.1 ~max_regression:0.1
+        ();
+    ]
+  in
+  let confirm unstable _ =
+    Some (wall_trial (if unstable then spiked 1.15 else ties 5 1.15))
+  in
+  let within ~unstable =
+    run_check ~file ~budgets ~confirm:(confirm unstable)
+      [ (bcase "a", wall_trial (ties 5 2.0)) ]
+  in
+  check_rel ~msg:"stable +15% reproduces" (within ~unstable:false) ~case:"a"
+    ~metric:m_wall "regressed-confirmed";
+  check_rel ~msg:"unstable +15% is within 2e" (within ~unstable:true) ~case:"a"
+    ~metric:m_wall "inconclusive:unconfirmed";
+  (* The bound is inclusive: an unstable confirmation of exactly 2e does not
+     count. Tied samples make its estimate [expm1 (log 1.5)] and the band is
+     half of that same value, so the boundary is exact on any libm. *)
+  let d = expm1 (log 1.5) in
+  let budgets =
+    [
+      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
+        ~max_regression:0.3 ();
+    ]
+  in
+  let t =
+    run_check ~file ~budgets
+      ~confirm:(fun _ -> Some (wall_trial (spiked 1.5)))
+      [ (bcase "a", wall_trial (ties 5 2.0)) ]
+  in
+  check_rel ~msg:"exactly 2e" t ~case:"a" ~metric:m_wall
+    "inconclusive:unconfirmed"
 
 let opposite_confirmation_is_inconclusive () =
   let t =
@@ -380,9 +420,11 @@ let drifted_candidate_never_produces_a_verdict () =
     "inconclusive:candidate_drifted"
 
 let unstable_candidate_blocks_demonstrated_directions () =
+  (* Within 2e (5% at the default budget) only; beyond, see
+     [large_shift_on_unstable_evidence_is_judged]. *)
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let strong = run_check ~file [ (bcase "a", wall_trial (spiked 2.0)) ] in
-  check_rel ~msg:"strong" strong ~case:"a" ~metric:m_wall
+  let strong = run_check ~file [ (bcase "a", wall_trial (spiked 0.96)) ] in
+  check_rel ~msg:"strong within 2e" strong ~case:"a" ~metric:m_wall
     "inconclusive:candidate_unstable";
   let within = run_check ~file [ (bcase "a", wall_trial (spiked 1.03)) ] in
   check_rel ~msg:"within_budget" within ~case:"a" ~metric:m_wall
@@ -422,8 +464,45 @@ let baseline_instability_is_recomputed_from_stored_samples () =
   is_true ~msg:"premise: the stored vector is severely outlier-inflated"
     (Stats.severe_outlier_inflation_sorted unstable_baseline);
   let file = file_of [ wall_row "a" unstable_baseline ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 20 200.0)) ] in
+  let t = run_check ~file [ (bcase "a", wall_trial (ties 20 1.04)) ] in
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:baseline_unstable"
+
+let large_shift_on_unstable_evidence_is_judged () =
+  (* A 5x regression on a row that fails the instability test is judged as
+     on a stable row: it queues, confirms, and fails the case. *)
+  let file = file_of [ wall_row "a" unstable_baseline ] in
+  let t =
+    run_check ~file
+      ~confirm:(fun _ -> Some (wall_trial (ties 20 5.0)))
+      [ (bcase "a", wall_trial (ties 20 5.0)) ]
+  in
+  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
+  check_overall t `Fail;
+  (* The candidate side too: an unstable 2x candidate queues for
+     confirmation instead of being vetoed. *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let t =
+    run_check ~file
+      ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
+      [ (bcase "a", wall_trial (spiked 2.0)) ]
+  in
+  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
+  (* The bound is inclusive, as batch_drifted's: a shift of exactly 2e stays
+     vetoed. Tied samples make the estimate [expm1 (log 1.5)]; the band is
+     half of that same value, so the boundary is exact on any libm. *)
+  let d = expm1 (log 1.5) in
+  let budgets =
+    [
+      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
+        ~max_regression:0.3 ();
+    ]
+  in
+  let t =
+    run_check ~file ~budgets
+      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
+      [ (bcase "a", wall_trial (spiked 1.5)) ]
+  in
+  check_rel t ~case:"a" ~metric:m_wall "inconclusive:candidate_unstable"
 
 (* The environment gate *)
 
@@ -1419,7 +1498,7 @@ let json_candidate_side_reason_wire_strings () =
   in
   is_true ~msg:"drifted wire string"
     (contains ~sub:"\"reason\":\"drifted\"" (Verdict.to_json drifted));
-  let unstable = run_check ~file [ (bcase "a", wall_trial (spiked 2.0)) ] in
+  let unstable = run_check ~file [ (bcase "a", wall_trial (spiked 0.96)) ] in
   is_true ~msg:"unstable wire string"
     (contains ~sub:"\"reason\":\"unstable\"" (Verdict.to_json unstable))
 
@@ -1473,8 +1552,8 @@ let () =
             missing_confirmation_is_inconclusive;
           test "a drifted confirmation trial is inconclusive"
             drifted_confirmation_is_inconclusive;
-          test "an unstable confirmation trial is inconclusive"
-            unstable_confirmation_is_inconclusive;
+          test "an unstable confirmation counts only beyond 2e"
+            unstable_confirmation_counts_beyond_2e;
           test "a confirmation in the opposite direction is inconclusive"
             opposite_confirmation_is_inconclusive;
           test "exact-form confirmation evidence is inconclusive"
@@ -1496,6 +1575,8 @@ let () =
             drifted_candidate_never_produces_a_verdict;
           test "an unstable candidate blocks demonstrated directions only"
             unstable_candidate_blocks_demonstrated_directions;
+          test "a shift beyond 2e on unstable evidence is judged"
+            large_shift_on_unstable_evidence_is_judged;
           test "baseline instability is recomputed from stored samples"
             baseline_instability_is_recomputed_from_stored_samples;
           test "non-positive samples get their own reason"

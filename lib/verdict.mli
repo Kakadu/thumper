@@ -52,8 +52,9 @@ type reason =
   | Unconfirmed
       (** The confirmation pass did not reproduce the provisional strong
           relation — in both directions: an unconfirmed improvement is not
-          [Equivalent] and never ratchets. Also a missing, drifted, or
-          unstable confirmation trial; never retried in-run. *)
+          [Equivalent] and never ratchets. Also a missing or drifted
+          confirmation trial, or an unstable one within [2e]; never retried
+          in-run. *)
   | Exactness_lost
       (** A mixed exact/sampled comparison (either side), or a zero-tolerance
           relative budget on a downgraded exact-capable metric — never a rank
@@ -97,9 +98,11 @@ type strong =
       baseline integer.
     - Drifting candidate evidence produces no relation
       ([Inconclusive Candidate_drifted]); unstable evidence (either side) may
-      support [Equivalent] or [Inconclusive], never a demonstrated direction —
-      [Improved], [Regressed], and [Within_budget] degrade to
-      [Inconclusive Baseline_unstable]/[Candidate_unstable]. *)
+      support [Equivalent] or [Inconclusive], never a demonstrated direction
+      within [2e] of zero — [Improved], [Regressed], and [Within_budget] with
+      [|estimate| <= 2e] degrade to
+      [Inconclusive Baseline_unstable]/[Candidate_unstable]. A shift beyond [2e]
+      is judged as on stable evidence (the batch-drift test's bound). *)
 type relation =
   | Improved of strong
   | Regressed of strong
@@ -209,8 +212,10 @@ val decide :
     the pooled (2n, freshly sorted) samples, and the confirmation trial's k.
     Otherwise [Inconclusive Unconfirmed] — in both directions. A case id absent
     from [confirmations], or whose confirmation evidence for the metric is
-    missing, exact, drifted, or unstable, is [Inconclusive Unconfirmed]; never
-    retried in-run. A [Loaded] [gate] (re-sampled before the confirmation queue) degrades every pending relation to [Inconclusive Environment] instead.
+    missing, exact, drifted, or unstable with a shift within [2e] (as on the
+    first pass), is [Inconclusive Unconfirmed]; never retried in-run. A [Loaded]
+    [gate] (re-sampled before the confirmation queue) degrades every pending
+    relation to [Inconclusive Environment] instead.
 
     Raises [Invalid_argument] if [confirmations] repeats a case id or names one
     that {!confirmations} did not request. *)
