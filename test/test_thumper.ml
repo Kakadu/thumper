@@ -383,7 +383,6 @@ module Deleted_surface : sig end = struct
   let _config () =
     let ci = Deleted
     and deterministic = Deleted
-    and precise = Deleted
     and fork = Deleted
     and gc = Deleted
     and env = Deleted
@@ -391,9 +390,9 @@ module Deleted_surface : sig end = struct
     and profile = Deleted in
     let open Thumper.Config in
     ignore (quick : t);
+    ignore (precise : t);
     ignore (ci : deleted);
     ignore (deterministic : deleted);
-    ignore (precise : deleted);
     ignore (fork : deleted);
     ignore (gc : deleted);
     ignore (env : deleted);

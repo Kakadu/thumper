@@ -271,6 +271,11 @@ module Config : sig
       against the default protocol's ≈ 0.25–0.4 s nominal case this saves about
       45 ms. *)
 
+  val precise : t
+  (** [precise] is {!default} with 40 batches — [--precise]; doubles the
+      timed-sampling arm (≈ +100 ms nominal per case, see {!quick}) to tighten
+      intervals when a verdict is inconclusive. *)
+
   (** {2:setters Setters}
 
       Functional updates: each returns a config equal to its argument except for

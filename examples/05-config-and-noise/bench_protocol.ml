@@ -11,9 +11,10 @@
    collected. The batch count is a COUNT, never a convergence target — one
    config is one protocol, so trials taken under the same config are
    comparable evidence, run after run. Start from a preset ([Config.default]
-   for check, [Config.quick] for the inner loop) and refine it with
-   functional setters; the CLI's [--quick] and [--precise] refine whatever
-   config the suite passes by setting the batch count only.
+   for check, [Config.quick] for the inner loop, [Config.precise] for
+   tighter intervals) and refine it with functional setters; the CLI's
+   [--quick] and [--precise] refine whatever config the suite passes by
+   setting the batch count only.
 
    Noise never turns into a red build. A strong verdict must reproduce in
    an in-run confirmation pass before it stands, and the host's load is

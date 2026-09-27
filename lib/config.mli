@@ -89,9 +89,7 @@ val quick : t
 val precise : t
 (** [precise] is {!default} with 40 batches — [--precise]; doubles the
     timed-sampling arm (≈ +100 ms nominal per case, see {!quick}) to tighten
-    intervals when a verdict is inconclusive. Internal spelling: the facade
-    exposes {!default} and {!quick} only; the CLI reaches [precise]
-    directly. *)
+    intervals when a verdict is inconclusive. *)
 
 (** {1:setters Setters}
 
