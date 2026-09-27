@@ -53,8 +53,6 @@ let is_hex16 s =
   String.length s = 16
   && String.for_all (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false) s
 
-let invalid_argument = function Invalid_argument _ -> true | _ -> false
-
 (* Machine key: the FNV-1a 64 recipe, pinned against literals.
 
    Derivation of the expected values (independent of the implementation):
@@ -105,15 +103,17 @@ let override_is_used_verbatim () =
 
 let override_rejects_empty () =
   Unix.putenv "THUMPER_MACHINE" "";
-  raises_invalid_arg
-    "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])"
+  raises
+    (Invalid_argument
+       "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])")
     (fun () -> Env.machine_key ())
 
 let override_rejects_bad_charset () =
   Unix.putenv "THUMPER_MACHINE" "bad key!";
-  raises_invalid_arg
-    "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over [A-Za-z0-9._-])"
-    (fun () -> Env.machine_key ())
+  raises
+    (Invalid_argument
+       "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over \
+        [A-Za-z0-9._-])") (fun () -> Env.machine_key ())
 
 (* The charset is what keeps the baseline header grammar escape-free: colons,
    whitespace, slashes, and non-ASCII must all be refused. *)
@@ -162,7 +162,7 @@ let pp_gate ppf = function
   | Env.Loaded { load; cores } ->
       Format.fprintf ppf "Loaded {load=%g; cores=%d}" load cores
 
-let gate_t : Env.gate testable = testable ~pp:pp_gate ()
+let gate_t : Env.gate testable = Testable.structural ~pp:pp_gate
 let quiet = Env.Quiet
 let loaded load cores = Env.Loaded { load; cores }
 
@@ -187,7 +187,7 @@ let gate_table =
   ]
 
 let classify_rejects_no_cores () =
-  raises_invalid_arg "Thumper.Env.classify: 0 cores (need at least 1)"
+  raises (Invalid_argument "Thumper.Env.classify: 0 cores (need at least 1)")
     (fun () -> Env.classify ~load:(Some 1.0) ~cores:0)
 
 let cores_is_at_least_one () = is_true (Env.cores () >= 1)
@@ -209,7 +209,8 @@ let gate_smoke () =
 (* wait_quiet, driven through its gate seam (no reliance on host load). *)
 
 let timeout_t : [ `Timeout ] testable =
-  testable ~pp:(fun ppf `Timeout -> Format.pp_print_string ppf "`Timeout") ()
+  Testable.structural ~pp:(fun ppf `Timeout ->
+      Format.pp_print_string ppf "`Timeout")
 
 let wq_t = result unit timeout_t
 
@@ -264,14 +265,16 @@ let wait_quiet_times_out_while_loaded () =
   is_true ~msg:"kept polling until the deadline" (!count >= 2)
 
 let wait_quiet_rejects_negative_timeout () =
-  raises_invalid_arg
-    "Thumper.Env.wait_quiet: timeout_s -1 (need a non-negative timeout in \
-     seconds)" (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
+  raises
+    (Invalid_argument
+       "Thumper.Env.wait_quiet: timeout_s -1 (need a non-negative timeout in \
+        seconds)") (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
 
 let wait_quiet_rejects_bad_poll () =
-  raises_invalid_arg
-    "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval in \
-     seconds)" (fun () ->
+  raises
+    (Invalid_argument
+       "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval \
+        in seconds)") (fun () ->
       Env.wait_quiet ~timeout_s:0. ~poll_s:0. ~gate:(fun () -> Env.Quiet) ())
 
 (* The measurement lease, single-process surface. *)
@@ -345,7 +348,7 @@ let lease_releases_on_return () =
 
 let lease_releases_on_exception () =
   let dir = fresh_dir () in
-  raises_failure "boom" (fun () ->
+  raises (Failure "boom") (fun () ->
       Env.Lease.with_lease ~dir (fun () -> failwith "boom"));
   expect_ok (Env.Lease.with_lease ~dir (fun () -> ()))
 
@@ -426,9 +429,10 @@ let explicit_dir_wins_over_the_env () =
     (Sys.file_exists (lock_path env_dir))
 
 let with_lease_rejects_negative_wait () =
-  raises_invalid_arg
-    "Thumper.Env.Lease.with_lease: wait_s -1 (need a non-negative wait in \
-     seconds)" (fun () ->
+  raises
+    (Invalid_argument
+       "Thumper.Env.Lease.with_lease: wait_s -1 (need a non-negative wait in \
+        seconds)") (fun () ->
       Env.Lease.with_lease ~dir:(fresh_dir ()) ~wait_s:(-1.) (fun () -> ()))
 
 let pp_error_pins () =
@@ -444,10 +448,12 @@ let () =
     [
       group "machine key"
         [
-          prop "fingerprint is 16 lowercase hex for any input" string (fun s ->
-              is_hex16 (Env.fingerprint s));
-          cases (pair string string) fingerprint_pins
-            "fingerprint pins the FNV-1a 64 recipe" (fun (input, expected) ->
+          prop "fingerprint is 16 lowercase hex for any input" Gen.string
+            (fun s -> is_true (is_hex16 (Env.fingerprint s)));
+          cases
+            ~name:(fun (input, _) -> Printf.sprintf "%S" input)
+            "fingerprint pins the FNV-1a 64 recipe" fingerprint_pins
+            (fun (input, expected) ->
               equal string expected (Env.fingerprint input));
           test "default key is a stable 16-hex fingerprint"
             default_key_is_a_fingerprint;
@@ -456,11 +462,11 @@ let () =
           test "THUMPER_MACHINE rejects the empty string" override_rejects_empty;
           test "THUMPER_MACHINE rejects charset violations with the value"
             override_rejects_bad_charset;
-          cases string override_charset_table
+          cases ~name:(Printf.sprintf "%S")
             "THUMPER_MACHINE rejects characters outside [A-Za-z0-9._-]"
-            (fun key ->
+            override_charset_table (fun key ->
               Unix.putenv "THUMPER_MACHINE" key;
-              raises_match invalid_argument (fun () -> Env.machine_key ()));
+              raises_match Exn.invalid_arg (fun () -> Env.machine_key ()));
         ];
       group "identity"
         [
@@ -474,14 +480,18 @@ let () =
       group "gate"
         [
           cases
-            (triple (option (float 0.)) int gate_t)
-            gate_table "classify trips at load / cores >= 1/2"
+            ~name:(fun (load, cores, _) ->
+              match load with
+              | None -> Printf.sprintf "no load, %d cores" cores
+              | Some l -> Printf.sprintf "load %g, %d cores" l cores)
+            "classify trips at load / cores >= 1/2" gate_table
             (fun (load, cores, expected) ->
               equal gate_t expected (Env.classify ~load ~cores));
           test "classify rejects cores < 1 with the value"
             classify_rejects_no_cores;
-          cases int [ 0; -1; -8 ] "classify rejects cores < 1" (fun cores ->
-              raises_match invalid_argument (fun () ->
+          cases ~name:string_of_int "classify rejects cores < 1" [ 0; -1; -8 ]
+            (fun cores ->
+              raises_match Exn.invalid_arg (fun () ->
                   Env.classify ~load:None ~cores));
           test "cores is at least one" cores_is_at_least_one;
           test "load average is non-negative when readable"
@@ -502,15 +512,17 @@ let () =
             wait_quiet_times_out_while_loaded;
           test "rejects a negative timeout with the value"
             wait_quiet_rejects_negative_timeout;
-          cases (float 0.) [ -1.; -0.001; nan ]
-            "rejects non-finite or negative timeouts" (fun timeout_s ->
-              raises_match invalid_argument (fun () ->
+          cases ~name:(Printf.sprintf "%g")
+            "rejects non-finite or negative timeouts" [ -1.; -0.001; nan ]
+            (fun timeout_s ->
+              raises_match Exn.invalid_arg (fun () ->
                   Env.wait_quiet ~timeout_s ()));
           test "rejects a zero poll interval with the value"
             wait_quiet_rejects_bad_poll;
-          cases (float 0.) [ 0.; -0.5; nan; infinity ]
-            "rejects non-positive or non-finite poll intervals" (fun poll_s ->
-              raises_match invalid_argument (fun () ->
+          cases ~name:(Printf.sprintf "%g")
+            "rejects non-positive or non-finite poll intervals"
+            [ 0.; -0.5; nan; infinity ] (fun poll_s ->
+              raises_match Exn.invalid_arg (fun () ->
                   Env.wait_quiet ~timeout_s:0. ~poll_s
                     ~gate:(fun () -> Env.Quiet)
                     ()));
@@ -546,3 +558,4 @@ let () =
           test "pp_error renders both cases" pp_error_pins;
         ];
     ]
+  |> exit

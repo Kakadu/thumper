@@ -23,7 +23,9 @@
 open Windtrap
 module Stats = Thumper.Private.Stats
 
-let exactly = float 0.0 (* order-statistic-exact quantities: bit equality *)
+(* Order-statistic-exact quantities: equal floats, with 0. equal to -0.
+   (a law such as antisymmetry negates a zero) and NaN equal to NaN. *)
+let exactly = Testable.make ~pp:(Testable.pp float_exact) ~equal:Float.equal
 let approximately = float_rel ~rel:1e-12 ~abs:0.0 (* libm / big quotients *)
 
 (* Golden corpus *)
@@ -123,19 +125,15 @@ let pp_farr ppf v =
     (String.concat "; " (List.map (Printf.sprintf "%h") (Array.to_list v)))
 
 let farr ?(min_n = 3) ?(max_n = 25) () =
-  testable ~pp:pp_farr
-    ~gen:
-      (Gen.map Array.of_list (Gen.list_size (Gen.int_range min_n max_n) dyadic))
-    ()
+  Gen.with_pp pp_farr
+    (Gen.map Array.of_list (Gen.list ~size:(Gen.int_range min_n max_n) dyadic))
 
 let pp_float ppf = Format.fprintf ppf "%g"
-let alpha_of l = testable ~pp:pp_float ~gen:(Gen.oneofl l) ()
+let alpha_of l = Gen.with_pp pp_float (Gen.of_list l)
 let ci_alpha = alpha_of [ 0.005; 0.01; 0.02; 0.05; 0.1; 0.3 ]
 let side_alpha = alpha_of [ 0.005; 0.01; 0.025; 0.05; 0.1; 0.2 ]
-let delta = testable ~pp:pp_float ~gen:dyadic ()
-
-let size =
-  testable ~pp:(fun ppf -> Format.fprintf ppf "%d") ~gen:(Gen.int_range 3 15) ()
+let delta = Gen.with_pp pp_float dyadic
+let size = Gen.int_range 3 15
 
 let sorted v =
   let v = Array.copy v in
@@ -144,7 +142,7 @@ let sorted v =
 
 let properties =
   [
-    prop' "shift of a vector against itself is centered on zero" (farr ())
+    prop "shift of a vector against itself is centered on zero" (farr ())
       (fun a ->
         let { Stats.estimate; interval = { Stats.lower; upper } } =
           Stats.shift ~alpha_per_side:0.005 ~baseline:a ~candidate:a
@@ -152,8 +150,8 @@ let properties =
         equal ~msg:"estimate" exactly 0. estimate;
         equal ~msg:"lower is -upper" exactly (-.upper) lower;
         is_true ~msg:"interval straddles zero" (lower <= 0. && 0. <= upper));
-    prop' "shift is antisymmetric under swapping the samples (m <> n)"
-      (pair (farr ~min_n:3 ~max_n:12 ()) (farr ~min_n:13 ~max_n:25 ()))
+    prop "shift is antisymmetric under swapping the samples (m <> n)"
+      (Gen.pair (farr ~min_n:3 ~max_n:12 ()) (farr ~min_n:13 ~max_n:25 ()))
       (fun (b, c) ->
         let s = Stats.shift ~alpha_per_side:0.025 ~baseline:b ~candidate:c in
         let s' = Stats.shift ~alpha_per_side:0.025 ~baseline:c ~candidate:b in
@@ -164,8 +162,8 @@ let properties =
         equal ~msg:"upper" exactly
           (-.s'.Stats.interval.Stats.lower)
           s.Stats.interval.Stats.upper);
-    prop' "shift is translation-equivariant (log-space law, exact on grid)"
-      (pair (pair (farr ()) (farr ())) delta)
+    prop "shift is translation-equivariant (log-space law, exact on grid)"
+      (Gen.pair (Gen.pair (farr ()) (farr ())) delta)
       (fun ((b, c), d) ->
         let c' = Array.map (fun x -> x +. d) c in
         let s = Stats.shift ~alpha_per_side:0.005 ~baseline:b ~candidate:c in
@@ -177,8 +175,8 @@ let properties =
         equal ~msg:"upper" exactly
           (s.Stats.interval.Stats.upper +. d)
           s'.Stats.interval.Stats.upper);
-    prop' "shift interval nests as alpha_per_side shrinks"
-      (pair (pair (farr ()) (farr ())) (pair side_alpha side_alpha))
+    prop "shift interval nests as alpha_per_side shrinks"
+      (Gen.pair (Gen.pair (farr ()) (farr ())) (Gen.pair side_alpha side_alpha))
       (fun ((b, c), (a1, a2)) ->
         let lo_a = Float.min a1 a2 and hi_a = Float.max a1 a2 in
         let wide = Stats.shift ~alpha_per_side:lo_a ~baseline:b ~candidate:c in
@@ -189,8 +187,8 @@ let properties =
           (wide.Stats.interval.Stats.lower <= narrow.Stats.interval.Stats.lower
           && narrow.Stats.interval.Stats.upper
              <= wide.Stats.interval.Stats.upper));
-    prop' "shift interval endpoints are pairwise differences bracketing HL"
-      (pair (farr ()) (farr ()))
+    prop "shift interval endpoints are pairwise differences bracketing HL"
+      (Gen.pair (farr ()) (farr ()))
       (fun (b, c) ->
         let { Stats.estimate; interval = { Stats.lower; upper } } =
           Stats.shift ~alpha_per_side:0.01 ~baseline:b ~candidate:c
@@ -202,8 +200,8 @@ let properties =
         is_true ~msg:"upper is a difference" (is_diff upper);
         is_true ~msg:"lower <= estimate <= upper"
           (lower <= estimate && estimate <= upper));
-    prop' "duplicating every sample preserves the HL estimate (ties)"
-      (pair (farr ~min_n:3 ~max_n:12 ()) (farr ~min_n:3 ~max_n:12 ()))
+    prop "duplicating every sample preserves the HL estimate (ties)"
+      (Gen.pair (farr ~min_n:3 ~max_n:12 ()) (farr ~min_n:3 ~max_n:12 ()))
       (fun (b, c) ->
         let dup v = Array.append v v in
         let s = Stats.shift ~alpha_per_side:0.01 ~baseline:b ~candidate:c in
@@ -211,8 +209,8 @@ let properties =
           Stats.shift ~alpha_per_side:0.01 ~baseline:(dup b) ~candidate:(dup c)
         in
         equal exactly s.Stats.estimate s'.Stats.estimate);
-    prop' "shift of constant vectors is an exact point interval"
-      (pair (pair delta delta) (pair size size))
+    prop "shift of constant vectors is an exact point interval"
+      (Gen.pair (Gen.pair delta delta) (Gen.pair size size))
       (fun ((x, y), (m, n)) ->
         let { Stats.estimate; interval = { Stats.lower; upper } } =
           Stats.shift ~alpha_per_side:0.005 ~baseline:(Array.make m x)
@@ -222,8 +220,8 @@ let properties =
         equal ~msg:"estimate" exactly d estimate;
         equal ~msg:"lower" exactly d lower;
         equal ~msg:"upper" exactly d upper);
-    prop' "median CI widens as alpha shrinks"
-      (pair (farr ~min_n:6 ~max_n:40 ()) (pair ci_alpha ci_alpha))
+    prop "median CI widens as alpha shrinks"
+      (Gen.pair (farr ~min_n:6 ~max_n:40 ()) (Gen.pair ci_alpha ci_alpha))
       (fun (v, (a1, a2)) ->
         let v = sorted v in
         let lo_a = Float.min a1 a2 and hi_a = Float.max a1 a2 in
@@ -232,27 +230,25 @@ let properties =
         is_true ~msg:"narrow inside wide"
           (wide.Stats.lower <= narrow.Stats.lower
           && narrow.Stats.upper <= wide.Stats.upper));
-    prop' "median CI contains the median" (farr ~min_n:3 ~max_n:40 ()) (fun v ->
+    prop "median CI contains the median" (farr ~min_n:3 ~max_n:40 ()) (fun v ->
         let v = sorted v in
         let m = Stats.median_sorted v in
         let { Stats.lower; upper } = Stats.median_ci_sorted ~alpha:0.05 v in
         is_true (lower <= m && m <= upper));
-    prop' "mann_whitney_p is symmetric and in ]0;1]"
-      (pair (farr ()) (farr ()))
+    prop "mann_whitney_p is symmetric and in ]0;1]"
+      (Gen.pair (farr ()) (farr ()))
       (fun (x, y) ->
         let p = Stats.mann_whitney_p x y in
         equal ~msg:"symmetry" exactly (Stats.mann_whitney_p y x) p;
         is_true ~msg:"range" (0. < p && p <= 1.));
-    prop' "drifted is false on a constant vector" (pair delta size)
+    prop "drifted is false on a constant vector" (Gen.pair delta size)
       (fun (x, n) -> is_false (Stats.drifted ~alpha:0.05 (Array.make n x)));
-    prop' "geometric mean of a constant vector is the constant"
-      (pair
-         (testable ~pp:pp_float
-            ~gen:
-              (Gen.map
-                 (fun k -> float_of_int k /. 65536.)
-                 (Gen.int_range 1 2_000_000))
-            ())
+    prop "geometric mean of a constant vector is the constant"
+      (Gen.pair
+         (Gen.with_pp pp_float
+            (Gen.map
+               (fun k -> float_of_int k /. 65536.)
+               (Gen.int_range 1 2_000_000)))
          size)
       (fun (x, n) ->
         equal approximately x (Stats.geometric_mean (Array.make n x)));
@@ -432,3 +428,4 @@ let () =
       group "units" units;
       group "validation" validation;
     ]
+  |> exit

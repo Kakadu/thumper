@@ -80,7 +80,7 @@ let measure ?h ?(frozen_k = None) ~config w case =
 
 (* Result plumbing *)
 
-let failure = testable ~pp:Measure.pp_failure ~equal:( = ) ()
+let failure = Testable.make ~pp:Measure.pp_failure ~equal:( = )
 
 let trial_ok = function
   | Ok t -> t
@@ -158,7 +158,7 @@ let frozen_k_tests =
 let frozen_k_zero_is_programmer_error () =
   let w = world () in
   let case = bench_stepping w (constant_ns ms_ns) in
-  raises_invalid_arg "Measure.case: frozen_k must be >= 1" (fun () ->
+  raises (Invalid_argument "Measure.case: frozen_k must be >= 1") (fun () ->
       measure ~frozen_k:(Some 0) ~config:wall_only w case)
 
 (* Warmup: max of the timed arm and the 3-batch arm *)
@@ -543,8 +543,7 @@ let protocol_round_trip () =
     (Run.Trial.warnings parsed);
   equal ~msg:"alloc" int 54 (exact_of parsed Metric.alloc_words);
   let s = samples_of parsed Metric.wall_time in
-  equal ~msg:"samples survive %h exactly"
-    (array (float 0.))
+  equal ~msg:"samples survive %h exactly" (array float_exact)
     [| 6.883e-7; 6.911e-7; 7.084e-7 |]
     s.Run.sorted;
   equal ~msg:"outliers" int 1 s.Run.outliers;
@@ -794,3 +793,4 @@ let () =
             fork_reports_a_raising_case;
         ];
     ]
+  |> exit

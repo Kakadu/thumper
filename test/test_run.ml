@@ -20,24 +20,27 @@ let sam ?(outliers = 0) ?(drifted = false) ?(unstable = false) sorted =
 
 let pp_measurement ppf = function
   | Run.Samples s ->
-      Format.fprintf ppf "Samples %a" (Pp.array Format.pp_print_float) s.sorted
+      let pp_sep ppf () = Format.fprintf ppf ";@ " in
+      Format.fprintf ppf "Samples %a"
+        (Format.pp_print_list ~pp_sep Format.pp_print_float)
+        (Array.to_list s.sorted)
   | Run.Exact n -> Format.fprintf ppf "Exact %d" n
 
 (* Valid evidence never holds NaN, so structural equality is sound here. *)
-let measurement = testable ~pp:pp_measurement ~equal:( = ) ()
+let measurement = Testable.make ~pp:pp_measurement ~equal:( = )
 
 (* The sampled constructor *)
 
 let sampled_accepts_sorted () =
   let s = sam ~outliers:1 ~drifted:true ~unstable:true [| 1.; 2.; 3. |] in
-  equal ~msg:"sorted" (array (float 0.)) [| 1.; 2.; 3. |] s.Run.sorted;
+  equal ~msg:"sorted" (array float_exact) [| 1.; 2.; 3. |] s.Run.sorted;
   equal ~msg:"outliers" int 1 s.Run.outliers;
   is_true ~msg:"drifted" s.Run.drifted;
   is_true ~msg:"unstable" s.Run.unstable
 
 let sampled_accepts_ties () =
   let s = sam [| 1.; 1.; 1. |] in
-  equal (array (float 0.)) [| 1.; 1.; 1. |] s.Run.sorted
+  equal (array float_exact) [| 1.; 1.; 1. |] s.Run.sorted
 
 let sampled_rejects_short () =
   invalid (fun () -> sam [||]);
@@ -72,8 +75,7 @@ let constructor_copies_input () =
   let input = [| 1.; 2.; 3. |] in
   let s = sam input in
   input.(0) <- 99.;
-  equal ~msg:"evidence unaffected by caller mutation"
-    (array (float 0.))
+  equal ~msg:"evidence unaffected by caller mutation" (array float_exact)
     [| 1.; 2.; 3. |] s.Run.sorted
 
 let projection_returns_fresh_array () =
@@ -84,7 +86,7 @@ let projection_returns_fresh_array () =
   let first = Option.get (Run.samples run ~case:"a" Metric.wall_time) in
   first.(0) <- 99.;
   equal ~msg:"run unaffected by mutating a projected array"
-    (option (array (float 0.)))
+    (option (array float_exact))
     (Some [| 1.; 2.; 3. |])
     (Run.samples run ~case:"a" Metric.wall_time)
 
@@ -196,7 +198,7 @@ let projections () =
   in
   let run = Run.create [ ("a", t) ] in
   equal ~msg:"samples of a sampled metric"
-    (option (array (float 0.)))
+    (option (array float_exact))
     (Some [| 1.; 2.; 3. |])
     (Run.samples run ~case:"a" Metric.wall_time);
   equal ~msg:"exact of an exact metric" (option int) (Some 54)
@@ -212,15 +214,15 @@ let projections_absent () =
   in
   let run = Run.create [ ("a", t) ] in
   equal ~msg:"samples: absent case"
-    (option (array (float 0.)))
+    (option (array float_exact))
     None
     (Run.samples run ~case:"nope" Metric.wall_time);
   equal ~msg:"samples: absent metric"
-    (option (array (float 0.)))
+    (option (array float_exact))
     None
     (Run.samples run ~case:"a" Metric.cpu_time);
   equal ~msg:"samples: exact-form metric"
-    (option (array (float 0.)))
+    (option (array float_exact))
     None
     (Run.samples run ~case:"a" Metric.alloc_words);
   equal ~msg:"exact: absent case" (option int) None
@@ -281,3 +283,4 @@ let () =
           test "the empty run is representable" empty_run;
         ];
     ]
+  |> exit

@@ -82,7 +82,11 @@
  ; default-path test invokes it through its _build path.
  (modules test_cli)
  (libraries thumper unix windtrap)
- (deps cram/fixture/bench_fixture.exe))
+ (deps cram/fixture/bench_fixture.exe)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_cli.ml test_cli.ml.corrected))))
 
 (test
  (name test_stats)

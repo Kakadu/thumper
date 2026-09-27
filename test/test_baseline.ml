@@ -63,7 +63,7 @@ let pp_evidence ppf = function
 
 (* Stored samples come from [%.3e] texts, so they are never NaN and
    structural equality is sound. *)
-let evidence = testable ~pp:pp_evidence ~equal:( = ) ()
+let evidence = Testable.make ~pp:pp_evidence ~equal:( = )
 let row_key r = (Baseline.row_id r, Baseline.row_metric r)
 
 let identity =
@@ -123,8 +123,8 @@ let spec_sample_evidence () =
   | Baseline.Sampled { k; samples } ->
       equal ~msg:"k" int 8192 k;
       equal ~msg:"n" int 20 (Array.length samples);
-      equal ~msg:"first sample" (float 0.) 6.883e-07 samples.(0);
-      equal ~msg:"last sample" (float 0.) 7.084e-07 samples.(19)
+      equal ~msg:"first sample" float_exact 6.883e-07 samples.(0);
+      equal ~msg:"last sample" float_exact 7.084e-07 samples.(19)
   | Baseline.Exact_int _ -> fail "expected sampled evidence"
 
 let spec_sample_byte_identity () =
@@ -677,7 +677,7 @@ let sampled_row_quantizes_to_file_precision () =
   in
   match Baseline.row_evidence r with
   | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"quantized to %.3e" (float 0.)
+      equal ~msg:"quantized to %.3e" float_exact
         (float_of_string "1.235e-03")
         samples.(0)
   | Baseline.Exact_int _ -> fail "expected sampled"
@@ -691,7 +691,7 @@ let row_evidence_returns_fresh_arrays () =
   | Baseline.Exact_int _ -> fail "expected sampled");
   match Baseline.row_evidence r with
   | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"row unaffected by mutating a projection" (float 0.) 1.0
+      equal ~msg:"row unaffected by mutating a projection" float_exact 1.0
         samples.(0)
   | Baseline.Exact_int _ -> fail "expected sampled"
 
@@ -941,16 +941,17 @@ let write_preserves_target_permissions () =
 (* Generators *)
 
 let gen_segment =
-  Gen.string_size (Gen.int_range 1 5)
-    (Gen.oneofl [ 'a'; 'b'; 'z'; 'A'; '0'; '9'; '.'; '_'; '-' ])
+  Gen.string_of ~size:(Gen.int_range 1 5)
+    (Gen.of_list [ 'a'; 'b'; 'z'; 'A'; '0'; '9'; '.'; '_'; '-' ])
 
 let gen_id =
-  Gen.map (String.concat "/") (Gen.list_size (Gen.int_range 1 3) gen_segment)
+  Gen.map (String.concat "/") (Gen.list ~size:(Gen.int_range 1 3) gen_segment)
 
-let gen_metric = Gen.oneofl [ "wall_time"; "cpu_time"; "alloc_words" ]
+let gen_metric = Gen.of_list [ "wall_time"; "cpu_time"; "alloc_words" ]
 
 let gen_key =
-  Gen.string_size (Gen.int_range 1 16) (Gen.oneofl [ '0'; '1'; '9'; 'a'; 'f' ])
+  Gen.string_of ~size:(Gen.int_range 1 16)
+    (Gen.of_list [ '0'; '1'; '9'; 'a'; 'f' ])
 
 let gen_samples =
   Gen.map
@@ -958,7 +959,7 @@ let gen_samples =
       let a = Array.of_list l in
       Array.sort Float.compare a;
       a)
-    (Gen.list_size (Gen.int_range 3 12) (Gen.float_range 1e-9 1.0))
+    (Gen.list ~size:(Gen.int_range 3 12) (Gen.float_range 1e-9 1.0))
 
 let gen_row =
   let open Gen in
@@ -986,12 +987,12 @@ let dedup_rows rows =
 
 let gen_section_parts =
   let open Gen in
-  let* host = oneofl [ "mbp · Apple M1 · arm64 · macos"; "ci x86_64"; "h" ] in
-  let* ocaml_id = oneofl [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
+  let* host = of_list [ "mbp · Apple M1 · arm64 · macos"; "ci x86_64"; "h" ] in
+  let* ocaml_id = of_list [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
   let* annotations =
-    list_size (int_range 0 2) (oneofl [ "forced"; "note x" ])
+    list ~size:(int_range 0 2) (of_list [ "forced"; "note x" ])
   in
-  let+ rows = list_size (int_range 0 6) gen_row in
+  let+ rows = list ~size:(int_range 0 6) gen_row in
   (host, ocaml_id, annotations, dedup_rows rows)
 
 let build key (host, ocaml, annotations, rows) t =
@@ -1001,26 +1002,24 @@ let build key (host, ocaml, annotations, rows) t =
 
 let gen_baseline =
   let open Gen in
-  let* suite = oneofl [ "digest"; "suite-x"; "s" ] in
-  let* keys = list_size (int_range 0 4) gen_key in
+  let* suite = of_list [ "digest"; "suite-x"; "s" ] in
+  let* keys = list ~size:(int_range 0 4) gen_key in
   let keys = List.sort_uniq String.compare keys in
-  let+ parts = list_size (pure (List.length keys)) gen_section_parts in
+  let+ parts = list ~size:(constant (List.length keys)) gen_section_parts in
   List.fold_left2
     (fun t key p -> build key p t)
     (Baseline.empty ~suite) keys parts
 
 let baseline_t =
-  testable
-    ~pp:(fun ppf t -> Format.fprintf ppf "%S" (Baseline.to_string t))
-    ~equal:(fun a b ->
-      String.equal (Baseline.to_string a) (Baseline.to_string b))
-    ~gen:gen_baseline ()
+  Gen.with_pp
+    (fun ppf t -> Format.fprintf ppf "%S" (Baseline.to_string t))
+    gen_baseline
 
 (* Three fixed-key sections plus an advance row for the middle one; the row
    replaces an existing key or inserts a fresh one. *)
 let gen_update_case =
   let open Gen in
-  let* parts = list_size (pure 3) gen_section_parts in
+  let* parts = list ~size:(constant 3) gen_section_parts in
   let* fresh = gen_row in
   let+ replace = bool in
   let keys = [ "aaa1"; "bbb2"; "ccc3" ] in
@@ -1042,12 +1041,11 @@ let gen_update_case =
   (t, target, advance)
 
 let update_case_t =
-  testable
-    ~pp:(fun ppf (t, target, row) ->
+  Gen.with_pp
+    (fun ppf (t, target, row) ->
       Format.fprintf ppf "(%S, %s, %s %s)" (Baseline.to_string t) target
         (Baseline.row_id row) (Baseline.row_metric row))
-    ~equal:(fun a b -> a == b)
-    ~gen:gen_update_case ()
+    gen_update_case
 
 (* Properties *)
 
@@ -1058,12 +1056,12 @@ let row_lines chunk =
 
 let properties =
   [
-    prop' "parse of a printed file re-emits it byte-identically" baseline_t
+    prop "parse of a printed file re-emits it byte-identically" baseline_t
       (fun t ->
         let s = Baseline.to_string t in
         let t' = ok_exn (Baseline.of_string s) in
         equal string s (Baseline.to_string t'));
-    prop' "print then parse preserves the observable structure" baseline_t
+    prop "print then parse preserves the observable structure" baseline_t
       (fun t ->
         let t' = ok_exn (Baseline.of_string (Baseline.to_string t)) in
         equal ~msg:"suite" (option string) (Baseline.suite t)
@@ -1091,11 +1089,10 @@ let properties =
                      Baseline.row_evidence r ))
                  (Baseline.rows s')))
           (Baseline.machines t));
-    prop' "a flipped stored-median digit is detected as Corrupt"
-      (testable
-         ~pp:(fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
-         ~gen:Gen.(pair gen_id (int_range 1 10_000))
-         ())
+    prop "a flipped stored-median digit is detected as Corrupt"
+      (Gen.with_pp
+         (fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
+         Gen.(pair gen_id (int_range 1 10_000)))
       (fun (id, k) ->
         let samples = [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |] in
         let row = Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples in
@@ -1120,7 +1117,7 @@ let properties =
             (String.split_on_char '\n' (Baseline.to_string t))
         in
         corrupt ~mentions:"median" (String.concat "\n" munged));
-    prop' "update_rows byte-preserves untouched rows and other sections"
+    prop "update_rows byte-preserves untouched rows and other sections"
       update_case_t (fun (t, target, advance) ->
         let before = Baseline.to_string t in
         let t' =
@@ -1291,3 +1288,4 @@ let () =
         ];
       group "properties" properties;
     ]
+  |> exit

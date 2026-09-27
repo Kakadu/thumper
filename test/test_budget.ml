@@ -25,7 +25,7 @@ let equal_contract a b =
   | Budget.Absolute_max a, Budget.Absolute_max b -> Float.equal a b
   | _ -> false
 
-let contract = testable ~pp:pp_contract ~equal:equal_contract ()
+let contract = Testable.make ~pp:pp_contract ~equal:equal_contract
 
 let contains hay needle =
   let nh = String.length hay and nn = String.length needle in
@@ -51,7 +51,8 @@ let band_of b =
    point (halving is exact), so comparisons are exact. *)
 let derived_band_table =
   cases
-    (pair (float 0.) (float 0.))
+    ~name:(fun (r, _) -> Printf.sprintf "r = %g" r)
+    "e = min(cap, r/2)"
     [
       (0., 0.) (* degenerate: r = 0 gives e = 0 *);
       (0.02, 0.01) (* r/2 below the cap: r/2 wins *);
@@ -60,9 +61,8 @@ let derived_band_table =
       (0.06, 0.025) (* r/2 above the cap: the cap wins *);
       (0.5, 0.025);
     ]
-    "e = min(cap, r/2)"
     (fun (r, expected) ->
-      equal (float 0.) expected
+      equal float_exact expected
         (band_of
            (Budget.relative ~metric:Metric.wall_time ~max_regression:r ())))
 
@@ -74,19 +74,19 @@ let zero_budget_degenerates () =
     (Budget.contract (Budget.no_more_alloc_than 0.))
 
 let override_replaces_derivation () =
-  equal ~msg:"override below the cap" (float 0.) 0.01
+  equal ~msg:"override below the cap" float_exact 0.01
     (band_of (Budget.no_slower_than ~equivalent_within:0.01 0.05));
-  equal ~msg:"override escapes the cap" (float 0.) 0.04
+  equal ~msg:"override escapes the cap" float_exact 0.04
     (band_of (Budget.no_slower_than ~equivalent_within:0.04 0.05));
-  equal ~msg:"override up to the whole budget" (float 0.) 0.05
+  equal ~msg:"override up to the whole budget" float_exact 0.05
     (band_of (Budget.no_slower_than ~equivalent_within:0.05 0.05));
-  equal ~msg:"explicit zero band" (float 0.) 0.
+  equal ~msg:"explicit zero band" float_exact 0.
     (band_of (Budget.no_slower_than ~equivalent_within:0. 0.1))
 
 let default_max_regression_is_five_percent () =
-  equal (float 0.) 0.05 Budget.default_max_regression
+  equal float_exact 0.05 Budget.default_max_regression
 
-let band_cap_is_the_u2_cap () = equal (float 0.) 0.025 Budget.band_cap
+let band_cap_is_the_u2_cap () = equal float_exact 0.025 Budget.band_cap
 
 let defaults_gate_wall_time_at_five_percent () =
   (* The budget list applied when a case has no budgets from any level. *)
@@ -140,43 +140,47 @@ let at_most_is_an_absolute_contract () =
     (Budget.contract (Budget.at_most ~metric:Metric.major_collections 0.))
 
 let rejects_bad_max_regression () =
-  raises_invalid_arg "Thumper.Budget: negative or NaN max_regression" (fun () ->
-      Budget.no_slower_than (-0.05));
-  raises_invalid_arg ~msg:"NaN" "Thumper.Budget: negative or NaN max_regression"
+  raises (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
+    (fun () -> Budget.no_slower_than (-0.05));
+  raises ~msg:"NaN"
+    (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
     (fun () -> Budget.no_more_alloc_than Float.nan);
-  raises_invalid_arg ~msg:"via relative"
-    "Thumper.Budget: negative or NaN max_regression" (fun () ->
+  raises ~msg:"via relative"
+    (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
+    (fun () ->
       Budget.relative ~metric:Metric.wall_time ~max_regression:(-1.) ())
 
 let rejects_bad_equivalent_within () =
-  raises_invalid_arg "Thumper.Budget: negative or NaN equivalent_within"
+  raises (Invalid_argument "Thumper.Budget: negative or NaN equivalent_within")
     (fun () -> Budget.no_slower_than ~equivalent_within:(-0.01) 0.05);
-  raises_invalid_arg ~msg:"NaN"
-    "Thumper.Budget: negative or NaN equivalent_within" (fun () ->
-      Budget.no_slower_than ~equivalent_within:Float.nan 0.05)
+  raises ~msg:"NaN"
+    (Invalid_argument "Thumper.Budget: negative or NaN equivalent_within")
+    (fun () -> Budget.no_slower_than ~equivalent_within:Float.nan 0.05)
 
 let rejects_band_exceeding_budget () =
   (* With e > r, the regressed (L > r) and equivalent
      ([L, U] within [-e, e]) overlap on (r, e] — the relations stop
      partitioning shifts. The override escapes band_cap, never the budget. *)
-  raises_invalid_arg "Thumper.Budget: equivalent_within exceeds max_regression"
+  raises
+    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
     (fun () -> Budget.no_slower_than ~equivalent_within:0.06 0.05);
-  raises_invalid_arg ~msg:"positive band on a zero budget"
-    "Thumper.Budget: equivalent_within exceeds max_regression" (fun () ->
-      Budget.no_more_alloc_than ~equivalent_within:0.01 0.);
-  raises_invalid_arg ~msg:"via relative"
-    "Thumper.Budget: equivalent_within exceeds max_regression" (fun () ->
+  raises ~msg:"positive band on a zero budget"
+    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
+    (fun () -> Budget.no_more_alloc_than ~equivalent_within:0.01 0.);
+  raises ~msg:"via relative"
+    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
+    (fun () ->
       Budget.relative ~metric:Metric.wall_time ~equivalent_within:0.2
         ~max_regression:0.1 ())
 
 let rejects_bad_at_most_threshold () =
-  raises_invalid_arg "Thumper.Budget.at_most: negative or NaN threshold"
+  raises (Invalid_argument "Thumper.Budget.at_most: negative or NaN threshold")
     (fun () -> Budget.at_most ~metric:Metric.alloc_words (-1.));
   (* Tolerance is validated before capability: the NaN raise fires even on a
      never-exact metric, pinning the check order. *)
-  raises_invalid_arg ~msg:"NaN"
-    "Thumper.Budget.at_most: negative or NaN threshold" (fun () ->
-      Budget.at_most ~metric:Metric.wall_time Float.nan)
+  raises ~msg:"NaN"
+    (Invalid_argument "Thumper.Budget.at_most: negative or NaN threshold")
+    (fun () -> Budget.at_most ~metric:Metric.wall_time Float.nan)
 
 let rejects_at_most_on_never_exact_metrics () =
   (* An absolute cap gates proven exact evidence only; on a metric that
@@ -237,3 +241,4 @@ let () =
             rejects_at_most_on_never_exact_metrics;
         ];
     ]
+  |> exit

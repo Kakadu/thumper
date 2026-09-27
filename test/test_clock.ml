@@ -86,3 +86,4 @@ let () =
             load_average_some_non_negative;
         ];
     ]
+  |> exit

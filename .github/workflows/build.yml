@@ -27,6 +27,12 @@ jobs:
         with:
           ocaml-compiler: 5
 
+      # The tests need windtrap 0.2.0, which is not on opam yet. A pin
+      # without a version takes the version opam already knows (0.1.0), so
+      # the pin names it.
+      - name: Pin windtrap
+        run: opam pin add -n windtrap.0.2.0 git+https://github.com/invariant-hq/windtrap.git#v0.2.0
+
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test
 

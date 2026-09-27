@@ -502,3 +502,4 @@ let () =
             candidate_over_headerless_file_needs_a_name;
         ];
     ]
+  |> exit

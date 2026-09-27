@@ -272,7 +272,7 @@ let defaults_are_check_with_nothing_set () =
   equal ~msg:"baseline" (option string) None o.Cli.baseline;
   equal ~msg:"json" (option string) None o.Cli.json;
   is_true ~msg:"strict" (not o.Cli.strict);
-  equal ~msg:"wait_quiet" (option (float 0.)) None o.Cli.wait_quiet;
+  equal ~msg:"wait_quiet" (option float_exact) None o.Cli.wait_quiet;
   is_true ~msg:"force" (not o.Cli.force);
   equal ~msg:"color" string "auto" (color_name o.Cli.color)
 
@@ -308,7 +308,7 @@ let long_options_accept_equals_form () =
   let o = opts [ "--tag=lab"; "--baseline=b.thumper"; "--wait-quiet=2.5" ] in
   equal ~msg:"tag" (list string) [ "lab" ] o.Cli.tags;
   equal ~msg:"baseline" (option string) (Some "b.thumper") o.Cli.baseline;
-  equal ~msg:"wait" (option (float 0.)) (Some 2.5) o.Cli.wait_quiet
+  equal ~msg:"wait" (option float_exact) (Some 2.5) o.Cli.wait_quiet
 
 let value_flags_parse () =
   let o =
@@ -326,7 +326,7 @@ let value_flags_parse () =
   in
   equal (option string) (Some "p.thumper") o.Cli.baseline;
   equal (option string) (Some "v.json") o.Cli.json;
-  equal (option (float 0.)) (Some 0.) o.Cli.wait_quiet;
+  equal (option float_exact) (Some 0.) o.Cli.wait_quiet;
   is_true o.Cli.strict;
   equal string "quick" (preset_name o.Cli.preset);
   is_true ~msg:"--force on bless" (opts [ "bless"; "--force" ]).Cli.force
@@ -467,7 +467,7 @@ let config_of_refines_presets_only () =
 let config_of_keeps_the_callers_knobs () =
   let base = Config.(default |> deadline 60.) in
   let c = Cli.config_of ~config:base (opts [ "--quick" ]) in
-  equal ~msg:"caller's deadline kept" (float 0.) 60. c.Config.deadline;
+  equal ~msg:"caller's deadline kept" float_exact 60. c.Config.deadline;
   equal ~msg:"preset n applied over it" int Config.quick.Config.n c.Config.n;
   (* The CLI never flips the fork seam: the caller's in-process protocol
      flows through untouched. *)
@@ -648,9 +648,9 @@ let mixed_run_renders_all_four_blocks () =
         (bcase "gamma", trial_for "gamma");
       ]
   in
-  print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 3 cases vs digest.thumper [testkey]
 
   alpha   2.00 us  ±0.0%      54 w   REGRESSED +100.0% [+100.0, +100.0]  budget +5%  confirmed; equivalent (alloc exact)
@@ -669,9 +669,9 @@ let pass_run_renders_header_table_summary () =
   let v =
     verdict_of ~file (bcase "alpha", trial (ties 5 1e-6))
   in
-  print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   equivalent
@@ -681,9 +681,9 @@ thumper: digest — 1 case vs digest.thumper [testkey]
 
 let new_run_renders_proposed_rows_and_the_accept_prompt () =
   let v = new_fixture () in
-  print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — no baseline for machine testkey (test-host)
 
   alpha   1.00 us  ±0.0%   54 w   proposed
@@ -710,9 +710,9 @@ let loaded_run_warns_under_the_header () =
     verdict_of ~gate:loaded ~file
       (bcase "alpha", trial (ties 5 2e-6))
   in
-  print_string (Cli.render_check (ctx ~gate:loaded ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ~gate:loaded ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 warning: load 7.9 on 8 cores — timing verdicts degraded
 
@@ -735,9 +735,9 @@ let loaded_new_run_warns_beside_the_prompt () =
 
 let improvement_only_renders_the_ratchet_prompt () =
   let v = improved_fixture () in
-  print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   improved -50.0% [-50.0, -50.0]  confirmed
@@ -754,9 +754,9 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
   let v =
     verdict_of ~file (bcase "alpha", trial (ties 5 2e-6))
   in
-  print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   2.00 us  ±0.0%   54 w   inconclusive: unconfirmed; equivalent (alloc exact)
@@ -768,9 +768,9 @@ let exact_alloc_failure_names_the_alloc_side () =
   (* A case failing on alloc alone: the alloc-side detail carries the cell
      (the "REGRESSED alloc" form), integers with no interval. *)
   let v = exact_alloc_fail_fixture () in
-  print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   71 w   REGRESSED alloc 54 w → 71 w (exact)
@@ -855,9 +855,9 @@ let measurement_warnings_render_after_the_table () =
       [ (m_wall, Run.Samples (sam (ties 5 1e-6))); (m_alloc, Run.Exact 54) ]
   in
   let v = verdict_of ~file (bcase "alpha", warned) in
-  print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (Cli.render_check (ctx ()) v)
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   equivalent
@@ -912,7 +912,8 @@ let rejects_a_bad_suite_name () =
     (fun () -> Cli.main ~argv:[| "bench.exe"; "list" |] ~name:"" benches)
 
 let rejects_duplicate_suite_budgets () =
-  raises_invalid_arg "Thumper.run: two budgets for metric wall_time" (fun () ->
+  raises (Invalid_argument "Thumper.run: two budgets for metric wall_time")
+    (fun () ->
       Cli.main
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         ~argv:[| "bench.exe"; "list" |] ~name:"digest" benches)
@@ -944,7 +945,7 @@ let usage_errors_exit_2 () =
 let list_prints_resolved_ids () =
   let code = Cli.main ~argv:[| "bench.exe"; "list" |] ~name:"digest" benches in
   equal int 0 code;
-  expect {|
+  expect (output ()) @@ __POS_OF__ {|
 alpha
 g/beta
 |}
@@ -956,7 +957,7 @@ let list_honors_the_selection () =
       ~name:"digest" benches
   in
   equal int 0 code;
-  expect {| g/beta |}
+  expect (output ()) @@ __POS_OF__ {| g/beta |}
 
 let empty_selection_exits_2 () =
   let code =
@@ -1316,3 +1317,4 @@ let () =
             default_path_lands_next_to_the_source;
         ];
     ]
+  |> exit
