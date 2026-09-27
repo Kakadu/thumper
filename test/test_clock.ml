@@ -10,15 +10,6 @@ open Windtrap
 
 let reads = 10_000
 
-let elapsed_non_decreasing () =
-  let prev = ref (Thumper_clock.elapsed_ns ()) in
-  for i = 1 to reads do
-    let now = Thumper_clock.elapsed_ns () in
-    if Int64.compare now !prev < 0 then
-      failf "elapsed_ns went backwards at read %d: %Ld then %Ld" i !prev now;
-    prev := now
-  done
-
 let now_non_decreasing () =
   let prev = ref (Thumper_clock.now_ns ()) in
   for i = 1 to reads do
@@ -40,13 +31,13 @@ let load_average_some_non_negative () =
 let resolution_below_1ms () =
   let min_delta = ref Int64.max_int in
   for _ = 1 to 1_000 do
-    let a = Thumper_clock.elapsed_ns () in
-    let b = Thumper_clock.elapsed_ns () in
+    let a = Thumper_clock.now_ns () in
+    let b = Thumper_clock.now_ns () in
     let d = Int64.sub b a in
     if Int64.compare d !min_delta < 0 then min_delta := d
   done;
   if Int64.compare !min_delta 1_000_000L >= 0 then
-    failf "consecutive elapsed_ns reads are %Ld ns apart (>= 1 ms)" !min_delta
+    failf "consecutive now_ns reads are %Ld ns apart (>= 1 ms)" !min_delta
 
 (* A ticks-vs-nanoseconds confusion in the stubs (e.g. dropping the mach
    timebase conversion on Apple Silicon, where raw ticks run at 24 MHz, so
@@ -54,31 +45,25 @@ let resolution_below_1ms () =
    resolution tests above. Only cross-checking against an independently
    timed wall-clock interval catches a constant-factor unit error. The
    bounds are loose ([0.04, 0.5] s for a 50 ms sleep) to tolerate
-   scheduler delay while still catching any such factor. [elapsed_ns] and
-   [now_ns] convert at separate call sites, so each gets its own check. *)
-let cross_check name read () =
-  let t0 = read () in
+   scheduler delay while still catching any such factor. *)
+let tracks_sleep () =
+  let t0 = Thumper_clock.now_ns () in
   Unix.sleepf 0.05;
-  let t1 = read () in
+  let t1 = Thumper_clock.now_ns () in
   let s = Int64.to_float (Int64.sub t1 t0) /. 1e9 in
   if s < 0.04 || s > 0.5 then
-    failf "%s measured %.6f s across a 50 ms sleep (unit error?)" name s
+    failf "now_ns measured %.6f s across a 50 ms sleep (unit error?)" s
 
 let () =
   run "thumper_clock"
     [
       group "clock"
         [
-          test "elapsed_ns is non-decreasing over 10k rapid reads"
-            elapsed_non_decreasing;
           test "now_ns is non-decreasing over 10k rapid reads"
             now_non_decreasing;
-          test "consecutive elapsed_ns reads differ by less than 1 ms"
+          test "consecutive now_ns reads differ by less than 1 ms"
             resolution_below_1ms;
-          test "elapsed_ns tracks a 50 ms wall-clock sleep"
-            (cross_check "elapsed_ns" Thumper_clock.elapsed_ns);
-          test "now_ns tracks a 50 ms wall-clock sleep"
-            (cross_check "now_ns" Thumper_clock.now_ns);
+          test "now_ns tracks a 50 ms wall-clock sleep" tracks_sleep;
         ];
       group "load"
         [

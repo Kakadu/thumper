@@ -15,11 +15,11 @@
    Vendoring notes: every stub symbol is renamed from upstream's
    ocaml_mtime_clock_* to ocaml_thumper_clock_* — a consumer may link both
    thumper and the real mtime, and identical C symbols in two archives are
-   a hard link error. ocaml_thumper_clock_period_ns is defined in every
-   tier but bound by no external on the OCaml side. The Windows tier is likewise
-   upstream-verbatim and dead by declared scope (architecture.md scopes
-   Windows out); it uses legacy Begin_roots and caml_copy_int64 of a
-   double-valued frequency, and needs review before any Windows work. */
+   a hard link error. Upstream's period_ns stub, elapsed clock and start
+   latch are dropped: nothing bound them or read them, and thumper reads
+   one clock, [now_ns]. The Windows tier keeps upstream's [now_ns]
+   verbatim; it converts ticks through a double-valued frequency and needs
+   review before any Windows work. */
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
 #endif
@@ -61,13 +61,13 @@
 
 #include <mach/mach_time.h>
 
-/* Thumper patch (vs. upstream mtime): [elapsed_ns] is thumper's
-   measurement clock — it times individual benchmark batches — so it must
-   be truly raw-monotonic.  Upstream selects mach_continuous_time on
-   macOS >= 10.12, which keeps ticking through system sleep: a lid close
-   mid-batch would inject the entire sleep into one sample.
-   mach_absolute_time does not advance during sleep and is not adjusted
-   after boot, so we use it unconditionally. */
+/* Thumper patch (vs. upstream mtime): [now_ns] is thumper's measurement
+   clock — it times individual benchmark batches — so it must be truly
+   raw-monotonic.  Upstream selects mach_continuous_time on macOS >= 10.12,
+   which keeps ticking through system sleep: a lid close mid-batch would
+   inject the entire sleep into one sample.  mach_absolute_time does not
+   advance during sleep and is not adjusted after boot, so we use it
+   unconditionally. */
 
 static mach_timebase_info_data_t scale = {0};
 
@@ -80,16 +80,6 @@ void ocaml_thumper_clock_init_scale (void)
     OCAML_MTIME_RAISE_SYS_ERROR ("mach_timebase_info_data.denom is 0");
 }
 
-CAMLprim value ocaml_thumper_clock_elapsed_ns (value unit)
-{
-  CAMLparam1 (unit);
-  static uint64_t start = 0L;
-  if (start == 0L) { start = mach_absolute_time (); }
-  if (scale.denom == 0) { ocaml_thumper_clock_init_scale (); }
-  uint64_t now = mach_absolute_time ();
-  CAMLreturn (caml_copy_int64 (((now - start) * scale.numer) / scale.denom));
-}
-
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
   CAMLparam1 (unit);
@@ -98,92 +88,43 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
   CAMLreturn (caml_copy_int64 ((now * scale.numer) / scale.denom));
 }
 
-CAMLprim value ocaml_thumper_clock_period_ns (value unit)
-{ return Val_none; }
-
 /* POSIX */
 
 #elif defined(OCAML_MTIME_POSIX)
 
 #include <time.h>
 
-/* Thumper patch (vs. upstream mtime): [elapsed_ns] is thumper's
-   measurement clock — it times individual benchmark batches — so it must
-   be truly raw-monotonic.  Upstream uses CLOCK_BOOTTIME on Linux, which
-   ticks through system suspend (a suspend mid-batch would inject the
-   entire sleep into one sample) and is subject to NTP frequency slew
-   (slew silently stretches or shrinks long batches).
-   CLOCK_MONOTONIC_RAW has neither problem.  [now_ns] below stays on
-   CLOCK_MONOTONIC: it is a general-purpose timestamp, not used by
-   measurement. */
+/* Thumper patch (vs. upstream mtime): [now_ns] is thumper's measurement
+   clock — it times individual benchmark batches — so it must be truly
+   raw-monotonic.  Upstream uses CLOCK_BOOTTIME on Linux, which ticks
+   through system suspend (a suspend mid-batch would inject the entire
+   sleep into one sample) and is subject to NTP frequency slew (slew
+   silently stretches or shrinks long batches).  CLOCK_MONOTONIC_RAW has
+   neither problem. */
 
-CAMLprim value ocaml_thumper_clock_elapsed_ns (value unit)
+CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
   CAMLparam1 (unit);
-  static struct timespec start = {0};
-  static int start_set = 0;
   struct timespec now;
   clockid_t clockid;
 
 /* Headers too old to know CLOCK_MONOTONIC_RAW (pre-2.6.28, 2008) fall
-   back to the generic POSIX tier below rather than failing to compile. */
+   back to the generic POSIX clock rather than failing to compile. */
 #if defined(OCAML_MTIME_LINUX) && defined(CLOCK_MONOTONIC_RAW)
   clockid = CLOCK_MONOTONIC_RAW;
 #else
   clockid = CLOCK_MONOTONIC;
 #endif
 
-  /* Latch via a flag, not [start.tv_sec == 0]: the raw clock's epoch is
-     boot, so tv_sec can legitimately be 0, and re-latching on every read
-     would make elapsed_ns non-monotonic. */
-  if (!start_set)
-  {
-    if (clock_gettime (clockid, &start))
-      OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
-    start_set = 1;
-  }
-
   if (clock_gettime (clockid, &now))
     OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
 
-  CAMLreturn (caml_copy_int64 ((uint64_t)(now.tv_sec - start.tv_sec) *
+  CAMLreturn (caml_copy_int64 ((uint64_t)(now.tv_sec) *
                                (uint64_t)1000000000 +
-                               (uint64_t)(now.tv_nsec - start.tv_nsec)));
+                               (uint64_t)(now.tv_nsec)));
 }
 
-CAMLprim value ocaml_thumper_clock_now_ns (value unit)
-{
-  struct timespec now;
-
-  if (clock_gettime (CLOCK_MONOTONIC, &now))
-    OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
-
-  return caml_copy_int64 ((uint64_t)(now.tv_sec) *
-                          (uint64_t)1000000000 +
-                          (uint64_t)(now.tv_nsec));
-}
-
-CAMLprim value ocaml_thumper_clock_period_ns (value unit)
-{
-  CAMLparam1 (unit);
-  CAMLlocal1 (some);
-  struct timespec res;
-
-  if (clock_getres (CLOCK_MONOTONIC, &res)) { CAMLreturn (Val_none); }
-
-  /* We only handle valid timespec structs as per POSIX def (§2.8.5 in 2013) */
-  if (res.tv_nsec < 0 || res.tv_nsec > 999999999) CAMLreturn (Val_none);
-
-  /* Negative periods are dubious */
-  if (res.tv_sec < 0) CAMLreturn (Val_none);
-
-  some = caml_alloc (1, 0);
-  Store_field (some, 0,
-               caml_copy_int64 ((uint64_t)(res.tv_sec) *
-                                (uint64_t)1000000000 +
-                                (uint64_t)(res.tv_nsec)));
-  CAMLreturn (some);
-}
+/* Windows */
 
 #elif defined(OCAML_MTIME_WINDOWS)
 #define WIN32_LEAN_AND_MEAN
@@ -197,27 +138,6 @@ static void set_performance_frequency(void)
     OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
   }
   performance_frequency = (1000000000.0 / t_freq.QuadPart);
-}
-
-CAMLprim value ocaml_thumper_clock_elapsed_ns (value unit)
-{
-  (void) unit;
-  static LARGE_INTEGER start;
-  if (performance_frequency == 0.0) {
-    set_performance_frequency();
-  }
-  if ( start.QuadPart == 0 )
-  {
-    if (!QueryPerformanceCounter(&start)) {
-      OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
-    }
-  }
-  static LARGE_INTEGER now;
-  if ( !QueryPerformanceCounter(&now)) {
-    OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
-  }
-  uint64_t ret = (now.QuadPart - start.QuadPart) * performance_frequency;
-  return caml_copy_int64(ret);
 }
 
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
@@ -234,38 +154,13 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
   return caml_copy_int64(ret);
 }
 
-CAMLprim value ocaml_thumper_clock_period_ns (value unit)
-{
-  (void) unit;
-  if (performance_frequency == 0.0) {
-    set_performance_frequency();
-  }
-  if ( performance_frequency <= 0.0 ) {
-    return Val_none;
-  }
-  value ret;
-  value p = caml_copy_int64(performance_frequency);
-  Begin_roots1(p);
-  ret = caml_alloc_small(1,0);
-  Field(ret,0) = p;
-  End_roots();
-  return ret;
-}
-
-
 /* Unsupported */
 
 #else
 
 #warning OCaml Mtime_clock module: unsupported platform
 
-CAMLprim value ocaml_thumper_clock_elapsed_ns (value unit)
-{ OCAML_MTIME_RAISE_SYS_ERROR ("unsupported platform"); }
-
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
-{ OCAML_MTIME_RAISE_SYS_ERROR ("unsupported platform"); }
-
-CAMLprim value ocaml_thumper_clock_period_ns (value unit)
 { OCAML_MTIME_RAISE_SYS_ERROR ("unsupported platform"); }
 
 #endif

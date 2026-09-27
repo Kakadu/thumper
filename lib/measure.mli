@@ -49,8 +49,8 @@ type instruments = {
 
 val default_instruments : instruments
 (** [default_instruments] reads the vendored raw-monotonic clock
-    ([Thumper_clock.elapsed_ns]), process CPU time ([Unix.times], user + system,
-    at whole-nanosecond resolution), and the runtime's cumulative allocation
+    ([Thumper_clock.now_ns]), process CPU time ([Unix.times], user + system, at
+    whole-nanosecond resolution), and the runtime's cumulative allocation
     counters ([Gc.counters] and [Gc.quick_stat]). *)
 
 (** {1:failures Failures} *)

@@ -16,7 +16,7 @@ type instruments = {
 
 let default_instruments =
   {
-    now_ns = Thumper_clock.elapsed_ns;
+    now_ns = Thumper_clock.now_ns;
     cpu_ns =
       (fun () ->
         let t = Unix.times () in

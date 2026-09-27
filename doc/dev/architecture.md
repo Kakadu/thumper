@@ -131,7 +131,7 @@ rest ([`testing.md`](testing.md)).
 `unix` plus the vendored clock, full stop. Each rejected dependency,
 by name, with the reason it stays out:
 
-- **`mtime`** — vendored instead, then patched: `elapsed_ns` reads
+- **`mtime`** — vendored instead, then patched: `now_ns` reads
   `CLOCK_MONOTONIC_RAW` (Linux) / `mach_absolute_time` (Darwin), so
   NTP slew and suspend time never enter a sample; the same stubs house
   `getloadavg` for the gate. An upstream dependency could not carry
