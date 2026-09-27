@@ -75,6 +75,22 @@ val pp_error : Format.formatter -> error -> unit
 (** [pp_error ppf e] formats [e] for users, with its line number and remedy when
     present. *)
 
+(** {1:grammar Identifiers}
+
+    The file grammar owns the identifier charset: case ids are ['/']-separated
+    segments, metric ids and machine keys are single segments, and a segment is
+    a nonempty run of [[A-Za-z0-9._-]]. The whitespace ban is what keeps the
+    tab- and space-separated grammar escape-free. [Bench] (case ids) and [Env]
+    (the [THUMPER_MACHINE] override) validate against these predicates, so an id
+    or key they accept is one this module can write. *)
+
+val is_id_char : char -> bool
+(** [is_id_char c] is [true] iff [c] is in [[A-Za-z0-9._-]]. *)
+
+val valid_segment : string -> bool
+(** [valid_segment s] is [true] iff [s] is nonempty and every character
+    satisfies {!is_id_char}. *)
+
 (** {1:reading Reading} *)
 
 val read : string -> (t, error) result

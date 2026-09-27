@@ -65,11 +65,11 @@ let reserved_annotation text =
    keys are single such segments. The whitespace ban is what keeps the
    tab/space grammar escape-free. *)
 
-let is_word_char = function
+let is_id_char = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' -> true
   | _ -> false
 
-let valid_segment s = s <> "" && String.for_all is_word_char s
+let valid_segment s = s <> "" && String.for_all is_id_char s
 
 let valid_id s =
   s <> "" && List.for_all valid_segment (String.split_on_char '/' s)

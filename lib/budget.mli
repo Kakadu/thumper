@@ -106,6 +106,13 @@ val metric : t -> Metric.t
 val contract : t -> contract
 (** [contract b] is [b]'s contract, with the equivalence band resolved. *)
 
+val check_distinct : fname:string -> t list -> unit
+(** [check_distinct ~fname budgets] checks that no two of [budgets] bind the
+    same metric ({!Metric.equal}). This is the one statement of the rule: the
+    constructors that take a [~budgets] list, [Check.run] (before the lease) and
+    the CLI entry point all call it. Raises [Invalid_argument], prefixed with
+    [fname], naming the metric. *)
+
 (** {1:defaults Defaults}
 
     The protocol constants this module owns. *)

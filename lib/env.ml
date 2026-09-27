@@ -111,14 +111,12 @@ let facts =
      let host = Option.value (Thumper_clock.host_uuid ()) ~default:hostname in
      { hostname; host; os; arch; cpu_model })
 
-let is_key_char = function
-  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' -> true
-  | _ -> false
-
 let machine_key () =
   match Sys.getenv_opt "THUMPER_MACHINE" with
   | Some key ->
-      if String.length key = 0 || not (String.for_all is_key_char key) then
+      (* The key heads a baseline section: the file grammar decides what it
+         may be. *)
+      if not (Baseline.valid_segment key) then
         invalid_arg
           (Printf.sprintf
              "THUMPER_MACHINE: %S (need a non-empty key over [A-Za-z0-9._-])"

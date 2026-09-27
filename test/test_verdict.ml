@@ -840,25 +840,7 @@ let judge_validates_inputs () =
            [
              (bcase "a", wall_trial (ties 5 1.0));
              (bcase "a", wall_trial (ties 5 1.0));
-           ]));
-  invalid (fun () ->
-      ignore
-        (judge
-           ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
-           [ (bcase "a", wall_trial (ties 5 1.0)) ]));
-  (* A foreign machine's section is no longer expressible — [judge] derives
-     this machine's section from the file by key; a foreign-only file is
-     simply No_baseline. The wrong-ruler class that remains representable is
-     a file naming another suite, refused before judgment. *)
-  let wrong_suite_file =
-    Baseline.set_section
-      (Baseline.empty ~suite:"other")
-      ident
-      [ wall_row "a" (ties 5 1.0) ]
-  in
-  invalid (fun () ->
-      ignore
-        (judge ~file:wrong_suite_file [ (bcase "a", wall_trial (ties 5 1.0)) ]))
+           ]))
 
 (* NEW rows *)
 
@@ -1487,8 +1469,7 @@ let () =
             no_cross_metric_forgiveness;
           test "case budgets override run budgets per metric"
             case_budgets_override_run_budgets_per_metric;
-          test "judge validates ids, budgets, and the section's machine"
-            judge_validates_inputs;
+          test "judge rejects duplicate case ids" judge_validates_inputs;
         ];
       group "NEW"
         [

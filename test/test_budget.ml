@@ -194,6 +194,20 @@ let rejects_at_most_on_never_exact_metrics () =
         (fun () -> ignore (Budget.at_most ~metric:m 1.0)))
     [ Metric.wall_time; Metric.cpu_time ]
 
+let check_distinct_rejects_a_repeated_metric () =
+  Budget.check_distinct ~fname:"f" [];
+  Budget.check_distinct ~fname:"f"
+    [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ];
+  raises
+    (Invalid_argument
+       "f: two budgets for metric alloc_words in one ~budgets list") (fun () ->
+      Budget.check_distinct ~fname:"f"
+        [
+          Budget.no_more_alloc_than 0.01;
+          Budget.no_slower_than 0.05;
+          Budget.at_most ~metric:Metric.alloc_words 4096.;
+        ])
+
 let () =
   run "budget"
     [
@@ -237,6 +251,8 @@ let () =
             rejects_band_exceeding_budget;
           test "rejects negative or NaN at_most threshold"
             rejects_bad_at_most_threshold;
+          test "check_distinct rejects a metric bound twice"
+            check_distinct_rejects_a_repeated_metric;
           test "rejects at_most on never-exact metrics"
             rejects_at_most_on_never_exact_metrics;
         ];

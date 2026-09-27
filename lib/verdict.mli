@@ -178,6 +178,11 @@ val judge :
     from any level gets [Budget.defaults]. [suite] names fresh candidates
     built over the empty-file baseline (see {!candidate}).
 
+    The entry points check their inputs before measuring, and [judge] relies on
+    it: [budgets] binds each metric at most once ([Budget.check_distinct]), and
+    [file]'s header, when it has one, names [suite] (the wrong-ruler check, in
+    [Check.run] and the CLI).
+
     Under a [Loaded] [gate], every sampled-metric comparison that would need a
     rank test is [Inconclusive Environment] and nothing queues for confirmation;
     exact metrics still compare and can still fail. Cells that never reach
@@ -185,10 +190,7 @@ val judge :
     [Missing_metric], [Stale_section]: those defects are properties of the
     evidence, not the host, and their remedies do not involve waiting for quiet.
 
-    Raises [Invalid_argument] if two cases share an id, if [budgets] holds two
-    budgets for one metric, or if [file]'s header names another suite (the
-    wrong-ruler class, closed at the library boundary — the CLI refuses the
-    same mismatch with exit 2 at read time). *)
+    Raises [Invalid_argument] if two cases share an id. *)
 
 val confirmations : provisional -> string list
 (** Case ids needing re-measurement, in queue order (spaced to the end of the

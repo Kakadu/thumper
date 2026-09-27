@@ -378,18 +378,6 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
 let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
   check_distinct ~what:"case id"
     ~ids:(List.map (fun (c, _) -> Bench.id c) cases);
-  check_distinct ~what:"budget metric"
-    ~ids:(List.map (fun b -> Metric.id (Budget.metric b)) budgets);
-  (* The wrong-ruler class, closed at the library boundary too: a file whose
-     header names another suite raises before any judgment (the CLI refuses
-     the same mismatch with exit 2 at read time). *)
-  (match Baseline.suite file with
-  | Some s when not (String.equal s suite) ->
-      invalid
-        "Verdict.judge: baseline is for suite %S, not %S; pass this suite's \
-         file, or update its '# suite:' header if the suite was renamed"
-        s suite
-  | _ -> ());
   let section = Baseline.section file identity.Baseline.machine in
   let comparison = classify_comparison identity section in
   let stale = match comparison with Stale _ -> true | _ -> false in

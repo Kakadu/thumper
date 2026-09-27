@@ -34,8 +34,7 @@ type error =
           pure offline re-judging, not for laundering a dead worker into a pass;
           worker failure is exit 2 wherever it strikes. *)
   | Empty_selection
-      (** The filter selects no case. A broken filter must not silently pass
-         . *)
+      (** The filter selects no case. A broken filter must not silently pass. *)
   | Invalid_suite of Bench.error
       (** [Bench.resolve] rejected the suite. Detected on the whole suite before
           filtering — a narrowed selection never masks a broken suite. *)
@@ -63,6 +62,20 @@ type progress = {
     carry no measurements and their consumer must not influence the run (the
     CLI's status line is the intended client; the default consumer does
     nothing). *)
+
+(** {1:selecting Selecting} *)
+
+val select :
+  ?filter:Bench.filter -> Bench.t list -> Bench.case list * [ `Full | `Partial ]
+(** [select ?filter benches] is the selection {!run} and {!measure} measure:
+    [benches] resolved by [Bench.resolve] and narrowed by [filter] (default:
+    all), in authoring order, and whether it covers every resolved case
+    ([`Full], which licenses [Verdict]'s prune rule) or not ([`Partial]).
+    Neither measures nor takes the lease. Raises {!Error} [(Invalid_suite _)] on
+    a suite [Bench.resolve] rejects, checked on the whole suite before
+    filtering, and {!Error} [Empty_selection] when nothing is selected. A caller
+    that holds the lease itself (the CLI) calls it before acquiring the lease,
+    so a broken suite or filter fails without waiting. *)
 
 (** {1:checking Checking} *)
 
@@ -118,13 +131,12 @@ val run :
     name recorded in fresh candidates (the CLI always passes it).
 
     [baseline], when given, must be this suite's: [run] raises
-    [Invalid_argument] if its header names another suite (the wrong-ruler
-    class — the CLI refuses the same mismatch with exit 2 at read time). The
-    check runs before the lease — [Verdict.judge] enforces the same equality,
-    but only once it holds trials, and this error must not cost a wait plus a
-    full measurement sweep to surface. [Verdict.judge] also raises
-    [Invalid_argument], after the sweep, if [budgets] holds two budgets for
-    one metric.
+    [Invalid_argument] if its header names another suite (the wrong-ruler class
+    — the CLI refuses the same mismatch with exit 2 at read time), and if
+    [budgets] holds two budgets for one metric ({!Budget.check_distinct}). Both
+    checks run before the lease: a programmer error must not cost a wait plus a
+    full measurement sweep to surface. [Verdict.judge] relies on them and does
+    not repeat them.
 
     Raises {!Error}. Equal to {!run_with} on the live host seams; the type of
     [run] itself is pinned by the facade ([Thumper.Check]). *)

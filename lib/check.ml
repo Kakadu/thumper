@@ -91,6 +91,7 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
     ?(config = Config.default) ?(budgets = []) ?filter ?baseline ?(name = "")
     benches =
   let sample_gate = Option.value gate ~default:Env.gate in
+  Budget.check_distinct ~fname:"Check.run" budgets;
   let selected, selection = select ?filter benches in
   let file = Option.value baseline ~default:empty_file in
   let identity =
@@ -100,10 +101,8 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
       ocaml = Env.ocaml_identity ();
     }
   in
-  (* Wrong-ruler preflight: [Verdict.judge] rejects a file naming another
-     suite, but only once it holds trials — after the whole sweep. The same
-     check here, before the lease, keeps that programmer error from waiting
-     on a holder and spending a full measurement run to raise. *)
+  (* Wrong-ruler preflight, before the lease: a programmer error must not
+     wait on a holder or spend a measurement sweep before it raises. *)
   (match Baseline.suite file with
   | Some s when not (String.equal s name) ->
       invalid_arg

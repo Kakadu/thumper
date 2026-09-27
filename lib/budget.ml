@@ -69,4 +69,19 @@ let at_most ~metric v =
 
 let metric b = b.metric
 let contract b = b.contract
+
+(* Two budgets for one metric in a single list are ambiguous author intent:
+   across scopes nearest wins, but within one list nothing breaks the tie. *)
+let check_distinct ~fname budgets =
+  let rec go seen = function
+    | [] -> ()
+    | b :: rest ->
+        if List.exists (Metric.equal b.metric) seen then
+          invalid_arg
+            (Printf.sprintf "%s: two budgets for metric %s in one ~budgets list"
+               fname (Metric.id b.metric))
+        else go (b.metric :: seen) rest
+  in
+  go [] budgets
+
 let defaults = [ no_slower_than default_max_regression ]

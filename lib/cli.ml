@@ -1058,10 +1058,11 @@ let no_match ~patterns ~tags =
       Printf.sprintf "no case matches %s with tag %s" (quoted ps) (quoted ts)
 
 let selection ~patterns ~tags ?filter benches =
-  match Bench.resolve ?filter benches with
-  | Error e -> fail2 "%s" (pp_str Bench.pp_error e)
-  | Ok [] -> fail2 "%s" (no_match ~patterns ~tags)
-  | Ok cases -> cases
+  match Check.select ?filter benches with
+  | cases, _ -> cases
+  | exception Check.Error Check.Empty_selection ->
+      fail2 "%s" (no_match ~patterns ~tags)
+  | exception Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
 let wait_for_quiet = function
   | None -> ()
@@ -1091,18 +1092,8 @@ let validate_name name =
       "Thumper.run: suite name must be non-empty and single-line (it heads \
        fresh baselines)"
 
-let validate_budgets = function
-  | None -> ()
-  | Some budgets ->
-      ignore
-        (List.fold_left
-           (fun seen b ->
-             let id = Metric.id (Budget.metric b) in
-             if List.mem id seen then
-               invalid_arg
-                 (Printf.sprintf "Thumper.run: two budgets for metric %s" id);
-             id :: seen)
-           [] budgets)
+let validate_budgets budgets =
+  Option.iter (Budget.check_distinct ~fname:"Thumper.run") budgets
 
 (* Subcommands *)
 

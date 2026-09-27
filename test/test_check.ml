@@ -14,6 +14,7 @@
 open Windtrap
 module Baseline = Thumper.Private.Baseline
 module Bench = Thumper.Private.Bench
+module Budget = Thumper.Private.Budget
 module Check = Thumper.Private.Check
 module Config = Thumper.Private.Config
 module Env = Thumper.Private.Env
@@ -556,11 +557,9 @@ let lease_failure_surfaces_as_error () =
 
 let wrong_suite_raises_before_measuring () =
   (* Wrong-ruler preflight: a baseline whose header names another suite is a
-     programmer error, raised before any measurement — [Verdict.judge]
-     enforces the same equality, but only after the sweep, which would spend
-     a full run to surface a wrong argument. [w.calls = 0] is the observable.
-     (A foreign machine's evidence is no longer even expressible: [run]
-     derives this machine's section from the file by key.) *)
+     programmer error, raised before any measurement. [w.calls = 0] is the
+     observable. (A foreign machine's evidence is no longer even expressible:
+     [run] derives this machine's section from the file by key.) *)
   let w = world () in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   raises
@@ -570,6 +569,19 @@ let wrong_suite_raises_before_measuring () =
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
         ~baseline ~name:"other"
+        [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
+  equal ~msg:"no case was measured" int 0 w.calls
+
+let duplicate_budgets_raise_before_measuring () =
+  (* [Verdict.judge] no longer repeats the check: without this preflight a
+     duplicate budget would reach judgment unnoticed after a full sweep. *)
+  let w = world () in
+  raises
+    (Invalid_argument
+       "Check.run: two budgets for metric wall_time in one ~budgets list")
+    (fun () ->
+      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+        ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
   equal ~msg:"no case was measured" int 0 w.calls
 
@@ -724,6 +736,8 @@ let () =
             lease_failure_surfaces_as_error;
           test "a wrong-suite baseline raises before measuring"
             wrong_suite_raises_before_measuring;
+          test "duplicate budgets raise before measuring"
+            duplicate_budgets_raise_before_measuring;
           test "a failing case aborts the run" a_failing_case_aborts_the_run;
           test "a failing confirmation aborts the run"
             a_failing_confirmation_aborts_the_run;

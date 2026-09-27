@@ -27,27 +27,19 @@ type spec = {
 
 type t = Case of spec * (unit -> prepared) | Group of spec * t list
 
-(* Id charset: segments of [A-Za-z0-9._-]+ joined by '/'. The space- and
-   tab-free charset is what keeps the baseline grammar escape-free. *)
-let is_id_char = function
-  | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' -> true
-  | _ -> false
-
-let valid_segment s = s <> "" && String.for_all is_id_char s
-
 (* Slugging (pinned): a name that is already a valid segment is its own slug —
    the id is the name verbatim, case preserved. Otherwise every maximal run of
    non-id characters becomes one '-' separator, and runs at either end are
    dropped: "1 MiB copy" -> "1-MiB-copy", " (parens) " -> "parens". Literal
    id characters, including edge hyphens, are always kept. *)
 let slug name =
-  if valid_segment name then name
+  if Baseline.valid_segment name then name
   else begin
     let b = Buffer.create (String.length name) in
     let pending = ref false in
     String.iter
       (fun c ->
-        if is_id_char c then begin
+        if Baseline.is_id_char c then begin
           if !pending && Buffer.length b > 0 then Buffer.add_char b '-';
           pending := false;
           Buffer.add_char b c
@@ -63,7 +55,7 @@ let segment ~ctor ~id ~name =
   if name = "" then invalid_arg (Printf.sprintf "%s: empty name" ctor);
   match id with
   | Some id ->
-      if not (valid_segment id) then
+      if not (Baseline.valid_segment id) then
         invalid_arg
           (Printf.sprintf
              "%s: invalid id %S: an id is one segment of [A-Za-z0-9._-]+ \
@@ -97,29 +89,10 @@ let check_metrics ~ctor = function
       in
       go [] ms
 
-(* Two budgets for one metric in a single list are ambiguous author intent —
-   rejected at construction so that cross-scope nearest-wins is the only
-   duplicate-budget semantics that exists. *)
-let check_budgets ~ctor = function
-  | None -> ()
-  | Some bs ->
-      let rec go seen = function
-        | [] -> ()
-        | b :: rest ->
-            let m = Budget.metric b in
-            if List.exists (Metric.equal m) seen then
-              invalid_arg
-                (Printf.sprintf
-                   "%s: two budgets for metric %s in one ~budgets list" ctor
-                   (Metric.id m))
-            else go (m :: seen) rest
-      in
-      go [] bs
-
 let spec ~ctor ?id ?(tags = []) ?metrics ?budgets name =
   let seg = segment ~ctor ~id ~name in
   check_metrics ~ctor metrics;
-  check_budgets ~ctor budgets;
+  Option.iter (Budget.check_distinct ~fname:ctor) budgets;
   { seg; name; tags; metrics; budgets }
 
 let black_box x = Sys.opaque_identity x
