@@ -16,11 +16,10 @@
      git add gate.thumper   # in your project, commit it
 
    From then on, `dune build @bench` is the gate: a confirmed regression
-   beyond the budgets below fails the build (exit 1, a capitalized REGRESSED
-   verdict cell naming the shift, and a `rerun:` action); a confirmed
-   improvement proposes a one-row diff to
-   promote (the ratchet); an equivalent run produces no diff at all; and
-   noise degrades to inconclusive, never to a red build. *)
+   beyond the budgets below fails the build (exit 1, and a capitalized
+   REGRESSED verdict cell naming the shift); a confirmed improvement proposes
+   a one-row diff to promote (the ratchet); an equivalent run produces no
+   diff at all; and noise degrades to inconclusive, never to a red build. *)
 
 let input64 = String.make 64 '\xa5'
 

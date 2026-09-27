@@ -762,12 +762,13 @@ val run :
     Environment: [THUMPER_MACHINE] overrides the machine key
     ({!Baseline.machine_key}); [THUMPER_LOCK_DIR] relocates the measurement
     lease (shared multi-user runners); [NO_COLOR] dampens [--color auto];
-    [INSIDE_DUNE] affects color's [auto] resolution and hint wording only —
-    never behavior — the [dune promote] hint renders when the process actually
-    runs as a dune rule action (where the rule's [diff?] stages a promotion, and
-    only together with a working directory inside the build tree), while
-    [dune exec] — which sets [INSIDE_DUNE] but keeps the shell's cwd, staging
-    nothing — gets the [mv CORRECTED BASELINE] hint.
+    [INSIDE_DUNE] affects color's [auto] resolution and the hints only — never
+    behavior. When the process actually runs as a dune rule action (where the
+    rule's [diff?] stages a promotion, and only together with a working
+    directory inside the build tree), the [dune promote] hint renders and there
+    is no [rerun:] line, whose relative path could not be pasted; [dune exec] —
+    which sets [INSIDE_DUNE] but keeps the shell's cwd, staging nothing — gets
+    the [mv CORRECTED BASELINE] hint and the [rerun:] line.
 
     Exit codes:
     - [0]: [list], [bless], [-h] or [-V] succeeded, or [check] passed: its

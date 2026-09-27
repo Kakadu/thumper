@@ -43,13 +43,26 @@ advances exactly that one row.
   $ diff fixture.thumper fixture.thumper.corrected | grep '^[<>]' | cut -f1,2 | sed 's/^[<>] //' | sort -u | tr '\t' ' '
   alloc/list alloc_words
 
-The rerun hint is the exact command (getting-started): an explicit
---baseline is reproduced, so the pasted command judges the same ruler —
-without it, a rerun from the same shell would resolve the default path and
-judge a different file.
+The rerun hint is the exact command (getting-started): the preset and an
+explicit --baseline are reproduced, so the pasted command measures under
+the same protocol and judges the same ruler — without --baseline, a rerun
+from the same shell would resolve the default path and judge a different
+file.
 
   $ mv fixture.thumper.corrected alt.thumper
   $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out4.log 2>&1
   [1]
-  $ grep -q 'rerun:.*--baseline alt.thumper -f alloc/list' out4.log && echo hint-carries-baseline
-  hint-carries-baseline
+  $ grep -q 'rerun:.*bench_fixture.exe --quick --baseline alt.thumper -f alloc/list$' out4.log && echo hint-carries-preset-and-baseline
+  hint-carries-preset-and-baseline
+
+Under a dune rule action (INSIDE_DUNE set and the cwd in the build tree,
+as cram's is) there is no rerun line: its exe path is relative to the
+action's cwd and could not be pasted. The failing id stays in the table.
+
+  $ INSIDE_DUNE=1 THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out5.log 2>&1
+  [1]
+  $ grep -c 'rerun:' out5.log
+  0
+  [1]
+  $ grep -Eq 'alloc/list .*REGRESSED alloc' out5.log && echo failing-id-in-table
+  failing-id-in-table

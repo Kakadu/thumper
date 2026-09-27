@@ -100,13 +100,12 @@ thumper: digest — 4 cases vs digest.thumper [9f3a1c2e8b4d6a07]
   fib/10               1.10 us  ±0.7%    0 w   equivalent
   ...
 
-  rerun:   bench/bench_digest.exe -f sha256/string-64
-
   4 cases: 3 passed, 1 regressed.
 ```
 
-(exit code 1 — the check is red, and the `rerun:` line is the command
-that re-measures just the failing case.)
+(exit code 1 — the check is red. Run by hand with `dune exec`, the
+report adds a `rerun:` line, the command that re-measures just the
+failing case.)
 
 **An improvement.** Thumper proposes a baseline update for exactly the
 cases that improved. `dune promote` accepts it, and the diff in your

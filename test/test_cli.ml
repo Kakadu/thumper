@@ -215,7 +215,7 @@ let e2e_env dir =
   Unix.putenv "THUMPER_MACHINE" "testkey";
   Unix.putenv "THUMPER_LOCK_DIR" dir
 
-let ctx ?(color = false) ?(accept = "dune promote") ?(exe = "bench.exe")
+let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
     ?(rerun_flags = "") () =
   {
@@ -546,8 +546,9 @@ let accept_command_quotes_hostile_paths () =
        ~baseline:"My Projects/d.thumper")
 
 let rerun_hint_reproduces_the_invocation () =
-  (* The rerun line is "the exact command" (getting-started): an explicit
-     --baseline and every --tag are carried; a hostile exe path is quoted. *)
+  (* The rerun line is "the exact command" (getting-started): the preset,
+     an explicit --baseline and every --tag are carried; a hostile exe path
+     is quoted. Under a rule action (no exe) there is no rerun line. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let v =
     verdict_of ~file
@@ -556,13 +557,18 @@ let rerun_hint_reproduces_the_invocation () =
   in
   let out =
     Cli.render_check
-      (ctx ~exe:"my dir/bench.exe" ~baseline:"alt/base.thumper"
-         ~rerun_flags:" --baseline alt/base.thumper --tag lab" ())
+      (ctx ~exe:(Some "my dir/bench.exe") ~baseline:"alt/base.thumper"
+         ~rerun_flags:" --quick --baseline alt/base.thumper --tag lab" ())
       v
   in
   assert_contains out
-    "rerun:   'my dir/bench.exe' --baseline alt/base.thumper --tag lab -f \
-     alpha"
+    "rerun:   'my dir/bench.exe' --quick --baseline alt/base.thumper --tag lab \
+     -f alpha";
+  let staged = Cli.render_check (ctx ~exe:None ()) v in
+  is_true ~msg:"no rerun line under a rule action"
+    (not (contains staged "rerun:"));
+  assert_contains ~msg:"the failing id stays in the table" staged
+    "REGRESSED alloc"
 
 (* The default baseline path
 

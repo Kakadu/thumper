@@ -108,10 +108,10 @@ From then on, `dune build @bench` is the gate:
   the summary. A green *silent* build is the other good outcome: an
   unchanged executable + baseline is a dune cache hit, and no measurement
   runs at all.
-- **A confirmed regression** is red with a `REGRESSED` verdict cell and a
-  `rerun:` action naming the exact command to re-measure the case. A strong
-  verdict must reproduce in the in-run confirmation pass before it may fail
-  the build.
+- **A confirmed regression** is red with a `REGRESSED` verdict cell (run by
+  hand, the report adds a `rerun:` action naming the exact command to
+  re-measure the case). A strong verdict must reproduce in the in-run
+  confirmation pass before it may fail the build.
 - **A confirmed improvement** is red with a one-row diff — the ratchet;
   `dune promote` advances the baseline, and the diff is the reviewable
   evidence.

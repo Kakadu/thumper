@@ -123,19 +123,18 @@ thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
   fib/10               1.10 us  ±0.7%    0 w   equivalent
   fib/20             135.61 us  ±1.0%    0 w   equivalent
 
-  rerun:   bench/bench_digest.exe -f sha256/string-64
-
   3 cases: 2 passed, 1 regressed.
 ```
 
 Exit 1, and no baseline update is proposed here: nothing improved, so
 there is nothing safe to propose. (A mixed run that regresses one case
 while another improves still proposes an update for the improvement
-alone — promoting is safe after *any* run.) The `rerun:` line is the
-command that re-measures just the failing case; an explicit
-`--baseline` or `--tag` from your run is reproduced in it. `-f` selects
-by substring, so an id that is a prefix of others re-measures those
-too — the failing case is always among them.
+alone — promoting is safe after *any* run.) To re-measure, run the
+alias again. A run by hand (`dune exec`) also prints a `rerun:` line:
+the command that re-measures just the failing case, with `--quick` or
+`--precise`, an explicit `--baseline`, and `--tag` from your run. `-f`
+selects by substring, so an id that is a prefix of others re-measures
+those too — the failing case is always among them.
 
 **An improvement** proposes a baseline update for exactly the improved
 cases, and the diff you commit is the record of the improvement:
@@ -179,7 +178,8 @@ output. Four blocks, blank-line separated, empty blocks omitted:
   capitalized only when the case actually fails, so the report and the
   exit code never disagree; inconclusive cells name their reason inline
   (`inconclusive: unconfirmed`).
-- **Actions** — the `rerun:` command when something failed; the
+- **Actions** — the `rerun:` command when something failed (not under
+  a dune rule); the
   `accept:` / `ratchet the baseline:` command when an update was
   proposed.
 - **Summary** — `3 cases: 2 passed, 1 regressed.`

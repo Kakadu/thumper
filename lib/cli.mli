@@ -201,7 +201,9 @@ val accept_command :
 type render = {
   color : bool;  (** Style with ANSI escapes. *)
   accept : string;  (** The {!accept_command} the prompts print. *)
-  exe : string;  (** [argv.(0)], for the rerun action. *)
+  exe : string option;
+      (** [argv.(0)], for the rerun action; [None] under a dune rule action
+          ({!promotion_staged}), where the hint could not be pasted. *)
   github : bool;
       (** Emit [::error::] annotations on confirmed regressions
           ([GITHUB_ACTIONS]; {!main} reads it). *)
@@ -209,10 +211,11 @@ type render = {
   corrected_path : string;  (** The candidate path, for the prompts. *)
   wrote_corrected : bool;  (** Whether the candidate was written. *)
   rerun_flags : string;
-      (** Rendered flags the rerun hint must reproduce beyond selection — an
-          explicit [--baseline] and every [--tag], shell-quoted, each with a
-          leading space; [""] when the run used only defaults (the default
-          baseline re-resolves identically from the exe path). *)
+      (** Rendered flags the rerun hint must reproduce beyond selection — the
+          [--quick]/[--precise] preset, an explicit [--baseline] and every
+          [--tag], shell-quoted, each with a leading space; [""] when the run
+          used only defaults (the default baseline re-resolves identically from
+          the exe path). *)
 }
 (** The type for check-report rendering inputs: everything {!render_check} needs
     beyond the verdict, resolved by {!main}. *)
@@ -264,9 +267,10 @@ val render_check : render -> Verdict.t -> string
       reassurance exception: when the cell is otherwise non-pass, an
       {e exact}-equal allocation shows as [equivalent (alloc exact)] — under a
       degraded run the exact gate's verdict is still earned and stays visible.
-    - {b Actions.} [rerun:   <exe><rerun_flags> -f <id>...] iff any case
-      failed — the exact command that re-measures the failing cases, explicit
-      [--baseline] and [--tag]s included; the
+    - {b Actions.} [rerun:   <exe><rerun_flags> -f <id>...] iff any case failed
+      and [r.exe] is given — the exact command that re-measures the failing
+      cases, preset, explicit [--baseline] and [--tag]s included; under a rule
+      action there is no rerun line, and the failing ids stay in the table; the
       acceptance prompt iff a candidate was written — [accept:  <cmd>] for
       NEW/stale, [ratchet the baseline:  <cmd>] for improvements, [<cmd>] being
       [r.accept]; the acceptance-state load message
@@ -353,7 +357,8 @@ val main :
 
     Environment: [--color], the per-stream TTY state, [NO_COLOR], and
     [INSIDE_DUNE] resolve color ({!use_color}); [GITHUB_ACTIONS] gates
-    annotations; [INSIDE_DUNE] with the working directory picks the
-    promote-vs-[mv] hint wording only ({!promotion_staged}); [THUMPER_MACHINE]
-    (validated here: a malformed value is exit 2, not a crash) and
-    [THUMPER_LOCK_DIR] are consumed inside [Env]. *)
+    annotations; [INSIDE_DUNE] with the working directory picks the hints only
+    ({!promotion_staged}: [dune promote] and no rerun line under a rule action,
+    else [mv] and the rerun line); [THUMPER_MACHINE] (validated here: a
+    malformed value is exit 2, not a crash) and [THUMPER_LOCK_DIR] are consumed
+    inside [Env]. *)

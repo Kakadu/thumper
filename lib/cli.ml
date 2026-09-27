@@ -453,7 +453,7 @@ let accept_command ~promotion_staged ~corrected ~baseline =
 type render = {
   color : bool;
   accept : string;
-  exe : string;
+  exe : string option;
   github : bool;
   baseline_path : string;
   corrected_path : string;
@@ -830,11 +830,11 @@ let render_check r v =
   let actions =
     let failing = List.filter case_fails cases in
     let rerun =
-      match failing with
-      | [] -> []
-      | _ ->
+      match (failing, r.exe) with
+      | [], _ | _, None -> []
+      | _, Some exe ->
           [
-            Printf.sprintf "  rerun:   %s%s%s" (shell_arg r.exe) r.rerun_flags
+            Printf.sprintf "  rerun:   %s%s%s" (shell_arg exe) r.rerun_flags
               (String.concat ""
                  (List.map
                     (fun (c : Verdict.case_report) -> " -f " ^ c.id)
@@ -1089,7 +1089,7 @@ let run_list ~(o : options) ~config ~filter ~budgets benches =
   0
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
-    ~corrected_path ~color ~accept ~exe benches =
+    ~corrected_path ~color ~accept ~staged ~exe benches =
   (* [Check.run_with] reads the key under the lease, where a malformed
      override would crash after the wait: validate it first, as [bless]
      does. *)
@@ -1129,21 +1129,27 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     {
       color;
       accept;
-      exe;
+      (* Under a rule action the hint cannot be pasted: [exe] is relative to
+         the action's cwd inside [_build], and the dune user's next step is
+         the alias they ran. *)
+      exe = (if staged then None else Some exe);
       github = Sys.getenv_opt "GITHUB_ACTIONS" <> None;
       baseline_path;
       corrected_path;
       wrote_corrected = Result.value written ~default:false;
-      (* The rerun hint reproduces the invocation, not just the selection: an
-         explicit --baseline and every --tag are carried (getting-started's
-         "the exact command"); the default baseline re-resolves identically
-         from the exe path, so it stays unspelled. *)
+      (* The rerun hint reproduces the invocation, not just the selection: the
+         preset, an explicit --baseline and every --tag are carried
+         (getting-started's "the exact command"); the default baseline
+         re-resolves identically from the exe path, so it stays unspelled. *)
       rerun_flags =
-        (match o.baseline with
-        | Some p -> " --baseline " ^ shell_arg p
-        | None -> "")
-        ^ String.concat ""
-            (List.map (fun t -> " --tag " ^ shell_arg t) o.tags);
+        (match o.preset with
+          | `Default -> ""
+          | `Quick -> " --quick"
+          | `Precise -> " --precise")
+        ^ (match o.baseline with
+          | Some p -> " --baseline " ^ shell_arg p
+          | None -> "")
+        ^ String.concat "" (List.map (fun t -> " --tag " ^ shell_arg t) o.tags);
     }
   in
   print_string (render_check r verdict);
@@ -1318,7 +1324,7 @@ let help_text exe =
       "  -V, --version      print the version";
       "";
       "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lease";
-      "directory), NO_COLOR; INSIDE_DUNE picks hint wording only.";
+      "directory), NO_COLOR; INSIDE_DUNE selects the dune hints.";
       "";
     ]
 
@@ -1413,7 +1419,7 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         | `List -> run_list ~o ~config ~filter ~budgets benches
         | `Check ->
             run_check ~o ~name ~config ~filter ~budgets ~baseline_path
-              ~corrected_path ~color ~accept ~exe benches
+              ~corrected_path ~color ~accept ~staged ~exe benches
         | `Bless ->
             run_bless ~o ~name ~config ~filter ~budgets ~baseline_path
               ~corrected_path ~color ~accept benches
