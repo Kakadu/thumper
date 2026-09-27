@@ -998,7 +998,7 @@ let with_status f =
 let machine_key () =
   try Env.machine_key () with Invalid_argument msg -> fail2 "%s" msg
 
-(* An absent file is the ordinary first-run state: the empty-file baseline. Io and
+(* An absent file is the ordinary first-run state, [None]. Io and
    Corrupt are exit 2, never treated as absent. A file whose
    header names another suite is refused the same way cross-machine
    comparison is: judging against the wrong ruler must be loud, not a page
@@ -1013,9 +1013,8 @@ let read_baseline ~suite path =
              file with --baseline, or update the '# suite:' header if the \
              suite was renamed"
             path s suite
-      | _ -> f)
-  | Ok None -> (
-      match Baseline.of_string "" with Ok f -> f | Error _ -> assert false)
+      | _ -> Some f)
+  | Ok None -> None
   | Error e -> fail2 "%s: %s" path (pp_str Baseline.pp_error e)
 
 let write_baseline path file =
@@ -1096,25 +1095,32 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
        benches);
   let file = read_baseline ~suite:name baseline_path in
+  (* Without a baseline the corrected file is certain (every row is new), so
+     its target is pre-flighted like bless's before minutes of measurement.
+     With one, a pass run writes nothing and needs no writable directory. *)
+  if Option.is_none file then preflight_target corrected_path;
   wait_for_quiet o.wait_quiet;
   let verdict =
     checked (fun () ->
         with_status (fun tick ->
             with_lease_progress (fun () ->
                 Check.run_with ~on_progress:tick ~config ?budgets ?filter
-                  ~baseline:file name benches)))
+                  ?baseline:file name benches)))
   in
   (* The JSON document first: its contract is "present iff measurement
-     completed", and measurement has — a candidate write that fails (disk
-     full; check's conditional target is deliberately not preflighted) must
-     not take the verdict document down with it. *)
+     completed", and measurement has — a corrected-file write that fails (a
+     full disk, or an unwritable directory no pre-flight covered) must not
+     take the verdict document down with it. *)
   Option.iter (fun p -> write_json p (Verdict.to_json verdict ^ "\n")) o.json;
-  let wrote =
+  (* A late write failure (a full disk) still prints the report, without
+     the accept line of a file that does not exist, then the error. *)
+  let written =
     match Verdict.corrected verdict with
-    | Some cand ->
-        write_baseline corrected_path cand;
-        true
-    | None -> false
+    | None -> Ok false
+    | Some cand -> (
+        match Baseline.write corrected_path cand with
+        | () -> Ok true
+        | exception Baseline.Error e -> Error e)
   in
   let r =
     {
@@ -1124,7 +1130,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       github = Sys.getenv_opt "GITHUB_ACTIONS" <> None;
       baseline_path;
       corrected_path;
-      wrote_corrected = wrote;
+      wrote_corrected = Result.value written ~default:false;
       (* The report's load message must agree with judgment: the gate the
          verdict was decided under, never a pre-lease reading of somebody
          else's load (the lease wait can be minutes long). *)
@@ -1142,7 +1148,12 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     }
   in
   print_string (render_check r verdict);
-  Verdict.exit_code ~strict:o.strict verdict
+  match written with
+  | Ok _ -> Verdict.exit_code ~strict:o.strict verdict
+  | Error e ->
+      (* The report first, on a terminal too, where stderr is unbuffered. *)
+      flush stdout;
+      fail2 "%s: %s" corrected_path (pp_str Baseline.pp_error e)
 
 let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept benches =
@@ -1194,6 +1205,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                 Check.measure ~on_progress:tick ~config ?filter benches)))
   in
   let forced_under_load = !forced_under_load in
+  let file = Option.value file ~default:(Baseline.empty ~suite:name) in
   let cand = Verdict.bless ~identity ~suite:name ~run ~file in
   let cand =
     match forced_under_load with
@@ -1377,9 +1389,9 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         Option.iter unlink_owned o.json;
         (* Unconditional write targets are pre-flighted here, before any
            measurement can be wasted on a target that can never be written:
-           the [--json] document and bless's candidate (bless always writes
-           it; check's is conditional and a pass run must stay
-           writable-directory-free). *)
+           the [--json] document and bless's corrected file (check's is
+           conditional; [run_check] pre-flights it once it knows the
+           baseline is absent). *)
         Option.iter preflight_target o.json;
         (match o.subcommand with
         | `Bless -> preflight_target corrected_path

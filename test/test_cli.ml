@@ -1052,6 +1052,63 @@ let unconditional_targets_are_preflighted () =
   in
   equal ~msg:"missing bless candidate directory is exit 2" int 2 code
 
+(* Without a baseline every row is new, so the corrected file is certain and
+   its target is pre-flighted: a missing directory is exit 2 before the lease
+   is ever taken (no lock file) and before anything is measured. *)
+let absent_baseline_preflights_the_corrected_file () =
+  let dir = temp_dir () in
+  e2e_env dir;
+  let bl = Filename.concat (Filename.concat dir "nope") "digest.thumper" in
+  let code =
+    with_quiet_stderr (fun () ->
+        Cli.main ~config:fast_config
+          ~argv:[| "bench.exe"; "check"; "--baseline"; bl |]
+          ~name:"digest" benches)
+  in
+  equal ~msg:"unwritable corrected file is exit 2" int 2 code;
+  equal ~msg:"no report" string "" (output ());
+  is_true ~msg:"refused before the lease"
+    (not
+       (Sys.file_exists
+          (Filename.concat dir
+             (Printf.sprintf "thumper-%d.lock" (Unix.geteuid ())))))
+
+(* A baseline without this machine's section is read, so nothing is
+   pre-flighted; when the corrected file then cannot be written (its
+   directory vanishes during measurement), the report still prints whole,
+   without an accept line, and the run exits 2. *)
+let late_write_failure_prints_the_report () =
+  let dir = temp_dir () in
+  e2e_env dir;
+  let sub = Filename.concat dir "gone" in
+  Unix.mkdir sub 0o700;
+  let bl = Filename.concat sub "digest.thumper" in
+  Baseline.write bl
+    (Baseline.set_section
+       (Baseline.empty ~suite:"digest")
+       { ident with Baseline.machine = "otherkey" }
+       [ wall_row "alpha" (ties 5 1e-6) ]);
+  let vanish () =
+    if Sys.file_exists sub then begin
+      Sys.remove bl;
+      Sys.rmdir sub
+    end
+  in
+  let code =
+    with_quiet_stderr (fun () ->
+        Cli.main ~config:fast_config
+          ~argv:[| "bench.exe"; "check"; "--baseline"; bl |]
+          ~name:"digest"
+          [ Bench.bench "alpha" vanish ])
+  in
+  let out = output () in
+  equal ~msg:"failed write is exit 2" int 2 code;
+  assert_contains ~msg:"the report printed" out
+    "no baseline for machine testkey";
+  assert_contains ~msg:"its rows" out "proposed";
+  is_true ~msg:"no accept line for a file that does not exist"
+    (not (contains out "accept:"))
+
 (* Main: fast end-to-end flows *)
 
 let check_new_flow_end_to_end () =
@@ -1307,6 +1364,10 @@ let () =
             unlinks_precede_the_failing_baseline_read;
           test "unconditional write targets are pre-flighted"
             unconditional_targets_are_preflighted;
+          test "an absent baseline pre-flights the corrected file"
+            absent_baseline_preflights_the_corrected_file;
+          test "a late write failure prints the report, then exits 2"
+            late_write_failure_prints_the_report;
         ];
       group "end-to-end"
         [

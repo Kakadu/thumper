@@ -322,8 +322,9 @@ val main :
       targets — the [--json] document and bless's candidate — are then
       pre-flighted: a target directory that is missing or unwritable is exit 2
       here, before measurement can be wasted on a file that could never be
-      written. (Check's candidate is conditional and is not pre-flighted: a pass
-      run writes nothing and must not require a writable baseline directory.)
+      written. (Check's corrected file is conditional: it is pre-flighted only
+      once the baseline is found absent, below; against an existing baseline a
+      pass run writes nothing and must not require a writable directory.)
     + The selection resolves ([Check.select], with the config's metrics and the
       run's budgets, for every subcommand) — exit 2 on a duplicate id, a budget
       on a metric its scope does not collect, or an empty selection, before the
@@ -331,13 +332,14 @@ val main :
       empty-selection error names the unmatched patterns and tags
       ([no case matches 'explore']), so a deleted-subcommand word explains
       itself. [list] prints the ids and stops.
-    + [check]/[bless] read the baseline: an absent file is the NEW flow (the
-      empty-file baseline; never an error), [Io]/[Corrupt] exit 2 with
-      [Baseline]'s message. [--wait-quiet] then polls for a quiet host; expiry
-      warns and proceeds — degradation, not refusal, is the specified fallback.
-      [bless] under a loaded gate refuses with the remedy (exit 2 — an
-      operational stop, like the lease) unless [--force], which is recorded as a
-      [# forced:] annotation in the proposed section.
+    + [check]/[bless] read the baseline: an absent file is the NEW flow (never
+      an error; [check] then pre-flights its corrected file, which every NEW run
+      writes), [Io]/[Corrupt] exit 2 with [Baseline]'s message. [--wait-quiet]
+      then polls for a quiet host; expiry warns and proceeds — degradation, not
+      refusal, is the specified fallback. [bless] under a loaded gate refuses
+      with the remedy (exit 2 — an operational stop, like the lease) unless
+      [--force], which is recorded as a [# forced:] annotation in the proposed
+      section.
     + Measurement runs under the lease with the lease notice and, on a TTY
       stderr, the {!status_line} ticker ([Check]'s [on_progress]); the line is
       erased before anything else prints. [Check.Error] — lease timeout, worker
@@ -345,7 +347,9 @@ val main :
     + [check] writes [<baseline>.corrected] iff [Verdict.corrected] differs
       ([Baseline.write], atomic), writes [--json] atomically (temp + rename;
       present iff measurement completed), renders {!render_check}, and exits
-      [Verdict.exit_code ~strict]. [bless] writes the [Verdict.bless] candidate
+      [Verdict.exit_code ~strict]; a failed corrected-file write still prints
+      the report, without its accept line, then the error, exit 2. [bless]
+      writes the [Verdict.bless] candidate
       and renders the same report shape over proposed rows, exit 0; a
       {e filtered} bless still re-records the section wholesale
       ([Verdict.bless]'s contract), so a partial selection prints a warning
