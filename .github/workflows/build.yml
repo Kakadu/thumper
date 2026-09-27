@@ -15,8 +15,15 @@ jobs:
           # Unix-only by design (fork-per-case measurement, lockf lease).
           - ubuntu-latest
           - macos-latest
+        ocaml-compiler:
+          - 5
+        include:
+          # The lowest OCaml that thumper.opam accepts.
+          - os: ubuntu-latest
+            ocaml-compiler: "5.0"
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - name: Checkout tree
@@ -25,7 +32,7 @@ jobs:
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
       # The tests need windtrap 0.2.0, which is not on opam yet. A pin
       # without a version takes the version opam already knows (0.1.0), so
@@ -48,3 +55,36 @@ jobs:
       # story for the highest-validation-risk module.
       - name: Verify the stats corpus is generator-identical
         run: python3 test/tools/gen_stats_corpus.py
+
+  # Builds and tests the package as opam does from a release tarball: the
+  # tree carries the version that dune subst wrote into it, and only the
+  # thumper package is built.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+
+      - name: Pin windtrap
+        run: opam pin add -n windtrap.0.2.0 git+https://github.com/invariant-hq/windtrap.git#v0.2.0
+
+      - name: Install OCaml dependencies
+        run: opam install . --deps-only --with-test
+
+      # dune subst reads the version from git describe, which sees annotated
+      # tags only. The tag stands in for a release tag and stays on the
+      # runner.
+      - name: Substitute the version as a release does
+        run: |
+          git -c user.name=ci -c user.email=ci@localhost tag -a v0.0.0 -m "Release check"
+          opam exec -- dune subst
+
+      - name: Build and test the package
+        run: opam exec -- dune build -p thumper @install @runtest
