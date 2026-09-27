@@ -324,8 +324,10 @@ val main :
       here, before measurement can be wasted on a file that could never be
       written. (Check's candidate is conditional and is not pre-flighted: a pass
       run writes nothing and must not require a writable baseline directory.)
-    + The selection resolves — exit 2 on a duplicate id or an empty selection,
-      before the lease, so a broken filter fails without waiting; the
+    + The selection resolves ([Check.select], with the config's metrics and the
+      run's budgets, for every subcommand) — exit 2 on a duplicate id, a budget
+      on a metric its scope does not collect, or an empty selection, before the
+      lease, so a broken suite or filter fails without waiting; the
       empty-selection error names the unmatched patterns and tags
       ([no case matches 'explore']), so a deleted-subcommand word explains
       itself. [list] prints the ids and stops.

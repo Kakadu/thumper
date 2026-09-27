@@ -350,7 +350,11 @@ end
       inherits the group's allocation pin — wholesale replacement would silently
       drop it. The same per-metric rule extends outward: a metric with no budget
       at any group level falls through to {!run}'s budget list, and a case with
-      no budgets from any level gets the default ({!Budget}).
+      no budgets from any level gets the default ({!Budget}). A budget binds
+      only a metric the case collects: a case that narrows [?metrics] drops the
+      inherited budgets on the others (the default binds only a case that
+      collects [wall_time]), and a budget stated at a scope that does not
+      collect its metric makes the suite invalid ({!Check.error}).
 
     {b Errors.} All constructors raise [Invalid_argument] — at construction, a
     bad suite is a programmer error, never a measurement outcome — if:
@@ -656,8 +660,9 @@ module Check : sig
       worker, a raising closure, setup, or teardown (the exception is captured
       and rendered, never re-raised), or a blown per-case deadline
       ({!Config.deadline}) — which aborts the run at the first failing case; an
-      invalid suite (duplicate case ids); or an empty selection. Operational —
-      never a judgment: the CLI maps it to exit 2. *)
+      invalid suite (duplicate case ids, or a budget on a metric its scope does
+      not collect); or an empty selection. Operational — never a judgment: the
+      CLI maps it to exit 2. *)
 
   val pp_error : Format.formatter -> error -> unit
   (** [pp_error ppf e] formats [e] for users, with its remedy. *)
@@ -820,8 +825,8 @@ val measure : ?config:Config.t -> ?filter:filter -> bench list -> Run.t
 
     Raises {!Check.Error} on operational failure ({!type:Check.error}): lease
     timeout, an unmeasurable case — including a raising closure, whose exception
-    is captured, never re-raised — an invalid suite (duplicate case ids), or an
-    empty selection. *)
+    is captured, never re-raised — an invalid suite (duplicate case ids, or a
+    budget on a metric its scope does not collect), or an empty selection. *)
 
 (** {1:private Private} *)
 

@@ -13,7 +13,6 @@ type reason =
   | Unconfirmed
   | Exactness_lost
   | Stale_section
-  | Missing_metric
   | Batch_drifted
   | Candidate_unstable
   | Candidate_drifted
@@ -132,20 +131,26 @@ let baseline_unstable samples =
   && Stats.severe_outlier_inflation_sorted samples
 
 (* Budget resolution (per case): the case's per-metric merge wins, other
-   metrics fall through to the run's list, and a case with no budgets from
-   any level gets [Budget.defaults] (bench.mli module doc). *)
+   metrics fall through to the run's list, a case with no budgets from any
+   level gets [Budget.defaults], and budgets on metrics the case does not
+   collect are dropped (bench.mli module doc). *)
 
 let budget_for budgets metric =
   List.find_opt (fun b -> Metric.equal (Budget.metric b) metric) budgets
 
-let effective_budgets ~run_budgets case =
+let effective_budgets ~run_budgets ~collected case =
   let case_b = Option.value ~default:[] (Bench.budgets case) in
   let inherited =
     List.filter
       (fun b -> budget_for case_b (Budget.metric b) = None)
       run_budgets
   in
-  match case_b @ inherited with [] -> Budget.defaults | l -> l
+  let budgets =
+    match case_b @ inherited with [] -> Budget.defaults | l -> l
+  in
+  List.filter
+    (fun b -> List.exists (Metric.equal (Budget.metric b)) collected)
+    budgets
 
 let relative_params budget =
   match Option.map Budget.contract budget with
@@ -385,8 +390,11 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
     List.map
       (fun (bench_case, trial) ->
         let id = Bench.id bench_case in
-        let effective = effective_budgets ~run_budgets:budgets bench_case in
         let measured = Run.Trial.measurements trial in
+        let effective =
+          effective_budgets ~run_budgets:budgets
+            ~collected:(List.map fst measured) bench_case
+        in
         let states =
           List.map
             (fun (metric, measurement) ->
@@ -402,24 +410,12 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
               (metric, state, budget))
             measured
         in
-        let missing =
-          List.filter_map
-            (fun budget ->
-              let metric = Budget.metric budget in
-              if List.exists (fun (m, _) -> Metric.equal m metric) measured then
-                None
-              else
-                let reason = if stale then Stale_section else Missing_metric in
-                Some
-                  (metric, Settled (Judged (Inconclusive reason)), Some budget))
-            effective
-        in
         {
           c_id = id;
           c_full_name = Bench.full_name bench_case;
           c_trial = trial;
           c_warnings = Run.Trial.warnings trial;
-          c_states = states @ missing;
+          c_states = states;
         })
       cases
   in
@@ -633,7 +629,6 @@ let wire_reason = function
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
   | Stale_section -> "stale_section"
-  | Missing_metric -> "missing_metric"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "unstable"
   | Candidate_drifted -> "drifted"

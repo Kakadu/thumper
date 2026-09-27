@@ -146,7 +146,6 @@ let reason_name = function
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
   | Stale_section -> "stale_section"
-  | Missing_metric -> "missing_metric"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "candidate_unstable"
   | Candidate_drifted -> "candidate_drifted"
@@ -493,6 +492,37 @@ let duplicate_ids_are_invalid_suite () =
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
         ~filter:(`Id "b") (suite ()))
 
+let uncollected_budgets_are_invalid_suite () =
+  (* [base] collects wall_time only. Refused before the lease, so nothing is
+     measured. *)
+  let w = world () in
+  let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
+  check_error
+    (function
+      | Check.Invalid_suite
+          (Bench.Uncollected_budget { scope = ""; metric = "alloc_words" }) ->
+          true
+      | _ -> false)
+    (fun () ->
+      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+        ~budgets:[ Budget.no_more_alloc_than 0.01 ]
+        [ bench () ]);
+  check_error
+    (function
+      | Check.Invalid_suite
+          (Bench.Uncollected_budget { scope = "a"; metric = "cpu_time" }) ->
+          true
+      | _ -> false)
+    (fun () ->
+      Check.measure ~instruments:(scripted w) ~config:base
+        [
+          Bench.bench
+            ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+            "a"
+            (stepper w (constant_ns ms_ns));
+        ]);
+  equal ~msg:"no case was measured" int 0 w.calls
+
 let selection_plumbs_full_vs_partial () =
   let w = world () in
   let baseline =
@@ -727,6 +757,8 @@ let () =
           test "an empty selection is an error" empty_selection_is_an_error;
           test "duplicate ids are an invalid suite"
             duplicate_ids_are_invalid_suite;
+          test "a budget on an uncollected metric is an invalid suite"
+            uncollected_budgets_are_invalid_suite;
           test "full vs partial selection plumbs to the prune rule"
             selection_plumbs_full_vs_partial;
         ];

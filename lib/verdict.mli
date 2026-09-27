@@ -59,8 +59,8 @@ type reason =
       (** A mixed exact/sampled comparison (either side), or a zero-tolerance
           relative budget on a downgraded exact-capable metric — never a rank
           test at r = 0. *)
-  | Stale_section  (** Staleness short-circuit rendering; see {!type:staleness}. *)
-  | Missing_metric  (** A budgeted metric was not measured this run. *)
+  | Stale_section
+      (** Staleness short-circuit rendering; see {!type:staleness}. *)
   | Batch_drifted
       (** The batch size recalibrated and the measured shift is bias-comparable,
           [|estimate| <= 2e]; for exact rows, the case's frozen k moved
@@ -126,9 +126,7 @@ type case_report = {
   id : string;
   full_name : string;
   trial : Run.Trial.t;  (** Candidate evidence (feeds NEW rows). *)
-  reports : metric_report list;
-      (** Measured metrics in trial order, then budgeted-but-unmeasured metrics
-          ([Inconclusive Missing_metric]). *)
+  reports : metric_report list;  (** Measured metrics, in trial order. *)
   warnings : string list;  (** The trial's measurement-time warnings. *)
 }
 
@@ -166,17 +164,20 @@ val judge :
   file:Baseline.t ->
   cases:(Bench.case * Run.Trial.t) list ->
   provisional
-(** First pass over all measured trials, against [identity.machine]'s section
-    of [file] — derived here, so judging another machine's evidence is
-    unrepresentable, and the verdict retains [file] as {!candidate}'s
-    input. No section (the empty-file baseline included) means every row is
-    NEW. [selection = `Full] licenses pruning of dead ids in the candidate
-    and, when the comparison is [Compared], records one prune notice per
-    dead id in the verdict's {!warnings}. [budgets] are suite-level; per-case
-    overrides come from each [Bench.case]: for each metric the case's budget
-    wins, other metrics fall through to [budgets], and a case with no budgets
-    from any level gets [Budget.defaults]. [suite] names fresh candidates
-    built over the empty-file baseline (see {!candidate}).
+(** First pass over all measured trials, against [identity.machine]'s section of
+    [file] — derived here, so judging another machine's evidence is
+    unrepresentable, and the verdict retains [file] as {!candidate}'s input. No
+    section (the empty-file baseline included) means every row is NEW.
+    [selection = `Full] licenses pruning of dead ids in the candidate and, when
+    the comparison is [Compared], records one prune notice per dead id in the
+    verdict's {!warnings}. [budgets] are suite-level; per-case overrides come
+    from each [Bench.case]: for each metric the case's budget wins, other
+    metrics fall through to [budgets], and a case with no budgets from any level
+    gets [Budget.defaults]; then budgets on metrics the case's trial did not
+    measure are dropped (a case that narrows its metrics sheds the inherited
+    budgets on the others, and the default binds only a case that measures
+    [wall_time]). [suite] names fresh candidates built over the empty-file
+    baseline (see {!candidate}).
 
     The entry points check their inputs before measuring, and [judge] relies on
     it: [budgets] binds each metric at most once ([Budget.check_distinct]), and
@@ -185,10 +186,10 @@ val judge :
 
     Under a [Loaded] [gate], every sampled-metric comparison that would need a
     rank test is [Inconclusive Environment] and nothing queues for confirmation;
-    exact metrics still compare and can still fail. Cells that never reach
-    a rank test keep their own reason under load — [Exactness_lost],
-    [Missing_metric], [Stale_section]: those defects are properties of the
-    evidence, not the host, and their remedies do not involve waiting for quiet.
+    exact metrics still compare and can still fail. Cells that never reach a
+    rank test keep their own reason under load — [Exactness_lost],
+    [Stale_section]: those defects are properties of the evidence, not the host,
+    and their remedies do not involve waiting for quiet.
 
     Raises [Invalid_argument] if two cases share an id. *)
 

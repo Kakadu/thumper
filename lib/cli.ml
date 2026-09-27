@@ -345,7 +345,6 @@ let reason_short = function
   | Verdict.Unconfirmed -> "unconfirmed"
   | Verdict.Exactness_lost -> "exactness lost"
   | Verdict.Stale_section -> "stale section"
-  | Verdict.Missing_metric -> "missing metric"
   | Verdict.Batch_drifted -> "batch drifted"
   | Verdict.Candidate_unstable -> "unstable"
   | Verdict.Candidate_drifted -> "drifted"
@@ -1057,8 +1056,12 @@ let no_match ~patterns ~tags =
   | ps, ts ->
       Printf.sprintf "no case matches %s with tag %s" (quoted ps) (quoted ts)
 
-let selection ~patterns ~tags ?filter benches =
-  match Check.select ?filter benches with
+let selection ~patterns ~tags ~config ~budgets ?filter benches =
+  match
+    Check.select ?filter ~metrics:config.Config.metrics
+      ~budgets:(Option.value budgets ~default:[])
+      benches
+  with
   | cases, _ -> cases
   | exception Check.Error Check.Empty_selection ->
       fail2 "%s" (no_match ~patterns ~tags)
@@ -1097,15 +1100,18 @@ let validate_budgets budgets =
 
 (* Subcommands *)
 
-let run_list ~(o : options) ~filter benches =
+let run_list ~(o : options) ~config ~filter ~budgets benches =
   List.iter
     (fun c -> print_endline (Bench.id c))
-    (selection ~patterns:o.patterns ~tags:o.tags ?filter benches);
+    (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
+       benches);
   0
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept ~exe benches =
-  ignore (selection ~patterns:o.patterns ~tags:o.tags ?filter benches);
+  ignore
+    (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
+       benches);
   let file = read_baseline ~suite:name baseline_path in
   wait_for_quiet o.wait_quiet;
   (* The report's load message must agree with judgment, and the lease wait
@@ -1164,10 +1170,15 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   print_string (render_check r verdict);
   Verdict.exit_code ~strict:o.strict verdict
 
-let run_bless ~(o : options) ~name ~config ~filter ~baseline_path
+let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept benches =
-  let all = selection ~patterns:[] ~tags:[] benches in
-  let sel = selection ~patterns:o.patterns ~tags:o.tags ?filter benches in
+  (* The run's budgets are not bless's business, but a suite [check] refuses
+     is refused here too: blessing it would record a ruler nothing can
+     judge against. *)
+  let all = selection ~patterns:[] ~tags:[] ~config ~budgets benches in
+  let sel =
+    selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter benches
+  in
   let machine = machine_key () in
   let identity =
     {
@@ -1414,11 +1425,11 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
             ~baseline:baseline_path
         in
         match o.subcommand with
-        | `List -> run_list ~o ~filter benches
+        | `List -> run_list ~o ~config ~filter ~budgets benches
         | `Check ->
             run_check ~o ~name ~config ~filter ~budgets ~baseline_path
               ~corrected_path ~color ~accept ~exe benches
         | `Bless ->
-            run_bless ~o ~name ~config ~filter ~baseline_path ~corrected_path
-              ~color ~accept benches
+            run_bless ~o ~name ~config ~filter ~budgets ~baseline_path
+              ~corrected_path ~color ~accept benches
       with Exit_with code -> code)

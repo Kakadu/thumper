@@ -71,8 +71,11 @@ default collects `wall_time` and `alloc_words`; the other built-ins —
 `cpu_time`, `minor_alloc_words`, `major_alloc_words`, `promoted_words`,
 `minor_collections`, `major_collections` — are opt-in, per suite via
 `Config.metrics` or per group and case via `~metrics` (`lib/thumper.mli`
-states each one's meaning). A budget on a metric the run did not
-collect reads `inconclusive (missing_metric)`.
+states each one's meaning). A budget binds only a metric the case
+collects: a case whose `~metrics` leave out an inherited budget's metric
+drops that budget, and the default binds only a case that collects
+`wall_time`. A budget stated where its metric is not collected stops
+the run before measuring.
 
 An absolute cap (`at_most`) is checked only against exact counts — a
 statistical estimate crossing an absolute line is not an earned
@@ -144,7 +147,6 @@ and the reason names why and what to do. Exit 0 (1 under `--strict`).
 | `exactness_lost` | allocation was nondeterministic this run | fix the nondeterminism |
 | `batch_drifted` | the case's speed changed enough to need recalibration | `bless` to re-baseline it |
 | `stale_section` | the compiler changed | re-baseline by promoting |
-| `missing_metric` | a budgeted metric was not measured | add it to the config's metrics |
 
 The report names each case's reason inline, in its verdict cell
 (`inconclusive: unconfirmed`), and the summary line counts them.

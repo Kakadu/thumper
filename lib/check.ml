@@ -34,10 +34,13 @@ type progress = {
    suite before filtering ([Bench.resolve]'s contract), and a selection
    covering every resolved case is [`Full] — what licenses [Verdict]'s prune
    rule. *)
-let select ?filter benches =
+let select ?filter ~metrics ~budgets benches =
   match Bench.resolve benches with
   | Error e -> error (Invalid_suite e)
   | Ok all -> (
+      (match Bench.check_collected ~metrics ~budgets benches with
+      | Error e -> error (Invalid_suite e)
+      | Ok () -> ());
       let selected =
         match filter with
         | None -> all
@@ -74,7 +77,9 @@ let tick on_progress ~phase ~total ~index case =
 
 let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
     ?filter benches =
-  let selected, _selection = select ?filter benches in
+  let selected, _selection =
+    select ?filter ~metrics:config.Config.metrics ~budgets:[] benches
+  in
   let total = List.length selected in
   under_lease (fun () ->
       Run.create
@@ -92,7 +97,9 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
     benches =
   let sample_gate = Option.value gate ~default:Env.gate in
   Budget.check_distinct ~fname:"Check.run" budgets;
-  let selected, selection = select ?filter benches in
+  let selected, selection =
+    select ?filter ~metrics:config.Config.metrics ~budgets benches
+  in
   let file = Option.value baseline ~default:empty_file in
   let identity =
     {

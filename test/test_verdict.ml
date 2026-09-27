@@ -103,7 +103,6 @@ let reason_name = function
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
   | Stale_section -> "stale_section"
-  | Missing_metric -> "missing_metric"
   | Batch_drifted -> "batch_drifted"
   | Candidate_unstable -> "candidate_unstable"
   | Candidate_drifted -> "candidate_drifted"
@@ -746,15 +745,39 @@ let absolute_budget_never_gates_sampled_evidence () =
 
 (* Budgets and case verdicts *)
 
-let missing_budgeted_metric_is_inconclusive () =
+let uncollected_inherited_budget_is_dropped () =
+  (* tolk's compile cases: suite budgets on wall and alloc, a case that
+     collects wall only. The alloc budget does not bind it. *)
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
     run_check ~file
       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
       [ (bcase "a", wall_trial (ties 5 1.0)) ]
   in
-  check_rel t ~case:"a" ~metric:m_alloc "inconclusive:missing_metric";
-  check_overall t `Inconclusive
+  let c = List.hd (Verdict.cases t) in
+  equal ~msg:"one report, the measured metric" (list string) [ "wall_time" ]
+    (List.map (fun r -> Metric.id r.Verdict.metric) c.Verdict.reports);
+  is_some ~msg:"wall keeps its budget"
+    (report t ~case:"a" ~metric:m_wall).Verdict.budget;
+  check_overall t `Pass
+
+let default_binds_only_a_case_collecting_wall_time () =
+  let file =
+    file_of
+      [
+        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+          ~samples:(ties 5 1.0);
+      ]
+  in
+  let t =
+    run_check ~file
+      [ (bcase "a", trial [ (m_cpu, Run.Samples (sam (ties 5 1.0))) ]) ]
+  in
+  is_none ~msg:"no default budget on cpu_time"
+    (report t ~case:"a" ~metric:m_cpu).Verdict.budget;
+  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
+  is_some ~msg:"the default binds wall_time"
+    (report t ~case:"a" ~metric:m_wall).Verdict.budget
 
 let unbudgeted_metrics_report_but_never_gate () =
   let file =
@@ -1461,8 +1484,10 @@ let () =
         ];
       group "budgets and case verdicts"
         [
-          test "a budgeted metric missing from the trial is inconclusive"
-            missing_budgeted_metric_is_inconclusive;
+          test "an inherited budget on an uncollected metric is dropped"
+            uncollected_inherited_budget_is_dropped;
+          test "the default binds only a case collecting wall_time"
+            default_binds_only_a_case_collecting_wall_time;
           test "unbudgeted metrics report but never gate"
             unbudgeted_metrics_report_but_never_gate;
           test "no cross-metric forgiveness; improvements still ratchet"

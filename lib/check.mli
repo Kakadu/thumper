@@ -36,8 +36,9 @@ type error =
   | Empty_selection
       (** The filter selects no case. A broken filter must not silently pass. *)
   | Invalid_suite of Bench.error
-      (** [Bench.resolve] rejected the suite. Detected on the whole suite before
-          filtering — a narrowed selection never masks a broken suite. *)
+      (** [Bench.resolve] or [Bench.check_collected] rejected the suite.
+          Detected on the whole suite before filtering — a narrowed selection
+          never masks a broken suite. *)
 
 exception Error of error
 (** Operational failure; the CLI maps it to exit 2. *)
@@ -66,16 +67,22 @@ type progress = {
 (** {1:selecting Selecting} *)
 
 val select :
-  ?filter:Bench.filter -> Bench.t list -> Bench.case list * [ `Full | `Partial ]
-(** [select ?filter benches] is the selection {!run} and {!measure} measure:
-    [benches] resolved by [Bench.resolve] and narrowed by [filter] (default:
-    all), in authoring order, and whether it covers every resolved case
-    ([`Full], which licenses [Verdict]'s prune rule) or not ([`Partial]).
-    Neither measures nor takes the lease. Raises {!Error} [(Invalid_suite _)] on
-    a suite [Bench.resolve] rejects, checked on the whole suite before
-    filtering, and {!Error} [Empty_selection] when nothing is selected. A caller
-    that holds the lease itself (the CLI) calls it before acquiring the lease,
-    so a broken suite or filter fails without waiting. *)
+  ?filter:Bench.filter ->
+  metrics:Metric.t list ->
+  budgets:Budget.t list ->
+  Bench.t list ->
+  Bench.case list * [ `Full | `Partial ]
+(** [select ?filter ~metrics ~budgets benches] is the selection {!run} and
+    {!measure} measure: [benches] resolved by [Bench.resolve] and narrowed by
+    [filter] (default: all), in authoring order, and whether it covers every
+    resolved case ([`Full], which licenses [Verdict]'s prune rule) or not
+    ([`Partial]). [metrics] and [budgets] are the run's scope — the config's
+    metrics and the run's budgets — for [Bench.check_collected]. Neither
+    measures nor takes the lease. Raises {!Error} [(Invalid_suite _)] on a suite
+    [Bench.resolve] or [Bench.check_collected] rejects, checked on the whole
+    suite before filtering, and {!Error} [Empty_selection] when nothing is
+    selected. A caller that holds the lease itself (the CLI) calls it before
+    acquiring the lease, so a broken suite or filter fails without waiting. *)
 
 (** {1:checking Checking} *)
 
@@ -93,10 +100,10 @@ val run :
 
     + {b Selection.} [benches] is resolved and [filter] (default: all) applied —
       before the lease, so a broken suite or filter fails without waiting.
-      Duplicate ids are {!Error} [(Invalid_suite _)], an empty selection
-      {!Error} [Empty_selection]. A selection covering every resolved case is
-      judged [`Full] (licensing [Verdict]'s prune rule), anything narrower
-      [`Partial].
+      Duplicate ids and a budget on a metric its scope does not collect are
+      {!Error} [(Invalid_suite _)], an empty selection {!Error}
+      [Empty_selection]. A selection covering every resolved case is judged
+      [`Full] (licensing [Verdict]'s prune rule), anything narrower [`Partial].
     + {b Lease.} Everything below runs under {!Env.Lease.with_lease};
       acquisition failure is {!Error} [(Lease _)].
     + {b Gate.} The environment gate is sampled and fed to [Verdict.judge]

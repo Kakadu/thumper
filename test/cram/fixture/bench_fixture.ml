@@ -26,6 +26,9 @@
                      per-case deadline — the parent-side wait bound turns a
                      wedged case into Deadline_exceeded (exit 2), never a
                      wedged run
+     uncollected     adds a case "cpu" that collects cpu_time only under a
+                     wall_time budget — a contradiction every subcommand
+                     refuses before the lease
 
    THUMPER_FIXTURE_RAN_PATH, when set, gets one line appended per process
    start — how the cram suite observes whether dune re-ran the @bench action
@@ -40,6 +43,7 @@ let mode =
   | Some "kill9" -> `Kill9
   | Some "nondet" -> `Nondet
   | Some "hang" -> `Hang
+  | Some "uncollected" -> `Uncollected
   | Some other ->
       failwith ("bench_fixture: unknown THUMPER_FIXTURE_MODE: " ^ other)
 
@@ -104,6 +108,19 @@ let config =
   | `Hang -> Thumper.Config.(default |> deadline 1.)
   | _ -> Thumper.Config.default
 
+(* The uncollected scenario's contradiction: a wall_time budget on a case
+   that collects cpu_time only. *)
+let uncollected =
+  match mode with
+  | `Uncollected ->
+      [
+        Thumper.bench "cpu"
+          ~metrics:[ Thumper.Metric.cpu_time ]
+          ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+          (fun () -> spin 0 (Thumper.black_box 4_000));
+      ]
+  | _ -> []
+
 let () =
   Thumper.run "fixture" ~config
     ~budgets:
@@ -111,15 +128,17 @@ let () =
         Thumper.Budget.no_slower_than 0.05;
         Thumper.Budget.no_more_alloc_than 0.0;
       ]
-    [
-      Thumper.group "busy" ~tags:[ "cpu" ]
-        [
-          Thumper.bench "spin" (fun () -> spin 0 (Thumper.black_box spin_iters));
-          Thumper.bench "half" ~tags:[ "lab" ] (fun () ->
-              spin 0 (Thumper.black_box half_iters));
-        ];
-      Thumper.group "alloc" ~tags:[ "lab" ] [ Thumper.bench "list" alloc_case ];
-      Thumper.group "err"
-        [ Thumper.bench "raise" raise_case; Thumper.bench "kill9" kill9_case ];
-      Thumper.group "nondet" [ Thumper.bench "flip" flip_case ];
-    ]
+    ([
+       Thumper.group "busy" ~tags:[ "cpu" ]
+         [
+           Thumper.bench "spin" (fun () ->
+               spin 0 (Thumper.black_box spin_iters));
+           Thumper.bench "half" ~tags:[ "lab" ] (fun () ->
+               spin 0 (Thumper.black_box half_iters));
+         ];
+       Thumper.group "alloc" ~tags:[ "lab" ] [ Thumper.bench "list" alloc_case ];
+       Thumper.group "err"
+         [ Thumper.bench "raise" raise_case; Thumper.bench "kill9" kill9_case ];
+       Thumper.group "nondet" [ Thumper.bench "flip" flip_case ];
+     ]
+    @ uncollected)

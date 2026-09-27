@@ -15,12 +15,19 @@ module Metric = Thumper.Private.Metric
 
 let noop () = ()
 
-let resolve_ok ?filter benches =
-  match Bench.resolve ?filter benches with
+let resolve_ok benches =
+  match Bench.resolve benches with
   | Ok cases -> cases
   | Error e -> failf "resolve: %s" (Format.asprintf "%a" Bench.pp_error e)
 
-let ids ?filter benches = List.map Bench.id (resolve_ok ?filter benches)
+let ids ?filter benches =
+  let cases = resolve_ok benches in
+  let cases =
+    match filter with
+    | None -> cases
+    | Some f -> List.filter (Bench.matches f) cases
+  in
+  List.map Bench.id cases
 
 let the_case benches =
   match resolve_ok benches with
@@ -30,6 +37,7 @@ let the_case benches =
 let duplicate_id benches =
   match Bench.resolve benches with
   | Error (Bench.Duplicate_id id) -> id
+  | Error e -> failf "expected Duplicate_id, got %a" Bench.pp_error e
   | Ok _ -> failf "expected Error (Duplicate_id _), got Ok"
 
 (* Budgets compare by (metric id, resolved contract) — all their observable
@@ -359,15 +367,6 @@ let explicit_id_collides_with_a_derived_one () =
   equal string "x"
     (duplicate_id [ Bench.bench ~id:"x" "first" noop; Bench.bench "x" noop ])
 
-let duplicates_detected_before_filtering () =
-  (* A narrowed selection never masks a broken suite. *)
-  match
-    Bench.resolve ~filter:(`Id "no-such-case")
-      [ Bench.bench "x" noop; Bench.bench "x" noop ]
-  with
-  | Error (Bench.Duplicate_id id) -> equal string "x" id
-  | Ok _ -> failf "expected Error (Duplicate_id _), got Ok"
-
 let same_name_in_different_groups_is_fine () =
   equal (list string) [ "a/x"; "b/x" ]
     (ids
@@ -379,6 +378,99 @@ let same_name_in_different_groups_is_fine () =
 let pp_error_names_the_id_and_the_remedy () =
   equal string "duplicate benchmark id \"g/x\" (rename the case or pass ~id)"
     (Format.asprintf "%a" Bench.pp_error (Bench.Duplicate_id "g/x"))
+
+(* A budget names a metric its scope collects *)
+
+let run_metrics = [ Metric.wall_time; Metric.alloc_words ]
+
+let uncollected ?(budgets = []) benches =
+  match Bench.check_collected ~metrics:run_metrics ~budgets benches with
+  | Ok () -> None
+  | Error (Bench.Uncollected_budget { scope; metric }) -> Some (scope, metric)
+  | Error e -> failf "expected Uncollected_budget, got %a" Bench.pp_error e
+
+let found = option (pair string string)
+
+let a_collected_budget_is_accepted () =
+  equal found None
+    (uncollected
+       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ]
+       [
+         Bench.group
+           ~budgets:[ Budget.no_more_alloc_than 0. ]
+           "g"
+           [ Bench.bench "x" noop ];
+       ])
+
+let a_run_budget_on_an_uncollected_metric_is_refused () =
+  equal found
+    (Some ("", "cpu_time"))
+    (uncollected
+       ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+       [ Bench.bench "x" noop ])
+
+let a_scope_budget_is_checked_against_its_own_metrics () =
+  (* The same-call typo: the default metric of [no_slower_than] is wall_time,
+     which this case does not collect. *)
+  equal found
+    (Some ("g/x", "wall_time"))
+    (uncollected
+       [
+         Bench.group "g"
+           [
+             Bench.bench ~metrics:[ Metric.cpu_time ]
+               ~budgets:[ Budget.no_slower_than 0.05 ]
+               "x" noop;
+           ];
+       ]);
+  equal found
+    (Some ("g", "cpu_time"))
+    (uncollected
+       [
+         Bench.group
+           ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+           "g"
+           [ Bench.bench "x" noop ];
+       ])
+
+let a_scope_inherits_the_nearest_metrics () =
+  equal found None
+    (uncollected
+       [
+         Bench.group ~metrics:[ Metric.cpu_time ] "g"
+           [
+             Bench.bench
+               ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+               "x" noop;
+           ];
+       ]);
+  equal found
+    (Some ("g/x", "alloc_words"))
+    (uncollected
+       [
+         Bench.group ~metrics:[ Metric.cpu_time ] "g"
+           [ Bench.bench ~budgets:[ Budget.no_more_alloc_than 0. ] "x" noop ];
+       ])
+
+let an_inherited_budget_a_case_does_not_collect_is_fine () =
+  (* tolk's shape: suite budgets on wall and alloc, one case narrowed to wall
+     only. The case drops the alloc budget at judgment; nothing to refuse. *)
+  equal found None
+    (uncollected
+       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ]
+       [ Bench.bench ~metrics:[ Metric.wall_time ] "compile" noop ])
+
+let pp_error_names_the_scope_and_the_metric () =
+  equal string
+    "\"g/x\" has a budget on cpu_time but does not collect it (add it to \
+     ~metrics or drop the budget)"
+    (Format.asprintf "%a" Bench.pp_error
+       (Bench.Uncollected_budget { scope = "g/x"; metric = "cpu_time" }));
+  equal string
+    "the run has a budget on cpu_time but does not collect it (add it to \
+     Config.metrics or drop the budget)"
+    (Format.asprintf "%a" Bench.pp_error
+       (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }))
 
 (* Filter algebra *)
 
@@ -614,12 +706,24 @@ let () =
           test "a slug collision is a duplicate" slug_collision_is_a_duplicate;
           test "an explicit id collides with a derived one"
             explicit_id_collides_with_a_derived_one;
-          test "duplicates are detected before filtering"
-            duplicates_detected_before_filtering;
           test "the same name in different groups is fine"
             same_name_in_different_groups_is_fine;
           test "pp_error names the id and the remedy"
             pp_error_names_the_id_and_the_remedy;
+        ];
+      group "collected budgets"
+        [
+          test "a collected budget is accepted" a_collected_budget_is_accepted;
+          test "a run budget on an uncollected metric is refused"
+            a_run_budget_on_an_uncollected_metric_is_refused;
+          test "a scope's budget is checked against its own metrics"
+            a_scope_budget_is_checked_against_its_own_metrics;
+          test "a scope inherits the nearest metrics"
+            a_scope_inherits_the_nearest_metrics;
+          test "an inherited budget a case does not collect is fine"
+            an_inherited_budget_a_case_does_not_collect_is_fine;
+          test "pp_error names the scope and the metric"
+            pp_error_names_the_scope_and_the_metric;
         ];
       group "filters"
         [

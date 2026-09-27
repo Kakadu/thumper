@@ -40,7 +40,11 @@
       same per-metric rule extends outward: a metric with no budget in
       {!budgets} falls through to the run's budget list, and a case with no
       budgets from any level gets [Budget.defaults] (resolution above the case
-      level is the judge's job, not this module's). *)
+      level is the judge's job, not this module's). A budget binds only a metric
+      the case collects: a case that narrows its metrics drops the inherited
+      budgets on the others, and the default binds only a case that collects
+      [wall_time]. A budget stated where its metric is not collected is a
+      contradiction ({!check_collected}). *)
 
 (** {1:types Types} *)
 
@@ -141,20 +145,38 @@ val matches : filter -> case -> bool
 
 (** {1:resolving Resolving} *)
 
-(** The type for suite validation errors: two cases resolved to the same id.
-    Baseline rows and trials key on the id, so a duplicate would shadow
-    evidence. *)
-type error = Duplicate_id of string
+(** The type for suite validation errors. [Duplicate_id]: two cases resolved to
+    the same id; baseline rows and trials key on the id, so a duplicate would
+    shadow evidence. [Uncollected_budget]: see {!check_collected}. *)
+type error =
+  | Duplicate_id of string
+  | Uncollected_budget of { scope : string; metric : string }
+      (** A budget on [metric] stated at [scope] (a group or case id, [""] for
+          the run), where that metric is not collected. *)
 
 val pp_error : Format.formatter -> error -> unit
 (** [pp_error ppf e] formats [e] for users, with its remedy. *)
 
-val resolve : ?filter:filter -> t list -> (case list, error) result
-(** [resolve benches] flattens groups, applies inheritance, validates id
-    uniqueness, and keeps the cases [filter] selects (default: all), in
-    authoring order. Duplicate ids are detected on the whole suite {e before}
-    filtering — a narrowed selection never masks a broken suite. An empty result
-    is not an error here; callers decide (an empty {e selection} is exit 2). No case closure is run. *)
+val resolve : t list -> (case list, error) result
+(** [resolve benches] flattens groups, applies inheritance, and validates id
+    uniqueness over the whole suite: the cases in authoring order. Selection
+    ({!matches}) narrows the result afterwards, so a narrowed selection never
+    masks a broken suite ([Check.select] is the one place that does both). An
+    empty result is not an error here. No case closure is run. *)
+
+val check_collected :
+  metrics:Metric.t list ->
+  budgets:Budget.t list ->
+  t list ->
+  (unit, error) result
+(** [check_collected ~metrics ~budgets benches] checks that every budget names a
+    metric collected at the scope that states it: the scope's own [?metrics],
+    else the nearest enclosing scope's, else the run's [metrics] (the config's
+    list). [budgets] are the run's own, checked against [metrics]. The first
+    contradiction in authoring order, the run's budgets first, is
+    [Error (Uncollected_budget _)]. A budget a scope {e inherits} on a metric it
+    does not collect is not an error: the judge drops it for the cases that do
+    not collect it. *)
 
 (** {1:observers Case observers} *)
 

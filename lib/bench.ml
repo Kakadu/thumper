@@ -195,8 +195,9 @@ let merge_budgets ~inner ~outer =
       in
       Some (i @ List.filter (fun b -> not (shadowed b)) o)
 
+let join prefix seg = if prefix = "" then seg else prefix ^ "/" ^ seg
+
 let flatten benches =
-  let join prefix seg = if prefix = "" then seg else prefix ^ "/" ^ seg in
   let rec walk ~id_path ~name_path ~tags ~metrics ~budgets = function
     | Case (s, prepare) ->
         [
@@ -226,17 +227,27 @@ let flatten benches =
 
 (* Resolution *)
 
-type error = Duplicate_id of string
+type error =
+  | Duplicate_id of string
+  | Uncollected_budget of { scope : string; metric : string }
 
 let pp_error ppf = function
   | Duplicate_id id ->
       Format.fprintf ppf
         "duplicate benchmark id %S (rename the case or pass ~id)" id
+  | Uncollected_budget { scope = ""; metric } ->
+      Format.fprintf ppf
+        "the run has a budget on %s but does not collect it (add it to \
+         Config.metrics or drop the budget)"
+        metric
+  | Uncollected_budget { scope; metric } ->
+      Format.fprintf ppf
+        "%S has a budget on %s but does not collect it (add it to ~metrics or \
+         drop the budget)"
+        scope metric
 
-let resolve ?filter benches =
+let resolve benches =
   let cases = flatten benches in
-  (* Duplicates are detected on the whole flattened suite, before filtering:
-     a narrowed selection never masks a broken suite. *)
   let rec find_dup seen = function
     | [] -> None
     | c :: rest ->
@@ -244,10 +255,37 @@ let resolve ?filter benches =
   in
   match find_dup [] cases with
   | Some id -> Error (Duplicate_id id)
-  | None -> (
-      match filter with
-      | None -> Ok cases
-      | Some f -> Ok (List.filter (fun c -> matches f c) cases))
+  | None -> Ok cases
+
+(* A budget must name a metric collected where it is stated: the scope's own
+   [?metrics], else the nearest enclosing ones, else the run's. Budgets a
+   narrower scope inherits on metrics it does not collect are not a
+   contradiction; the judge drops them. *)
+let check_collected ~metrics ~budgets benches =
+  let uncollected ~scope ~metrics budgets =
+    List.find_map
+      (fun b ->
+        let m = Budget.metric b in
+        if List.exists (Metric.equal m) metrics then None
+        else Some (Uncollected_budget { scope; metric = Metric.id m }))
+      budgets
+  in
+  let rec walk ~path ~metrics node =
+    let s, children =
+      match node with Case (s, _) -> (s, []) | Group (s, c) -> (s, c)
+    in
+    let scope = join path s.seg in
+    let metrics = Option.value s.metrics ~default:metrics in
+    match uncollected ~scope ~metrics (Option.value s.budgets ~default:[]) with
+    | Some _ as e -> e
+    | None -> List.find_map (walk ~path:scope ~metrics) children
+  in
+  let first =
+    match uncollected ~scope:"" ~metrics budgets with
+    | Some _ as e -> e
+    | None -> List.find_map (walk ~path:"" ~metrics) benches
+  in
+  match first with None -> Ok () | Some e -> Error e
 
 (* Case observers *)
 
