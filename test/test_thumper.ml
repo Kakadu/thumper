@@ -401,13 +401,16 @@ module Deleted_surface : sig end = struct
     ignore (profile : deleted)
 
   let _metric () =
-    let of_probe = Deleted and direction = Deleted in
+    let of_probe = Deleted and direction = Deleted and kind = Deleted in
     let open Thumper.Metric in
     ignore (wall_time : t);
     ignore (of_probe : deleted);
     (* Polarity was deleted with its unconstructible higher-is-better case;
        it returns with a real throughput metric and its extension point. *)
-    ignore (direction : deleted)
+    ignore (direction : deleted);
+    (* The rendering classification is the report's; [units] tells a caller
+       what the values measure. *)
+    ignore (kind : deleted)
 
   let _verdict () =
     let judge = Deleted

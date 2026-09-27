@@ -97,12 +97,6 @@ module Verdict' := Verdict
 module Metric : sig
   (** {2:types Types} *)
 
-  type kind = [ `Time | `Allocation | `Other ]
-  (** The type for rendering classification: [`Time] metrics are second-valued
-      and unit-scaled for display, [`Allocation] metrics are word counts,
-      [`Other] metrics render raw with their {!units}. Never consulted by
-      judgment — budgets bind to individual metrics, not kinds. *)
-
   type t
   (** The type for metrics. Identity is {!id}: two metrics with the same id are
       the same metric to {!equal}, {!compare}, and every baseline row. *)
@@ -121,9 +115,6 @@ module Metric : sig
   val units : t -> string
   (** [units m] is the unit of [m]'s values (e.g. ["s"], ["words"]), for report
       rendering. Per-call values are in this unit. *)
-
-  val kind : t -> kind
-  (** [kind m] is [m]'s rendering classification. *)
 
   val equal : t -> t -> bool
   (** [equal a b] is [String.equal (id a) (id b)]. Names and units do not
@@ -144,40 +135,40 @@ module Metric : sig
 
   val wall_time : t
   (** [wall_time] is monotonic wall-clock time per call, in seconds. Id
-      ["wall_time"], kind [`Time]. The default primary metric. *)
+      ["wall_time"]. The default primary metric. *)
 
   val alloc_words : t
   (** [alloc_words] is total OCaml words allocated per call: minor + major −
       promoted (promoted words are counted by both the minor and major counters;
-      subtracting removes the double count). Id ["alloc_words"], kind
-      [`Allocation]. Exact when the per-run probe proves it. *)
+      subtracting removes the double count). Id ["alloc_words"]. Exact when the
+      per-run probe proves it. *)
 
   val cpu_time : t
-  (** [cpu_time] is process CPU time per call, in seconds. Id ["cpu_time"], kind
-      [`Time]. Opt-in and demoted: under multithreaded backends it sums across
-      threads, so it is noisy and core-count dependent. *)
+  (** [cpu_time] is process CPU time per call, in seconds. Id ["cpu_time"].
+      Opt-in and demoted: under multithreaded backends it sums across threads,
+      so it is noisy and core-count dependent. *)
 
   val minor_alloc_words : t
   (** [minor_alloc_words] is words allocated in the minor heap per call. Id
-      ["minor_alloc_words"], kind [`Allocation]. *)
+      ["minor_alloc_words"]. *)
 
   val major_alloc_words : t
   (** [major_alloc_words] is words allocated in the major heap per call,
       {e including} words promoted from the minor heap (the raw counter;
       subtract {!promoted_words} for direct major allocations). Id
-      ["major_alloc_words"], kind [`Allocation]. *)
+      ["major_alloc_words"]. *)
 
   val promoted_words : t
   (** [promoted_words] is words promoted from the minor to the major heap per
-      call. Id ["promoted_words"], kind [`Allocation]. *)
+      call. Id ["promoted_words"]. *)
 
   val minor_collections : t
   (** [minor_collections] is minor collections per call. Id
-      ["minor_collections"], kind [`Other], units ["count"]. *)
+      ["minor_collections"], units ["count"]. *)
 
   val major_collections : t
   (** [major_collections] is completed major collection cycles per call. Id
-      ["major_collections"], kind [`Other], units ["count"]. *)
+      ["major_collections"], units ["count"]. *)
 end
 
 (** {1:budgets Budgets} *)
