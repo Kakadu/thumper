@@ -48,8 +48,18 @@ report warns about the drop the way bless's partial re-record does: a
 silent partial re-record would read as data loss after promotion.
 
   $ $FIX check --quick -f busy/spin > out3.log 2>&1
-  $ grep -q 'drops the rows of the 5 unselected cases' out3.log && echo warned
-  warned
+  $ grep -o 'warning: partial selection on a stale section.*' out3.log
+  warning: partial selection on a stale section — the corrected file re-records this machine's whole section and drops the rows of the 5 unselected cases
+  $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
+  2
+  $ rm fixture.thumper.corrected
+
+A filtered bless on the stale section is the same wholesale re-record, and
+says so in the same words.
+
+  $ $FIX bless --quick --force -f busy/spin > out4.log 2>&1
+  $ grep -o 'warning: partial selection on a stale section.*' out4.log
+  warning: partial selection on a stale section — the corrected file re-records this machine's whole section and drops the rows of the 5 unselected cases
   $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
   2
   $ rm fixture.thumper.corrected

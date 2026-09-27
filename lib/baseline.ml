@@ -505,6 +505,17 @@ let case_frozen_k s ~id =
 
 type identity = { machine : string; host : string; ocaml : string }
 
+let check_annotations fname annotations =
+  List.iter
+    (fun a ->
+      if String.contains a '\n' then
+        invalid_arg (Printf.sprintf "%s: multi-line annotation %S" fname a);
+      if reserved_annotation a then
+        invalid_arg
+          (Printf.sprintf "%s: annotation %S starts with a reserved header word"
+             fname a))
+    annotations
+
 let set_section ?(annotations = []) t identity row_list =
   let fname = "Baseline.set_section" in
   (* A suite-less baseline with sections is unparseable (the grammar requires
@@ -523,15 +534,7 @@ let set_section ?(annotations = []) t identity row_list =
       if String.contains value '\n' then
         invalid_arg (Printf.sprintf "%s: newline in %s %S" fname what value))
     [ ("host", identity.host); ("ocaml", identity.ocaml) ];
-  List.iter
-    (fun a ->
-      if String.contains a '\n' then
-        invalid_arg (Printf.sprintf "%s: multi-line annotation %S" fname a);
-      if reserved_annotation a then
-        invalid_arg
-          (Printf.sprintf "%s: annotation %S starts with a reserved header word"
-             fname a))
-    annotations;
+  check_annotations fname annotations;
   let sec =
     {
       s_machine = identity.machine;
@@ -551,8 +554,9 @@ let set_section ?(annotations = []) t identity row_list =
   in
   { t with t_sections = place t.t_sections }
 
-let update_rows t ~machine ~advance ~prune =
+let update_rows ?(annotations = []) t ~machine ~advance ~prune =
   let fname = "Baseline.update_rows" in
+  check_annotations fname annotations;
   let advance = sort_rows fname advance in
   let advanced key =
     List.exists (fun r -> compare_key (row_key r) key = 0) advance
@@ -582,7 +586,11 @@ let update_rows t ~machine ~advance ~prune =
           if compare_rows k a <= 0 then k :: merge ks (a :: adv)
           else a :: merge (k :: ks) adv
     in
-    { sec with s_rows = merge kept advance }
+    {
+      sec with
+      s_annotations = sec.s_annotations @ annotations;
+      s_rows = merge kept advance;
+    }
   in
   let rec update = function
     | [] ->

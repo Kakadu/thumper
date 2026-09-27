@@ -256,11 +256,11 @@ val strong_estimate : strong -> float option
 
 val warnings : t -> string list
 (** [warnings t] is the run-level notices: one per baseline row id pruned by a
-    full-selection candidate, and — when a partial selection judges a
-    stale section — one naming the unselected cases whose rows the wholesale
-    section replacement drops (the same loudness [bless] gives its partial
-    re-record; a silent partial drop would read as data loss after
-    promotion). Per-case measurement warnings live in {!case_report}. *)
+    full-selection candidate, and — when a partial selection judges a stale
+    section — one naming the unselected cases whose rows the wholesale section
+    replacement drops (the words {!bless} uses for the same drop; a silent
+    partial drop would read as data loss after promotion). Per-case measurement
+    warnings live in {!case_report}. *)
 
 val suite : t -> string
 (** [suite t] is the suite name given to {!judge}, for rendering and fresh
@@ -338,15 +338,31 @@ val corrected : t -> Baseline.t option
     not a valid header body when that path is taken. *)
 
 val bless :
+  ?annotations:string list ->
   identity:Baseline.identity ->
   suite:string ->
+  selection:[ `Full | `Partial ] ->
   run:Run.t ->
-  file:Baseline.t ->
-  Baseline.t
-(** [bless ~identity ~suite ~run ~file] is the second pure write path: re-record
-    [identity.machine]'s section wholesale from [run]'s trials, preserving every
-    other section byte-for-byte (and starting from a fresh [suite]-headed file
-    when [file] has no header). Non-monotone by design; its guard (the gate
-    refusal, [--force]) lives in the CLI. Raises [Invalid_argument] if a case
-    id, metric id, or evidence value violates the file grammar ([Baseline]'s row
-    constructors are the check). *)
+  Baseline.t ->
+  Baseline.t * string list
+(** [bless ~identity ~suite ~selection ~run file] is the second pure write path,
+    re-recording [run]'s cases in [identity.machine]'s section of [file], with
+    the run-level notices of that re-record:
+
+    - under a [`Partial] selection over a current section (its recorded
+      [# ocaml:] identity is [identity]'s), only the selected cases' rows are
+      replaced, by case id — a selected case's row for a metric it no longer
+      collects is removed — and the section header, its annotations, and every
+      unselected row keep their bytes. No notice.
+    - otherwise — a [`Full] selection, or a missing or stale section — the
+      section is replaced wholesale from [run]'s trials (starting from a fresh
+      [suite]-headed file when [file] has no header). A partial selection over a
+      stale section notices the unselected cases whose rows it drops, in
+      {!warnings}' words.
+
+    [annotations] (default none) are appended to the section header as [# ]
+    comment lines (the [--force] record). Every other section is byte-preserved.
+    Non-monotone by design; its guard (the gate refusal, [--force]) lives in the
+    CLI. Raises [Invalid_argument] if a case id, metric id, evidence value, or
+    annotation violates the file grammar ([Baseline]'s constructors are the
+    check). *)

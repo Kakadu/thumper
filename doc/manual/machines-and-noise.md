@@ -114,9 +114,9 @@ bench rules of one workspace.
 
 ## `bless` and `--force`
 
-`bless` re-records this machine's section wholesale from one run — a
-proposed replacement containing this run's measurements for every
-selected case, other sections untouched:
+`bless` re-records this machine's section from one run — a proposed
+replacement containing this run's measurements for every selected case,
+other sections untouched:
 
 ```
 $ dune exec bench/bench_digest.exe -- bless
@@ -142,9 +142,11 @@ accepted slowdown too broad to express as a budget change. Unlike a
 normal update, `bless` can replace good measurements with worse ones —
 so it is guarded: on a busy machine it refuses (exit 2) unless you
 pass `--force`, which records a `# forced:` note in the proposed
-section for the reviewer to see. A filtered `bless` still re-records
-the whole section and warns about the unselected cases' rows it would
-drop.
+section for the reviewer to see (a filtered `bless` names its cases
+there). A filtered `bless` (`-f`, `--tag`) re-records only the selected
+cases and keeps every other row, so `bless -f ID` repairs one case. Over
+a stale section it re-records the whole section instead, and warns about
+the unselected cases' rows it drops.
 
 Like everything else, `bless` writes only the `.corrected` proposal:
 the baseline itself changes only when you accept.

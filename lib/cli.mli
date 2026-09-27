@@ -25,8 +25,8 @@
 (** {1:parsing Parsing} *)
 
 type subcommand = [ `Check | `Bless | `List ]
-(** The type for subcommands. [`Check] measures and compares, [`Bless]
-    proposes a wholesale re-record of this machine's section, [`List] prints the
+(** The type for subcommands. [`Check] measures and compares, [`Bless] proposes
+    a re-record of the selected cases for this machine, [`List] prints the
     selected case ids. *)
 
 type color = [ `Auto | `Always | `Never ]
@@ -356,11 +356,13 @@ val main :
       present iff measurement completed), renders {!render_check}, and exits
       [Verdict.exit_code ~strict]; a failed corrected-file write still prints
       the report, without its accept line, then the error, exit 2. [bless]
-      writes the [Verdict.bless] candidate
-      and renders the same report shape over proposed rows, exit 0; a
-      {e filtered} bless still re-records the section wholesale
-      ([Verdict.bless]'s contract), so a partial selection prints a warning
-      beside the prompt naming the unselected cases' rows it drops.
+      writes the [Verdict.bless] candidate and renders the same report shape
+      over proposed rows, exit 0. A {e filtered} bless re-records the selected
+      cases only, keeping every other row, unless the section is missing or
+      stale ([Verdict.bless]'s contract); over a stale section it prints
+      [Verdict.bless]'s notice beside the prompt, naming the unselected cases'
+      rows it drops. Under [--force] on a loaded host, the [# forced:]
+      annotation of a filtered bless names its cases.
 
     Environment: [--color], the per-stream TTY state, [NO_COLOR], and
     [INSIDE_DUNE] resolve color ({!use_color}); [GITHUB_ACTIONS] gates

@@ -226,11 +226,18 @@ val set_section : ?annotations:string list -> t -> identity -> row list -> t
     ([machine:], [host:], [ocaml:], [suite:]). *)
 
 val update_rows :
-  t -> machine:string -> advance:row list -> prune:(string * string) list -> t
+  ?annotations:string list ->
+  t ->
+  machine:string ->
+  advance:row list ->
+  prune:(string * string) list ->
+  t
 (** [update_rows t ~machine ~advance ~prune] edits [machine]'s section in place:
     each [advance] row replaces or inserts at its (id, metric) key; each [prune]
     (id, metric) is removed (absent keys are ignored); every other row keeps its
-    verbatim text and the section stays in canonical (id, metric) order. Other
-    sections are byte-preserved. Raises [Invalid_argument] if [machine] has no
-    section, on duplicate keys within [advance], or when a key appears in both
-    [advance] and [prune]. *)
+    verbatim text and the section stays in canonical (id, metric) order.
+    [annotations] (default none) are appended as [# ] comment lines after the
+    section's existing header lines, which keep their text. Other sections are
+    byte-preserved. Raises [Invalid_argument] if [machine] has no section, on
+    duplicate keys within [advance], when a key appears in both [advance] and
+    [prune], or on an annotation {!set_section} would refuse. *)

@@ -791,7 +791,35 @@ let update_rows_validates () =
       Baseline.update_rows t ~machine:"key" ~advance:[ row; row ] ~prune:[]);
   invalid (fun () ->
       Baseline.update_rows t ~machine:"key" ~advance:[ row ]
-        ~prune:[ ("a", "m1") ])
+        ~prune:[ ("a", "m1") ]);
+  invalid (fun () ->
+      Baseline.update_rows ~annotations:[ "machine: x" ] t ~machine:"key"
+        ~advance:[] ~prune:[]);
+  invalid (fun () ->
+      Baseline.update_rows ~annotations:[ "two\nlines" ] t ~machine:"key"
+        ~advance:[] ~prune:[])
+
+let update_rows_appends_annotations () =
+  let t =
+    Baseline.set_section ~annotations:[ "first" ]
+      (Baseline.empty ~suite:"s")
+      { Baseline.machine = "key"; host = "h"; ocaml = "o" }
+      [ Baseline.exact_row ~id:"a" ~metric:"m1" 1 ]
+  in
+  let t' =
+    Baseline.update_rows ~annotations:[ "second" ] t ~machine:"key" ~advance:[]
+      ~prune:[]
+  in
+  equal ~msg:"appended below the kept header" string
+    "# thumper baseline v1\n\
+     # suite: s\n\n\
+     # machine: key\n\
+     # host: h\n\
+     # ocaml: o\n\
+     # first\n\
+     # second\n\n\
+     a\tm1\texact\t1\n"
+    (Baseline.to_string t')
 
 (* Atomic write *)
 
@@ -1217,6 +1245,7 @@ let () =
           test "prunes present keys and ignores absent ones" update_rows_prunes;
           test "rejects a missing section, duplicates, and overlap"
             update_rows_validates;
+          test "update_rows appends annotations" update_rows_appends_annotations;
         ];
       group "atomic write"
         [

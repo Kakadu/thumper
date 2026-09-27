@@ -1035,7 +1035,7 @@ let selection ~patterns ~tags ~config ~budgets ?filter benches =
       ~budgets:(Option.value budgets ~default:[])
       benches
   with
-  | cases, _ -> cases
+  | selected -> selected
   | exception Check.Error Check.Empty_selection ->
       fail2 "%s" (no_match ~patterns ~tags)
   | exception Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
@@ -1076,8 +1076,9 @@ let validate_budgets budgets =
 let run_list ~(o : options) ~config ~filter ~budgets benches =
   List.iter
     (fun c -> print_endline (Bench.id c))
-    (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
-       benches);
+    (fst
+       (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
+          benches));
   0
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
@@ -1157,10 +1158,9 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
 let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept benches =
   (* The run's budgets are not bless's business, but a suite [check] refuses
-     is refused here too: blessing it would record a ruler nothing can
-     judge against. *)
-  let all = selection ~patterns:[] ~tags:[] ~config ~budgets benches in
-  let sel =
+     is refused here too (the selection checks the whole suite): blessing it
+     would record a ruler nothing can judge against. *)
+  let sel, scope =
     selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter benches
   in
   let machine = machine_key () in
@@ -1204,24 +1204,27 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                 Check.measure ~on_progress:tick ~config ?filter benches)))
   in
   let forced_under_load = !forced_under_load in
-  let file = Option.value file ~default:(Baseline.empty ~suite:name) in
-  let cand = Verdict.bless ~identity ~suite:name ~run ~file in
-  let cand =
+  (* The [--force] record in the section header; a partial bless names its
+     cases, the rows the load touched. *)
+  let annotations =
     match forced_under_load with
-    | None -> cand
-    | Some (load, cores) -> (
-        match Baseline.section cand machine with
-        | None -> cand
-        | Some s ->
-            Baseline.set_section
-              ~annotations:
-                [
-                  Printf.sprintf "forced: blessed under load %.1f on %d cores"
-                    load cores;
-                ]
-              cand identity (Baseline.rows s))
+    | None -> []
+    | Some (load, cores) ->
+        let cases =
+          match scope with
+          | `Full -> ""
+          | `Partial -> String.concat " " (List.map Bench.id sel) ^ " "
+        in
+        [
+          Printf.sprintf "forced: blessed %sunder load %.1f on %d cores" cases
+            load cores;
+        ]
   in
-  write_baseline corrected_path cand;
+  let file = Option.value file ~default:(Baseline.empty ~suite:name) in
+  let corrected, notices =
+    Verdict.bless ~annotations ~identity ~suite:name ~selection:scope ~run file
+  in
+  write_baseline corrected_path corrected;
   (* The bless report is the same shape as check's — header, table of proposed
      rows, actions — and always prints whole. *)
   let n = List.length sel in
@@ -1264,21 +1267,10 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                  load cores);
           ]
       | None -> [])
-    (* A filtered bless still replaces the section wholesale ([Verdict.bless]'s
-       contract): rows of unselected cases are dropped from the candidate. Say
-       so next to the prompt — promotion is the review step, and a silent
-       partial re-record would read as data loss after the fact. *)
-    @ (let n_all = List.length all in
-       if n < n_all then
-         [
-           styled ~color `Yellow
-             (Printf.sprintf
-                "  warning: partial bless \xe2\x80\x94 %d of %d cases \
-                 selected; the candidate re-records this machine's whole \
-                 section and drops the rows of the %d unselected"
-                n n_all (n_all - n));
-         ]
-       else [])
+    (* A partial bless over a stale section still re-records it whole; the
+       notice says what that drops, next to the prompt, where promotion is
+       reviewed. *)
+    @ List.map (fun w -> styled ~color `Yellow ("  warning: " ^ w)) notices
     @ [ Printf.sprintf "  accept:  %s" accept ]
   in
   print_string (report_of_blocks [ header; table; actions ]);
@@ -1298,7 +1290,7 @@ let help_text exe =
       "";
       "subcommands:";
       "  check      measure, compare against the baseline, ratchet (default)";
-      "  bless      propose a wholesale re-record of this machine's section";
+      "  bless      propose a re-record of the selected cases for this machine";
       "  list       print the selected case ids; no measurement";
       "";
       "options:";

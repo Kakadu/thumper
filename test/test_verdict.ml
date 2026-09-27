@@ -1280,7 +1280,10 @@ let bless_rerecords_the_section_wholesale () =
             ] );
       ]
   in
-  let result = Verdict.bless ~identity:ident ~suite:"digest" ~run ~file in
+  let result, notices =
+    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Full ~run file
+  in
+  equal ~msg:"a full selection notices nothing" (list string) [] notices;
   let s = section_of result in
   equal ~msg:"exactly the run's rows (non-monotone: old rows dropped)"
     (list (pair string string))
@@ -1296,8 +1299,87 @@ let bless_rerecords_the_section_wholesale () =
 let bless_adds_a_suite_header_over_the_empty_file () =
   let file = Result.get_ok (Baseline.of_string "") in
   let run = Run.create [ ("a", trial [ (m_alloc, Run.Exact 1) ]) ] in
-  let result = Verdict.bless ~identity:ident ~suite:"digest" ~run ~file in
-  equal (option string) (Some "digest") (Baseline.suite result)
+  let result, notices =
+    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial ~run file
+  in
+  equal (option string) (Some "digest") (Baseline.suite result);
+  equal ~msg:"no section, nothing dropped, no notice" (list string) [] notices
+
+let bless_partial_on_a_current_section_replaces_the_selected_cases () =
+  (* The header and its annotations stay, every unselected row keeps its
+     bytes, and the selected case's rows are replaced by case id: its new
+     metric is added and the metric it no longer collects is removed. The
+     new annotation is appended below the earlier one. *)
+  let file =
+    Baseline.set_section ~annotations:[ "forced: earlier" ]
+      (Baseline.empty ~suite:"digest")
+      ident
+      [
+        wall_row "a" (ties 5 1.0);
+        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+          ~samples:(ties 5 1.0);
+        wall_row "b" (ties 5 3.0);
+      ]
+  in
+  let run =
+    Run.create
+      [
+        ( "a",
+          trial
+            [ (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 7) ]
+        );
+      ]
+  in
+  let result, notices =
+    Verdict.bless ~annotations:[ "forced: now" ]
+      ~identity:{ ident with Baseline.host = "renamed-host" }
+      ~suite:"digest" ~selection:`Partial ~run file
+  in
+  equal ~msg:"no notice: nothing is dropped" (list string) [] notices;
+  let s = section_of result in
+  equal ~msg:"a replaced by case id, b kept"
+    (list (pair string string))
+    [ ("a", "alloc_words"); ("a", "wall_time"); ("b", "wall_time") ]
+    (List.map
+       (fun r -> (Baseline.row_id r, Baseline.row_metric r))
+       (Baseline.rows s));
+  equal ~msg:"unselected row byte-identical" (option string) (row_line file "b")
+    (row_line result "b");
+  let header =
+    List.filter (fun l -> String.starts_with ~prefix:"# " l) (file_lines result)
+  in
+  equal ~msg:"header kept, annotation appended" (list string)
+    [
+      "# thumper baseline v1";
+      "# suite: digest";
+      "# machine: testmachine";
+      "# host: test-host";
+      "# ocaml: 5.5.0 64-bit release";
+      "# forced: earlier";
+      "# forced: now";
+    ]
+    header
+
+let bless_partial_on_a_stale_section_notices_the_drop () =
+  (* A stale section is not comparable, so a partial bless re-records it
+     whole and says, in check's words, which cases' rows go. *)
+  let file = stale_file () in
+  let run =
+    Run.create [ ("a", trial [ (m_wall, Run.Samples (sam (ties 5 2.0))) ]) ]
+  in
+  let result, notices =
+    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial ~run file
+  in
+  equal ~msg:"the stale-partial notice" (list string)
+    [
+      "partial selection on a stale section \xe2\x80\x94 the corrected file \
+       re-records this machine's whole section and drops the rows of the 1 \
+       unselected case";
+    ]
+    notices;
+  is_none ~msg:"unselected row dropped" (row_line result "old");
+  equal ~msg:"current identity recorded" string ident.Baseline.ocaml
+    (Baseline.ocaml_of (section_of result))
 
 (* Evidence ownership *)
 
@@ -1662,6 +1744,10 @@ let () =
             bless_rerecords_the_section_wholesale;
           test "adds a suite header over the empty file"
             bless_adds_a_suite_header_over_the_empty_file;
+          test "a partial bless on a current section replaces its cases only"
+            bless_partial_on_a_current_section_replaces_the_selected_cases;
+          test "a partial bless on a stale section notices the drop"
+            bless_partial_on_a_stale_section_notices_the_drop;
         ];
       group "ownership"
         [

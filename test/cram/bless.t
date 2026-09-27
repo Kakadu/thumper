@@ -58,3 +58,33 @@ behavior.
   candidate
   $ grep -q 'accept:  dune promote' out2.log && echo dune-hint
   dune-hint
+
+A filtered bless on a current section re-records the selected cases only:
+the section header, its earlier annotations, and every unselected row keep
+their bytes, the selected cases' rows are replaced, and the report warns
+about nothing, since nothing is dropped. The corrected file's diff is the
+review. The committed section gets one earlier annotation of its own (in
+place of whatever the full bless recorded), so its survival is visible.
+
+  $ grep -v '^# forced:' fixture.thumper.corrected | awk '{ print } /^# ocaml: / { print "# forced: an earlier note" }' > fixture.thumper
+  $ rm fixture.thumper.corrected
+  $ $FIX bless --quick --wait-quiet 5 --force --color never -f busy > out3.log 2>&1
+  $ grep -c 'fixture — blessed 2 cases for machine testkey' out3.log
+  1
+  $ grep -c 'unselected' out3.log
+  0
+  [1]
+  $ grep '^# forced:' fixture.thumper.corrected | head -1
+  # forced: an earlier note
+  $ grep -v '^busy/' fixture.thumper > kept.before
+  $ grep -v '^busy/' fixture.thumper.corrected | grep -v '^# forced: blessed ' > kept.after
+  $ cmp -s kept.before kept.after && echo unselected-rows-and-header-kept
+  unselected-rows-and-header-kept
+  $ grep -c '^busy/' fixture.thumper.corrected
+  4
+
+On a loaded host, --force appends a forced: line naming the blessed
+cases, below the earlier annotation (a quiet host records none).
+
+  $ grep '^# forced:' fixture.thumper.corrected | grep -Ev '^# forced: (an earlier note|blessed busy/spin busy/half under load [0-9.]+ on [0-9]+ cores)$'
+  [1]

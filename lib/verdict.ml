@@ -340,12 +340,11 @@ let judge_metric ~gate section ~id ~trial metric measurement budget =
             judge_sampled ~gate ~metric ~budget ~row_k ~baseline:samples ~cand
               ~trial_k)
 
-(* A stale section's candidate replaces the section wholesale from the judged
-   cases alone — under a partial selection the unselected cases' rows are
-   dropped, and the acceptance prompt is the only later tell. bless warns
-   about exactly this replace-and-drop; the check-stale path owes the same
-   loudness (a silent partial re-record reads as data loss after the
-   fact). *)
+(* A stale section is replaced wholesale from the selected cases alone, by
+   check's candidate and by bless alike: under a partial selection the
+   unselected cases' rows are dropped, and the acceptance prompt is the only
+   later tell. Both say so, in these words (a silent partial re-record reads
+   as data loss after the fact). *)
 let stale_partial_notice ~selection ~comparison ~section ~case_ids =
   match (selection, comparison, section) with
   | `Partial, Stale _, Some s ->
@@ -362,9 +361,9 @@ let stale_partial_notice ~selection ~comparison ~section ~case_ids =
       else
         [
           Printf.sprintf
-            "partial selection on a stale section — the candidate re-records \
-             this machine's whole section and drops the rows of the %d \
-             unselected case%s"
+            "partial selection on a stale section — the corrected file \
+             re-records this machine's whole section and drops the rows of the \
+             %d unselected case%s"
             n
             (if n = 1 then "" else "s");
         ]
@@ -383,7 +382,7 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
             notices :=
               Printf.sprintf
                 "case %s no longer exists in this binary; its rows will be \
-                 pruned from the candidate"
+                 pruned from the corrected file"
                 id
               :: !notices
           end)
@@ -927,8 +926,35 @@ let corrected t =
     None
   else Some result
 
-let bless ~identity ~suite ~run ~file =
+let bless ?(annotations = []) ~identity ~suite ~selection ~run file =
+  let trials = Run.trials run in
+  let ids = List.map fst trials in
   let rows =
-    List.concat_map (fun (id, trial) -> rows_of_trial id trial) (Run.trials run)
+    List.concat_map (fun (id, trial) -> rows_of_trial id trial) trials
   in
-  Baseline.set_section (with_suite_header ~suite file) identity rows
+  let machine = identity.Baseline.machine in
+  let section = Baseline.section file machine in
+  let comparison = classify_comparison identity section in
+  match (selection, comparison, section) with
+  | `Partial, Compared, Some s ->
+      (* A current section keeps its header and every unselected row. The
+         selected cases' rows are replaced by case id: a metric a selected
+         case no longer collects loses its row too. *)
+      let key r = (Baseline.row_id r, Baseline.row_metric r) in
+      let recorded = List.map key rows in
+      let prune =
+        List.filter_map
+          (fun row ->
+            let k = key row in
+            if List.mem (fst k) ids && not (List.mem k recorded) then Some k
+            else None)
+          (Baseline.rows s)
+      in
+      (Baseline.update_rows ~annotations file ~machine ~advance:rows ~prune, [])
+  | _ ->
+      (* A full selection, or a missing or stale section: the section is
+         re-recorded whole, and a partial one says what it drops. *)
+      ( Baseline.set_section ~annotations
+          (with_suite_header ~suite file)
+          identity rows,
+        stale_partial_notice ~selection ~comparison ~section ~case_ids:ids )

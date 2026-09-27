@@ -1173,16 +1173,18 @@ let strict_turns_new_into_exit_1 () =
   let _ = output () in
   equal ~msg:"NEW under --strict exits 1" int 1 code
 
-let partial_bless_warns_and_drops_unselected_rows () =
+let partial_bless_rerecords_the_selected_cases_only () =
   let dir = temp_dir () in
   e2e_env dir;
   let bl = Filename.concat dir "digest.thumper" in
+  let current = { ident with Baseline.ocaml = Env.ocaml_identity () } in
+  let beta = [ wall_row "g/beta" (ties 5 1e-6); alloc_row "g/beta" 54 ] in
   Baseline.write bl
-    (file_of [ wall_row "g/beta" (ties 5 1e-6); alloc_row "g/beta" 54 ]);
+    (Baseline.set_section (Baseline.empty ~suite:"digest") current beta);
   (* --force keeps the run deterministic on a loaded host (the gate refusal
      needs a reliably loaded host, which no test can arrange); under a quiet
      gate it is a no-op. *)
-  let code =
+  let bless () =
     with_quiet_stderr (fun () ->
         Cli.main ~config:fast_config
           ~argv:
@@ -1191,19 +1193,37 @@ let partial_bless_warns_and_drops_unselected_rows () =
             |]
           ~name:"digest" benches)
   in
+  let code = bless () in
   let out = output () in
   equal ~msg:"bless exits 0" int 0 code;
   assert_contains ~msg:"bless header" out "blessed 1 case for machine testkey";
-  assert_contains ~msg:"proposed row" out "proposed";
-  assert_contains ~msg:"partial warning beside the prompt" out
-    "1 of 2 cases selected";
   assert_contains ~msg:"acceptance prompt" out "accept:  ";
-  let cand =
+  is_true ~msg:"nothing dropped, no notice" (not (contains out "unselected"));
+  let corrected () =
     In_channel.with_open_bin (bl ^ ".corrected") In_channel.input_all
   in
+  let cand = corrected () in
   assert_contains ~msg:"selected case recorded" cand "alpha\t";
+  List.iter
+    (fun row ->
+      let line = Baseline.row_id row ^ "\t" ^ Baseline.row_metric row in
+      assert_contains ~msg:"unselected rows kept" cand line)
+    beta;
+  if contains cand "# forced:" then
+    assert_contains ~msg:"a partial forced bless names its cases" cand
+      "# forced: blessed alpha under load ";
+  (* Over a stale section the bless is wholesale again, and says what it
+     drops. *)
+  Baseline.write bl
+    (Baseline.set_section (Baseline.empty ~suite:"digest") ident beta);
+  let code = bless () in
+  let out = output () in
+  equal ~msg:"stale bless exits 0" int 0 code;
+  assert_contains ~msg:"the drop is noticed" out
+    "partial selection on a stale section — the corrected file re-records this \
+     machine's whole section and drops the rows of the 1 unselected case";
   is_true ~msg:"unselected rows dropped (wholesale re-record)"
-    (not (contains cand "g/beta"))
+    (not (contains (corrected ()) "g/beta"))
 
 (* The real fixture executable, invoked through its [_build] path from a
    scratch cwd: the candidate must land next to the fixture's {e source}
@@ -1403,8 +1423,8 @@ let () =
           test "check NEW flow: exit 0, candidate, json, prompt"
             check_new_flow_end_to_end;
           test "--strict turns NEW into exit 1" strict_turns_new_into_exit_1;
-          test "partial bless warns and drops unselected rows"
-            partial_bless_warns_and_drops_unselected_rows;
+          test "a partial bless re-records the selected cases only"
+            partial_bless_rerecords_the_selected_cases_only;
           test "default path lands next to the benchmark source"
             default_path_lands_next_to_the_source;
         ];

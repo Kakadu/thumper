@@ -56,10 +56,11 @@ the CLI composes `Baseline.read`, `Verdict.corrected`,
 
 **The write path is two pure functions.** `Verdict.corrected` is the
 ratchet — its doc comment in `verdict.mli` is the sole normative
-spelling of the write rule — and `Verdict.bless` the wholesale
-re-record. Both map (verdict/run, parsed file) → new file; `baseline`
-supplies only mechanical placement (`set_section`, `update_rows`) and
-never decides *which* rows advance.
+spelling of the write rule — and `Verdict.bless` the re-record of the
+selected cases (the whole section when the selection is full or the
+section missing or stale). Both map (verdict/run, parsed file) → new
+file; `baseline` supplies only mechanical placement (`set_section`,
+`update_rows`) and never decides *which* rows advance.
 
 **The measurement seam.** `Measure.instruments` (clock, CPU clock, GC
 counters) is the injectable seam: scripted instruments make

@@ -719,9 +719,10 @@ val run :
       ratchet candidate differs from the baseline ({!Verdict.corrected}): NEW
       evidence and confirmed improvements are proposed for [dune promote], never
       installed. The baseline itself is never written.
-    - [bless] — write a [<baseline>.corrected] candidate re-recording this
-      machine's whole section from this run's evidence (refused on a loaded host
-      unless [--force]).
+    - [bless] — write a [<baseline>.corrected] candidate re-recording the
+      selected cases in this machine's section from this run's evidence (the
+      whole section when every case is selected or the section is missing or
+      stale; refused on a loaded host unless [--force]).
     - [list] — print the selected case ids; no measurement.
 
     Options: [-f PAT] (repeatable id substring, OR'd; bare arguments mean the
