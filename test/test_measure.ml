@@ -10,8 +10,9 @@
    Every protocol behavior is driven through scripted [Measure.instruments]:
    the case closure advances a fake clock and fake counters, so calibration,
    frozen-k reuse, warmup arms, the exactness probe, quality flags, and the
-   deadline are all deterministic and consume zero wall-clock time. Only the
-   two fork smoke tests and the pipe-parser tests touch the real OS. *)
+   in-process deadline are all deterministic and consume zero wall-clock time.
+   Only the fork tests (the forked deadline, the parent's, among them) and the
+   pipe-parser tests touch the real OS. *)
 
 open Windtrap
 module Bench = Thumper.Private.Bench
@@ -555,9 +556,6 @@ let failure_round_trips =
     ( "raised crosses the pipe",
       "raised Failure(\"boom\")\n",
       Measure.Case_raised { case = "c"; exn = "Failure(\"boom\")" } );
-    ( "deadline crosses the pipe",
-      "deadline\n",
-      Measure.Deadline_exceeded { case = "c" } );
   ]
   |> List.map (fun (name, wire, expected) ->
       test name (fun () ->
@@ -568,12 +566,16 @@ let failure_round_trips =
           Measure.Protocol.write buf (Error expected);
           equal ~msg:"writer" string wire (Buffer.contents buf)))
 
-let write_rejects_worker_died () =
-  raises_match
-    (function Invalid_argument _ -> true | _ -> false)
-    (fun () ->
-      Measure.Protocol.write (Buffer.create 16)
-        (Error (Measure.Worker_died { case = "c"; detail = "d" })))
+let write_rejects_parent_side_failures () =
+  List.iter
+    (fun f ->
+      raises_match
+        (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> Measure.Protocol.write (Buffer.create 16) (Error f)))
+    [
+      Measure.Worker_died { case = "c"; detail = "d" };
+      Measure.Deadline_exceeded { case = "c" };
+    ]
 
 let valid_wire =
   "k 8\n\
@@ -594,7 +596,7 @@ let malformed_wire =
     ("no final newline", "k 8\nend");
     ("missing end", "k 8\nexact alloc_words 54\n");
     ("text after end", valid_wire ^ "garbage\n");
-    ("text after deadline", "deadline\nk 8\n");
+    ("a deadline line", "deadline\n");
     ("text after raised", "raised boom\nend\n");
     ("unparseable k line", "batch 8\nend\n");
     ("unparseable batch size", "k eight\nend\n");
@@ -709,6 +711,31 @@ let fork_reports_a_raising_case () =
       is_true ~msg:"exn text" (contains_sub exn "boom-in-child")
   | f -> failf "expected Case_raised, got %a" Measure.pp_failure f
 
+(* A forked case's deadline is the parent's: the child never checks it, so a
+   scripted clock jump past the cap inside the worker is just a slow sample. *)
+let forked_child_does_not_check_the_deadline () =
+  let w = world () in
+  let config = Config.(default |> warmup 0. |> metrics [ Metric.wall_time ]) in
+  ignore
+    (trial_ok
+       (Measure.case ~instruments:(scripted w) ~config ~frozen_k:None
+          (jump_case w)))
+
+(* The parent kills a worker that has not reported by the deadline, even one
+   hung inside a single call. *)
+let parent_kills_a_hung_worker_at_the_deadline () =
+  let case =
+    resolved
+      (Bench.bench "hang" (fun () ->
+           while true do
+             ()
+           done))
+  in
+  let config = Config.(default |> deadline 0.2) in
+  equal failure
+    (Measure.Deadline_exceeded { case = "hang" })
+    (the_failure (Measure.case ~config ~frozen_k:None case))
+
 (* OCaml refuses [Unix.fork] once the process has spawned a domain, even a
    joined one. A domain in this process would refuse every later fork, the
    test runner's included, so the refusal is staged in a child: it spawns
@@ -818,7 +845,8 @@ let () =
         ([
            test "trial round-trips through the wire" protocol_round_trip;
            test "the pinned grammar parses" parse_accepts_the_pinned_grammar;
-           test "write rejects Worker_died" write_rejects_worker_died;
+           test "write rejects the parent-side failures"
+             write_rejects_parent_side_failures;
          ]
         @ failure_round_trips
         @ [ group "malformed wire is Worker_died" malformed_tests ]);
@@ -828,6 +856,10 @@ let () =
           test "a raising case is reported through the pipe"
             fork_reports_a_raising_case;
           test "a refused fork is Worker_died" refused_fork_is_worker_died;
+          test "the forked child does not check the deadline"
+            forked_child_does_not_check_the_deadline;
+          test "the parent kills a hung worker at the deadline"
+            parent_kills_a_hung_worker_at_the_deadline;
         ];
     ]
   |> exit

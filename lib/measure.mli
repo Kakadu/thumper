@@ -68,13 +68,14 @@ type failure =
           [Printexc.to_string] rendering. Teardown has run (or was itself the
           raiser) — a raising case is a measurement failure, never a leak. *)
   | Deadline_exceeded of { case : string }
-      (** The case could not complete its protocol within [config.deadline]. No
-          partial trial is produced: n is protocol identity, so
-          evidence from fewer batches would silently compare a different
-          protocol against the baseline's. (the [wide_interval] remedy table
-          describes a {e completed} fixed budget on a noisy case, not a
-          truncated one; its remedies — [--precise], a raised
-          {!Config.deadline} — apply here too.) *)
+      (** The case could not complete its protocol within [config.deadline]:
+          forked, the parent killed the worker, whose teardown did not run;
+          in-process, the driver stopped at a batch boundary. No partial trial
+          is produced: n is protocol identity, so evidence from fewer batches
+          would silently compare a different protocol against the baseline's.
+          (the [wide_interval] remedy table describes a {e completed} fixed
+          budget on a noisy case, not a truncated one; its remedies —
+          [--precise], a raised {!Config.deadline} — apply here too.) *)
 
 val pp_failure : Format.formatter -> failure -> unit
 (** [pp_failure ppf f] formats [f] for users, naming the case. *)
@@ -130,20 +131,22 @@ val case :
     with stdin bound to [/dev/null], and the result crosses one pipe as
     {!Protocol} text; abnormal child exit, malformed output, or output beyond
     the parent's read bound is [Worker_died]. Under a finite [config.deadline]
-    the parent also bounds its wait on the child, so even a case hung inside a
-    single call becomes [Deadline_exceeded] instead of a wedged run. When
-    [config.fork] is [false] the driver runs in-process (the library/test seam):
-    same protocol, no pipe — but the deadline is then only checked between
-    batches, so a call that never returns hangs the process.
+    the parent kills a child that has not reported that long after the fork, so
+    even a case hung inside a single call becomes [Deadline_exceeded] instead of
+    a wedged run; the deadline is the parent's alone, and the child never checks
+    it. When [config.fork] is [false] the driver runs in-process (the
+    library/test seam): same protocol, no pipe — but the deadline is then only
+    checked between batches, so a call that never returns hangs the process.
 
     Teardown is guaranteed on every path — completion, a raising closure, or a
-    blown deadline. If teardown itself raises on an otherwise successful
-    measurement, the case fails as [Case_raised]; a teardown error while another
-    failure is already in flight is discarded in favor of the first failure.
+    blown deadline — except that a forked worker killed at its deadline runs no
+    teardown. If teardown itself raises on an otherwise successful measurement,
+    the case fails as [Case_raised]; a teardown error while another failure is
+    already in flight is discarded in favor of the first failure.
 
     [instruments] defaults to {!default_instruments} and drives every clock and
-    counter read of the protocol. The deadline is measured on
-    [instruments.now_ns] (the parent's bound in the forked path is real time).
+    counter read of the protocol. The in-process deadline is measured on
+    [instruments.now_ns]; the forked one is the parent's, in real time.
 
     Raises [Invalid_argument] if [frozen_k < 1]: a baseline batch size is at
     least 1 by construction ({!Run.Trial.make}), so a smaller value is a
@@ -168,8 +171,7 @@ val case :
     measurement order; [samples] values are sorted ascending, printed as [%h]
     hex floats — lossless), the [warning] lines in emission order, then [end].
     [<drifted>] and [<unstable>] are [0] or [1]. A failed measurement is a
-    single line instead: [raised <text>] ([Case_raised]) or [deadline]
-    ([Deadline_exceeded]). *)
+    single line instead: [raised <text>] ([Case_raised]). *)
 
 module Protocol : sig
   val write : Buffer.t -> (Run.Trial.t, failure) result -> unit
@@ -177,8 +179,9 @@ module Protocol : sig
       the pipe. Newlines embedded in warning or exception text are replaced by
       spaces (the grammar is line-oriented).
 
-      Raises [Invalid_argument] on [Error (Worker_died _)]: that failure is the
-      parent's classification of a broken child and never crosses the pipe. *)
+      Raises [Invalid_argument] on [Error (Worker_died _)] and
+      [Error (Deadline_exceeded _)]: those failures are the parent's
+      classifications of a broken or overdue child and never cross the pipe. *)
 
   val parse :
     case:string ->

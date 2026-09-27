@@ -71,11 +71,6 @@ let fold_threshold_s = 1e-9
    k keeps the protocol total instead of looping forever. *)
 let max_calibration_k = 1 lsl 30
 
-(* Parent-side allowance past the child's own deadline: covers fork, setup
-   bookkeeping, serialization, and one in-flight batch before the parent
-   declares the child hung and kills it. *)
-let parent_grace_s = 1.0
-
 (* Bound on the worker's pipe output. A trial is a few KB (n <= 40 samples
    per metric, a handful of metrics); three orders of magnitude of headroom
    still keeps a runaway child from exhausting the parent (worker containment
@@ -84,7 +79,8 @@ let parent_read_bound = 16 * 1024 * 1024
 
 (* Internal control flow
 
-   [Deadline] is raised by the protocol driver at batch boundaries;
+   [Deadline] is raised by the in-process protocol driver at batch
+   boundaries (a forked child never checks: its deadline is the parent's);
    [Case_error] wraps exceptions escaping the case's own code (setup, the
    measured closure, teardown) — and nothing else, so harness bugs propagate
    loudly instead of being blamed on the case. *)
@@ -124,10 +120,10 @@ module Protocol = struct
         Buffer.add_string buf "end\n"
     | Error (Case_raised { exn; _ }) ->
         Printf.bprintf buf "raised %s\n" (sanitize exn)
-    | Error (Deadline_exceeded _) -> Buffer.add_string buf "deadline\n"
-    | Error (Worker_died _) ->
+    | Error (Deadline_exceeded _ | Worker_died _) ->
         invalid_arg
-          "Measure.Protocol.write: Worker_died is a parent-side classification"
+          "Measure.Protocol.write: Deadline_exceeded and Worker_died are \
+           parent-side classifications"
 
   let parse ~case ~metrics content =
     let exception Malformed of string in
@@ -213,10 +209,7 @@ module Protocol = struct
       match String.split_on_char '\n' (String.sub content 0 (len - 1)) with
       | [] -> malformed "empty output"
       | first :: rest ->
-          if String.equal first "deadline" then (
-            if rest <> [] then malformed "text after deadline";
-            Error (Deadline_exceeded { case }))
-          else if String.starts_with ~prefix:"raised " first then (
+          if String.starts_with ~prefix:"raised " first then (
             if rest <> [] then malformed "text after raised";
             let exn = String.sub first 7 (String.length first - 7) in
             Error (Case_raised { case; exn }))
@@ -287,7 +280,9 @@ type raw = {
     (Metric.gc_snapshot * Metric.gc_snapshot * Metric.gc_snapshot) option;
 }
 
-let measure_case ~instruments ~config ~frozen_k bcase =
+(* [deadline] is the cap the driver checks at batch boundaries: the config's
+   in-process, [infinity] in a forked child, whose deadline is the parent's. *)
+let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
   let case_id = Bench.id bcase in
   let metrics = effective_metrics ~config bcase in
   let n = config.Config.n in
@@ -295,7 +290,7 @@ let measure_case ~instruments ~config ~frozen_k bcase =
   let now = instruments.now_ns in
   let start_ns = now () in
   let deadline_at =
-    let d = config.Config.deadline in
+    let d = deadline in
     (* 9e18 ns keeps the addition inside int64; anything larger is
        operationally uncapped. *)
     if Float.is_finite d && d *. 1e9 < 9e18 then
@@ -411,7 +406,7 @@ let measure_case ~instruments ~config ~frozen_k bcase =
        silently inflates the proven count at k <= 3. The deadline is instead
        checked on entry (above) and after the last read; the at most one
        unchecked 2k batch this admits is bounded by the batches the protocol
-       just ran (and, forked, by the parent's wait bound). *)
+       just ran. *)
     let probe =
       if need_gc then (
         let a = instruments.gc () in
@@ -600,7 +595,9 @@ let run_child ~instruments ~config ~frozen_k bcase w =
       let null = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
       Unix.dup2 null Unix.stdin;
       Unix.close null;
-      let result = measure_case ~instruments ~config ~frozen_k bcase in
+      let result =
+        measure_case ~instruments ~config ~deadline:infinity ~frozen_k bcase
+      in
       let buf = Buffer.create 1024 in
       Protocol.write buf result;
       let s = Buffer.to_bytes buf in
@@ -616,8 +613,9 @@ let run_child ~instruments ~config ~frozen_k bcase w =
 (* The parent: drain the pipe with blocking reads bounded in size and — under
    a finite deadline — in time, then reap and classify. Abnormal exit,
    malformed output, or an overrun is [Worker_died]; a wait past the deadline
-   allowance kills the child and is [Deadline_exceeded] (a hung call must not
-   wedge the run). *)
+   kills the child and is [Deadline_exceeded] (a hung call must not wedge the
+   run). A forked case's deadline is the parent's alone: the child never
+   checks it. *)
 let parent_collect ~deadline_s ~case pid r =
   let chunk = Bytes.create 65536 in
   let buf = Buffer.create 4096 in
@@ -631,7 +629,7 @@ let parent_collect ~deadline_s ~case pid r =
       match deadline_at with None -> -1. | Some d -> d -. monotonic_s ()
     in
     if timeout <= 0. && deadline_at <> None then
-      (* Past the allowance: take anything already delivered, else hung. *)
+      (* Past the deadline: take anything already delivered, else hung. *)
       match Unix.select [ r ] [] [] 0. with
       | [], _, _ -> `Timeout
       | _ -> `Readable
@@ -715,7 +713,7 @@ let case_forked ~instruments ~config ~frozen_k bcase =
       Unix.close w;
       let deadline_s =
         let d = config.Config.deadline in
-        if Float.is_finite d then Some (d +. parent_grace_s) else None
+        if Float.is_finite d then Some d else None
       in
       match parent_collect ~deadline_s ~case pid r with
       | `Failure f -> Error f
@@ -730,4 +728,6 @@ let case ?(instruments = default_instruments) ~config ~frozen_k bcase =
   | Some k when k < 1 -> invalid_arg "Measure.case: frozen_k must be >= 1"
   | Some _ | None -> ());
   if config.Config.fork then case_forked ~instruments ~config ~frozen_k bcase
-  else measure_case ~instruments ~config ~frozen_k bcase
+  else
+    measure_case ~instruments ~config ~deadline:config.Config.deadline ~frozen_k
+      bcase

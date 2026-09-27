@@ -5,12 +5,13 @@ sleeps on host speed or asserts a timing — every suite is engineered
 to be deterministic on a loaded machine, because the machine running
 CI is exactly the kind of host the product distrusts.
 
-Two deliberate exceptions, both about subjects that *are* the clock:
+Three deliberate exceptions, all about subjects that *are* the clock:
 `test_clock` sleeps and asserts generous interval bounds (a
 ticks-vs-nanoseconds unit error is invisible to any scripted test),
-and the hung-worker cram leg (`worker_death.t`, fixture `hang` mode)
+the hung-worker cram leg (`worker_death.t`, fixture `hang` mode)
 runs a case that spins forever under a 1 s per-case deadline inside a
-60 s budget — the assertion is termination and classification, never
+60 s budget, and `test_measure` forks one such case under a 0.2 s
+deadline — the assertion is termination and classification, never
 a duration.
 
 ## Layout
@@ -71,13 +72,14 @@ before landing the real change.
 
 ## The measurement seam
 
-No protocol test measures real time. `Measure.instruments` (clock,
-CPU clock, GC counters) is injectable, so `test_measure` scripts
-every behavior deterministically: calibration doubling to the floor,
+No protocol test measures real time but the forked deadline's
+(above). `Measure.instruments` (clock, CPU clock, GC counters) is
+injectable, so `test_measure` scripts every behavior
+deterministically: calibration doubling to the floor,
 frozen-k reuse inside [0.2×, 5×] and recalibration outside, the k/2k
 probe proving exactness with a planted harness constant and failing it
 on nondeterministic counters, the drift flag on a planted step, the
-deadline. `Measure.Protocol.parse` is exposed so worker-pipe
+in-process deadline. `Measure.Protocol.parse` is exposed so worker-pipe
 containment (malformed lines, truncation, hostile counts) is tested
 without forking.
 

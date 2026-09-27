@@ -403,10 +403,12 @@ val bench_with_setup :
     [f env] where [env] is produced by [setup]. Setup runs once per measurement
     — in the measuring worker, outside the timed region — and [teardown env]
     (default: nothing) runs once, after the last batch, guaranteed even when [f]
-    raises. The environment is re-read through [Sys.opaque_identity] at every
-    batch so the compiler cannot specialize the measured loop on a value it can
-    see. Large OCaml-heap fixtures belong in [setup]: only the forked worker
-    that measures them pays for them.
+    raises; in forked mode (the default), a case that hits its deadline
+    ({!Config.deadline}) is killed with its worker, and its teardown does not
+    run. The environment is re-read through [Sys.opaque_identity] at every batch
+    so the compiler cannot specialize the measured loop on a value it can see.
+    Large OCaml-heap fixtures belong in [setup]: only the forked worker that
+    measures them pays for them.
 
     Raises [Invalid_argument] per the {{!benchmarks}construction errors}. *)
 
