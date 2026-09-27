@@ -1021,8 +1021,7 @@ let machine_key () =
   try Env.machine_key () with Invalid_argument msg -> fail2 "%s" msg
 
 (* [Absent] is the ordinary first-run state: the empty-file baseline. Io and
-   Corrupt are exit 2, never treated as absent; a pre-rewrite file's
-   Corrupt message carries the delete-and-re-baseline remedy. A file whose
+   Corrupt are exit 2, never treated as absent. A file whose
    header names another suite is refused the same way cross-machine
    comparison is: judging against the wrong ruler must be loud, not a page
    of NEW proposals. *)

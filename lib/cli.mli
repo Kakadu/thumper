@@ -331,12 +331,11 @@ val main :
       itself. [list] prints the ids and stops.
     + [check]/[bless] read the baseline: [Absent] is the NEW flow (the
       empty-file baseline; never an error), [Io]/[Corrupt] exit 2 with
-      [Baseline]'s message (a pre-rewrite file names its delete-and-re-baseline
-      remedy). [--wait-quiet] then polls for a quiet host; expiry warns and
-      proceeds — degradation, not refusal, is the specified fallback. [bless] under a
-      loaded gate refuses with the remedy (exit 2 — an operational stop, like
-      the lease) unless [--force], which is recorded as a [# forced:] annotation
-      in the proposed section.
+      [Baseline]'s message. [--wait-quiet] then polls for a quiet host; expiry
+      warns and proceeds — degradation, not refusal, is the specified fallback.
+      [bless] under a loaded gate refuses with the remedy (exit 2 — an
+      operational stop, like the lease) unless [--force], which is recorded as a
+      [# forced:] annotation in the proposed section.
     + Measurement runs under the lease with the lease notice and, on a TTY
       stderr, the {!status_line} ticker ([Check]'s [on_progress]); the line is
       erased before anything else prints. [Check.Error] — lease timeout, worker

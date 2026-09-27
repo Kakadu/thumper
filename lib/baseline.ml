@@ -183,30 +183,6 @@ exception Parse of int * string
 
 let perr lnum fmt = Printf.ksprintf (fun m -> raise (Parse (lnum, m))) fmt
 
-(* Fired only after the v1 header check failed: does the start of the file
-   look like a pre-rewrite thumper baseline? Old files opened with exactly
-   "# thumper baseline" (no version suffix), carried a "# version:" line, or
-   were keyed by "# host:" with no "# machine:" sections. Exact equality on
-   the old first line matters: a header carrying an unknown version suffix
-   (say a hypothetical "v2" from a newer thumper) is a plain grammar error,
-   never advice to delete the file. An error message, not recognition
-   machinery — the answer only picks the reason string. *)
-let looks_pre_rewrite lines =
-  let n = min (Array.length lines) 8 in
-  let first = if Array.length lines > 0 then lines.(0) else "" in
-  let scan prefix ~until =
-    let rec go i =
-      i < n
-      &&
-      if until <> "" && String.starts_with ~prefix:until lines.(i) then false
-      else String.starts_with ~prefix lines.(i) || go (i + 1)
-    in
-    go 0
-  in
-  String.equal first "# thumper baseline"
-  || scan "# version:" ~until:""
-  || scan "# host:" ~until:"# machine:"
-
 let parse_nat lnum what s =
   if
     s = ""
@@ -363,9 +339,7 @@ let parse s =
     in
     let n = Array.length lines in
     if not (String.equal lines.(0) header_line) then
-      if looks_pre_rewrite lines then
-        perr 1 "pre-rewrite thumper baseline; delete it and re-baseline"
-      else perr 1 "expected %S on the first line" header_line;
+      perr 1 "expected %S on the first line" header_line;
     let i = ref 1 in
     (* The grammar requires the suite header on every non-empty file
        (baseline-format.md): a section-bearing file without one would make

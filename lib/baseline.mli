@@ -32,9 +32,7 @@
     section's header comments and its rows). A missing file reads as {!Absent} —
     the ordinary first-run state — while an unreadable or corrupt file is always
     its own {{!type:error}error}, never conflated with absence. The empty
-    (zero-byte) file is the valid zero-section baseline. The format count
-    restarts at v1: pre-rewrite files are not read — they fail parsing with a
-    message naming the remedy (delete and re-baseline).
+    (zero-byte) file is the valid zero-section baseline.
 
     Rows and section headers keep their verbatim source text, so anything read
     re-emits byte-identically: an advanced case is a one-row diff, an equivalent
@@ -60,9 +58,8 @@ type row
 type error =
   | Corrupt of { line : int; reason : string }
       (** The file violates the format-v1 grammar at the 1-based [line]:
-          malformed structure, a failed stored-median checksum, or a pre-rewrite
-          thumper baseline ([reason] then names the remedy: delete it and
-          re-baseline). Never treated as an absent file — exit 2 at the CLI. *)
+          malformed structure or a failed stored-median checksum. Never treated
+          as an absent file — exit 2 at the CLI. *)
   | Io of string
       (** The file exists but could not be read, or could not be written. Never
           treated as an absent file — exit 2 at the CLI. *)

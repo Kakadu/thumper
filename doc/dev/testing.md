@@ -94,7 +94,7 @@ hangs the warmup arm by contract (`measure.mli`).
 
 `test/cram/` is the executable specification of the CLI: one scenario
 per subcommand × state (NEW, PASS, FAIL, inconclusive, exact
-allocation, stale, corrupt, pre-rewrite file, selection, JSON, bless,
+allocation, stale, corrupt, selection, JSON, bless,
 list, lease, worker death, machine env, usage). Scenarios assert **exit codes, file
 effects, and grep'd output shapes — never timings**.
 

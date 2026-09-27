@@ -8,7 +8,7 @@
 
    Three layers:
    - fixtures: the format spec's verbatim sample (parses, re-emits byte-identically),
-     pre-rewrite files (remedy-naming error), the empty file;
+     the empty file;
    - units: grammar rejections line by line, the pinned print contract,
      mutator mechanics;
    - properties: parse ∘ print byte identity and print ∘ parse structural
@@ -189,8 +189,6 @@ let with_row row =
     ]
 
 let rejects_bad_header () =
-  (* A near-miss of the v1 header is a plain corrupt file, not pre-rewrite:
-     the machine-first section layout rules the old format out. *)
   corrupt ~at:1 ~mentions:"# thumper baseline v1"
     (file [ "# thumper baselin v1"; ""; "# machine: k"; "# host: h" ]);
   corrupt ~at:1 ~mentions:"first line" "not a baseline\n"
@@ -353,12 +351,10 @@ let rejects_row_disorder () =
 
 let rejects_crlf_line_endings () =
   (* CRLF leaves a \r on every logical line; the very first line already
-     fails the header check — and is not blamed on the pre-rewrite format. *)
+     fails the header check. *)
   match Baseline.of_string "# thumper baseline v1\r\n# suite: s\r\n" with
   | Ok _ -> fail "parsed a CRLF file"
-  | Error (Baseline.Corrupt { line; reason }) ->
-      equal ~msg:"line" int 1 line;
-      is_true ~msg:"not pre-rewrite" (not (contains reason "pre-rewrite"))
+  | Error (Baseline.Corrupt { line; _ }) -> equal ~msg:"line" int 1 line
   | Error e ->
       failf "expected Corrupt, got %s"
         (Format.asprintf "%a" Baseline.pp_error e)
@@ -575,54 +571,6 @@ let checksum_spec_sample_digit_flip () =
       (String.split_on_char '\n' (read_file spec_path))
   in
   corrupt ~mentions:"median" (String.concat "\n" munged)
-
-(* Pre-rewrite files: an error message, not recognition machinery *)
-
-let pre_rewrite_error result =
-  match result with
-  | Ok _ -> fail "parsed a pre-rewrite baseline"
-  | Error (Baseline.Corrupt { line; reason }) ->
-      equal ~msg:"line" int 1 line;
-      is_true ~msg:"names the format" (contains reason "pre-rewrite");
-      is_true ~msg:"names the remedy"
-        (contains reason "delete it and re-baseline")
-  | Error e ->
-      failf "expected Corrupt, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
-
-let pre_rewrite_v2_fixture () =
-  pre_rewrite_error (Baseline.read "fixtures/pre_rewrite_v2.thumper")
-
-let pre_rewrite_v1_fixture () =
-  pre_rewrite_error (Baseline.read "fixtures/pre_rewrite_v1.thumper")
-
-let pre_rewrite_headless_host_keyed () =
-  pre_rewrite_error
-    (Baseline.of_string
-       (file [ "# host: 9f3a1c2e8b4d6a07"; "# ocaml: 5.1.1"; ""; "row" ]))
-
-let pre_rewrite_version_line () =
-  pre_rewrite_error
-    (Baseline.of_string (file [ "# some header"; "# version: 2" ]))
-
-let pre_rewrite_not_claimed_for_new_format_errors () =
-  (* A valid v1 header followed by old-looking lines is a plain grammar
-     error: detection runs only when the header check fails. *)
-  corrupt ~at:2 ~mentions:"suite"
-    (file [ "# thumper baseline v1"; "# version: 2" ])
-
-let future_version_header_is_not_pre_rewrite () =
-  (* An unknown version suffix (a newer thumper's file, hypothetically) is a
-     plain grammar error: "delete it and re-baseline" would destroy data a
-     newer binary still reads. Only the old format earns the remedy. *)
-  match Baseline.of_string (file [ "# thumper baseline v2"; "# suite: s" ]) with
-  | Ok _ -> fail "parsed a v2-headered file"
-  | Error (Baseline.Corrupt { line; reason }) ->
-      equal ~msg:"line" int 1 line;
-      is_true ~msg:"no delete advice" (not (contains reason "delete"))
-  | Error e ->
-      failf "expected Corrupt, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
 
 (* Absence versus unreadability
 
@@ -1159,8 +1107,7 @@ let () =
       group "grammar"
         [
           test "a minimal canonical file parses" minimal_parses;
-          test "rejects a bad header (without claiming pre-rewrite)"
-            rejects_bad_header;
+          test "rejects a bad header" rejects_bad_header;
           test "rejects a header-only file" rejects_header_only;
           test "rejects a truncated file (missing final newline)"
             rejects_truncated;
@@ -1205,17 +1152,8 @@ let () =
           test "a flipped digit in the spec sample is corrupt"
             checksum_spec_sample_digit_flip;
         ];
-      group "pre-rewrite files"
+      group "reading files"
         [
-          test "an old version-2 file names the remedy" pre_rewrite_v2_fixture;
-          test "an old host-keyed file names the remedy" pre_rewrite_v1_fixture;
-          test "a headless host-keyed file names the remedy"
-            pre_rewrite_headless_host_keyed;
-          test "a '# version:' line names the remedy" pre_rewrite_version_line;
-          test "new-format corruption is never blamed on the old format"
-            pre_rewrite_not_claimed_for_new_format_errors;
-          test "an unknown future version is not told to delete the file"
-            future_version_header_is_not_pre_rewrite;
           test "a missing file reads as Absent" missing_file_reads_absent;
           test "an unreadable path is Io, never Absent"
             unreadable_is_io_never_absent;

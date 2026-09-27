@@ -54,8 +54,8 @@
 
 (test
  (name test_baseline)
- ; The format fixtures (the spec's verbatim sample, pre-rewrite files, the empty
- ; file) are runtime dependencies.
+ ; The format fixtures (the spec's verbatim sample, the empty file) are runtime
+ ; dependencies.
  (modules test_baseline)
  (libraries thumper unix windtrap)
  (deps

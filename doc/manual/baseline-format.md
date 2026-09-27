@@ -111,10 +111,7 @@ Three read outcomes, never conflated:
 | readable | a baseline, possibly with zero sections |
 
 An unreadable or corrupt file is *never* treated as absent: a damaged
-baseline must not silently become a fresh one. The format count
-restarted at v1 with the current rewrite: files from pre-rewrite
-thumper do not parse, and the error names the remedy (delete and
-re-baseline; the old numbers remain in git history).
+baseline must not silently become a fresh one.
 
 ## What tools may build on
 

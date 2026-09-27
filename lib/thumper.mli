@@ -490,9 +490,7 @@ end
     conclusions, one section per machine keyed by {!machine_key}. The codec
     byte-preserves everything it does not touch: an advanced case is a one-row
     diff, an equivalent run no diff at all. The empty (zero-byte) file is the
-    valid zero-section baseline. The format count restarts at v1: pre-rewrite
-    thumper files are not read — they fail parsing with a message naming the
-    remedy (delete and re-baseline). *)
+    valid zero-section baseline. *)
 module Baseline : sig
   (** {2:types Types and errors} *)
 
@@ -509,10 +507,8 @@ module Baseline : sig
   type error =
     | Corrupt of { line : int; reason : string }
         (** The file violates the format-v1 grammar at the 1-based [line]:
-            malformed structure, a failed per-row checksum, or a pre-rewrite
-            thumper baseline ([reason] then names the remedy: delete it and
-            re-baseline). Never treated as an absent file — exit 2 at the CLI.
-        *)
+            malformed structure or a failed per-row checksum. Never treated as
+            an absent file — exit 2 at the CLI. *)
     | Io of string
         (** The file exists but could not be read, or could not be written.
             Never treated as an absent file — exit 2 at the CLI. *)

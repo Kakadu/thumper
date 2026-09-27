@@ -6,8 +6,7 @@ Ground-up rewrite. The benchmark is a regression test; every piece of the
 pipeline is new (design rationale distilled in `doc/dev/`):
 
 - **Evidence-carrying baselines.** The committed `.thumper` file (format v1 —
-  the count restarts; pre-rewrite files are not read and error with a
-  delete-and-re-baseline remedy) stores sorted sample vectors and
+  the count restarts; pre-rewrite files are not read) stores sorted sample vectors and
   proven-exact allocation integers per case, one section per machine, with a
   per-row median checksum. Byte-identical re-emission makes an advanced case
   a one-row diff. The parser enforces the normative grammar in full: the
@@ -95,8 +94,7 @@ pipeline is new (design rationale distilled in `doc/dev/`):
     `list` subcommands; `-v`/`--verbose` — deleted, the report is the
     report.
   - Committed pre-rewrite `.thumper` files do not parse: delete and
-    re-baseline (the old numbers remain in git history); the error names
-    this remedy.
+    re-baseline (the old numbers remain in git history).
 
 ## Pre-rewrite (v1 changes, unreleased, superseded by the rewrite)
 
