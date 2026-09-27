@@ -845,35 +845,25 @@ let update_rows_validates () =
 
 (* Atomic write *)
 
-let with_temp_dir f =
-  let dir = Filename.temp_dir "thumper-baseline-test" "" in
-  Fun.protect
-    ~finally:(fun () ->
-      Array.iter
-        (fun name -> try Sys.remove (Filename.concat dir name) with _ -> ())
-        (Sys.readdir dir);
-      try Unix.rmdir dir with _ -> ())
-    (fun () -> f dir)
-
 let write_reads_back () =
-  with_temp_dir (fun dir ->
-      let path = Filename.concat dir "suite.thumper" in
-      let t = base_two_rows () in
-      Baseline.write path t;
-      equal ~msg:"bytes on disk" string (Baseline.to_string t) (read_file path);
-      equal ~msg:"reads back" string (Baseline.to_string t)
-        (Baseline.to_string (Baseline.read_exn path)))
+  let dir = temp_dir () in
+  let path = Filename.concat dir "suite.thumper" in
+  let t = base_two_rows () in
+  Baseline.write path t;
+  equal ~msg:"bytes on disk" string (Baseline.to_string t) (read_file path);
+  equal ~msg:"reads back" string (Baseline.to_string t)
+    (Baseline.to_string (Baseline.read_exn path))
 
 let write_overwrites_and_leaves_no_temp () =
-  with_temp_dir (fun dir ->
-      let path = Filename.concat dir "suite.thumper" in
-      Baseline.write path (base_two_rows ());
-      let t' = Baseline.empty ~suite:"s2" in
-      Baseline.write path t';
-      equal ~msg:"overwritten atomically" string (Baseline.to_string t')
-        (read_file path);
-      equal ~msg:"no temp litter" (list string) [ "suite.thumper" ]
-        (List.sort String.compare (Array.to_list (Sys.readdir dir))))
+  let dir = temp_dir () in
+  let path = Filename.concat dir "suite.thumper" in
+  Baseline.write path (base_two_rows ());
+  let t' = Baseline.empty ~suite:"s2" in
+  Baseline.write path t';
+  equal ~msg:"overwritten atomically" string (Baseline.to_string t')
+    (read_file path);
+  equal ~msg:"no temp litter" (list string) [ "suite.thumper" ]
+    (List.sort String.compare (Array.to_list (Sys.readdir dir)))
 
 let write_failure_raises_io () =
   raises_match
@@ -887,49 +877,38 @@ let permission_denied_read_is_io_never_absent () =
   if Unix.geteuid () = 0 then
     skip ~reason:"file permissions are not enforced for root" ()
   else
-    with_temp_dir (fun dir ->
-        let path = Filename.concat dir "suite.thumper" in
-        Baseline.write path (base_two_rows ());
-        Unix.chmod path 0o000;
-        Fun.protect
-          ~finally:(fun () -> Unix.chmod path 0o600)
-          (fun () ->
-            match Baseline.read path with
-            | Error (Baseline.Io _) -> ()
-            | Ok _ -> fail "read a permission-denied file"
-            | Error Baseline.Absent ->
-                fail "a permission-denied file was reported Absent"
-            | Error (Baseline.Corrupt _) -> fail "expected Io"))
+    let dir = temp_dir () in
+    let path = Filename.concat dir "suite.thumper" in
+    Baseline.write path (base_two_rows ());
+    Unix.chmod path 0o000;
+    match Baseline.read path with
+    | Error (Baseline.Io _) -> ()
+    | Ok _ -> fail "read a permission-denied file"
+    | Error Baseline.Absent ->
+        fail "a permission-denied file was reported Absent"
+    | Error (Baseline.Corrupt _) -> fail "expected Io"
 
 let write_into_readonly_dir_raises_io () =
   if Unix.geteuid () = 0 then
     skip ~reason:"directory permissions are not enforced for root" ()
   else
-    with_temp_dir (fun dir ->
-        let sub = Filename.concat dir "ro" in
-        Unix.mkdir sub 0o500;
-        Fun.protect
-          ~finally:(fun () ->
-            Unix.chmod sub 0o700;
-            Unix.rmdir sub)
-          (fun () ->
-            raises_match
-              (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
-              (fun () ->
-                Baseline.write
-                  (Filename.concat sub "suite.thumper")
-                  (base_two_rows ()))))
+    let dir = temp_dir () in
+    let sub = Filename.concat dir "ro" in
+    Unix.mkdir sub 0o500;
+    raises_match
+      (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
+      (fun () ->
+        Baseline.write (Filename.concat sub "suite.thumper") (base_two_rows ()))
 
 let write_preserves_target_permissions () =
   (* An atomic replace goes through a fresh temp file; the rename must not
      reset a target the user chmod-ed. *)
-  with_temp_dir (fun dir ->
-      let path = Filename.concat dir "suite.thumper" in
-      Baseline.write path (base_two_rows ());
-      Unix.chmod path 0o600;
-      Baseline.write path (Baseline.empty ~suite:"s2");
-      equal ~msg:"mode survives the rewrite" int 0o600
-        (Unix.stat path).Unix.st_perm)
+  let dir = temp_dir () in
+  let path = Filename.concat dir "suite.thumper" in
+  Baseline.write path (base_two_rows ());
+  Unix.chmod path 0o600;
+  Baseline.write path (Baseline.empty ~suite:"s2");
+  equal ~msg:"mode survives the rewrite" int 0o600 (Unix.stat path).Unix.st_perm
 
 (* Manual-verification note (untestable without fault injection): losing the
    fsync before the rename, or renaming before the write, is invisible to
