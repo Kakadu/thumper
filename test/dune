@@ -64,7 +64,7 @@
 (test
  (name test_measure)
  (modules test_measure)
- (libraries thumper windtrap))
+ (libraries thumper unix windtrap))
 
 (test
  (name test_verdict)

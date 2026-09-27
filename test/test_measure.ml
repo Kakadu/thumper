@@ -709,6 +709,42 @@ let fork_reports_a_raising_case () =
       is_true ~msg:"exn text" (contains_sub exn "boom-in-child")
   | f -> failf "expected Case_raised, got %a" Measure.pp_failure f
 
+(* OCaml refuses [Unix.fork] once the process has spawned a domain, even a
+   joined one. A domain in this process would refuse every later fork, the
+   test runner's included, so the refusal is staged in a child: it spawns
+   and joins a domain, measures, and exits 0 iff the failure is
+   [Worker_died] carrying the runtime's message and both pipe ends were
+   closed (the next pipe reuses the lowest free descriptors, so a leak would
+   shift them). *)
+let refused_fork_is_worker_died () =
+  let case = resolved (Bench.bench "x" (fun () -> ())) in
+  let config = Config.(default |> samples 3 |> warmup 0. |> batch_floor 1e-6) in
+  match Unix.fork () with
+  | 0 ->
+      Domain.join (Domain.spawn (fun () -> ()));
+      let free_fds () =
+        let r, w = Unix.pipe () in
+        Unix.close r;
+        Unix.close w;
+        (r, w)
+      in
+      let before = free_fds () in
+      let code =
+        match Measure.case ~config ~frozen_k:None case with
+        | Error (Measure.Worker_died { case = "x"; detail })
+          when contains_sub detail "domain" ->
+            if free_fds () = before then 0 else 2
+        | _ -> 1
+      in
+      Unix._exit code
+  | pid -> (
+      match Unix.waitpid [] pid with
+      | _, Unix.WEXITED 0 -> ()
+      | _, Unix.WEXITED 2 -> fail "a refused fork leaked its pipe"
+      | _, Unix.WEXITED c ->
+          failf "a refused fork was not Worker_died (child exit %d)" c
+      | _ -> fail "the staging child died")
+
 (* Suite *)
 
 let () =
@@ -791,6 +827,7 @@ let () =
           test "protocol round-trips through a real fork" fork_round_trip;
           test "a raising case is reported through the pipe"
             fork_reports_a_raising_case;
+          test "a refused fork is Worker_died" refused_fork_is_worker_died;
         ];
     ]
   |> exit

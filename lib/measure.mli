@@ -57,9 +57,12 @@ val default_instruments : instruments
 
 type failure =
   | Worker_died of { case : string; detail : string }
-      (** The forked worker exited abnormally, wrote malformed or truncated
-          {!Protocol} output, or overran the parent's read bound. Operational:
-          the CLI maps it to exit 2. [detail] names what went wrong. *)
+      (** The worker could not be forked ([Unix.fork] raised; OCaml refuses to
+          fork once the process has spawned a domain), or the forked worker
+          exited abnormally, wrote malformed or truncated {!Protocol} output, or
+          overran the parent's read bound. Operational: the CLI maps it to exit
+          2. [detail] names what went wrong; for a refused fork it is the
+          runtime's message. *)
   | Case_raised of { case : string; exn : string }
       (** The case's closure, setup, or teardown raised; [exn] is the
           [Printexc.to_string] rendering. Teardown has run (or was itself the

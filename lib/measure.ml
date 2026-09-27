@@ -696,12 +696,18 @@ let case_forked ~instruments ~config ~frozen_k bcase =
   let case = Bench.id bcase in
   let r, w = Unix.pipe () in
   match Unix.fork () with
-  | exception e ->
-      (* No child exists: close both pipe ends before propagating, or a
-         fork-bombed run leaks two fds per failed case. *)
+  | exception e -> (
+      (* No child exists: close both pipe ends, or a fork-bombed run leaks two
+         fds per failed case. The runtime refuses to fork once the process
+         has spawned a domain; its message states the rule. *)
       (try Unix.close r with Unix.Unix_error _ -> ());
       (try Unix.close w with Unix.Unix_error _ -> ());
-      raise e
+      match e with
+      | Failure msg -> Error (Worker_died { case; detail = msg })
+      | Unix.Unix_error (err, fn, _) ->
+          Error
+            (Worker_died { case; detail = fn ^ ": " ^ Unix.error_message err })
+      | e -> raise e)
   | 0 ->
       (try Unix.close r with Unix.Unix_error _ -> ());
       run_child ~instruments ~config ~frozen_k bcase w
