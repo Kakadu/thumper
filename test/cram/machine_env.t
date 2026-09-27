@@ -34,9 +34,21 @@ before "testkey" — is byte-identical to the committed baseline's.
   byte-preserved
 
 An invalid THUMPER_MACHINE is refused loudly (the charset keeps the header
-grammar escape-free), not measured under a garbage key.
+grammar escape-free), not measured under a garbage key: one line, exit 2,
+never an uncaught exception.
 
-  $ THUMPER_MACHINE='bad key!' $FIX check --quick > out2.log 2>&1
+  $ THUMPER_MACHINE='bad key!' $FIX check --quick
+  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
   [2]
-  $ grep -q 'THUMPER_MACHINE' out2.log && echo named
-  named
+  $ THUMPER_MACHINE='bad key!' $FIX bless --quick
+  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
+  [2]
+
+The refusal comes before the lease: with the lease file unusable, the key
+is still the error named.
+
+  $ chmod 0666 "locks/thumper-$(id -u).lock"
+  $ THUMPER_MACHINE='bad key!' $FIX check --quick
+  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
+  [2]
+  $ chmod 0600 "locks/thumper-$(id -u).lock"

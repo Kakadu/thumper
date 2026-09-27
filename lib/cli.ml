@@ -1088,6 +1088,10 @@ let run_list ~(o : options) ~config ~filter ~budgets benches =
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept ~exe benches =
+  (* [Check.run_with] reads the key under the lease, where a malformed
+     override would crash after the wait: validate it first, as [bless]
+     does. *)
+  ignore (machine_key ());
   ignore
     (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
        benches);

@@ -777,9 +777,9 @@ val run :
       [--strict], also inconclusive, NEW, and stale).
     - [2]: a usage error, or an operational stop: an invalid suite (duplicate
       case ids, or a budget on a metric its scope does not collect); an empty
-      selection; [bless] with a malformed [THUMPER_MACHINE]; [bless] on a loaded
-      host without [--force]; a lease that timed out or whose lock file is
-      unusable; a worker failure (a dead or hung worker, a raising closure,
+      selection; a malformed [THUMPER_MACHINE] ([check] or [bless]); [bless] on
+      a loaded host without [--force]; a lease that timed out or whose lock file
+      is unusable; a worker failure (a dead or hung worker, a raising closure,
       setup, or teardown, or a blown deadline); a baseline that is unreadable,
       corrupt (never treated as absent), or names another suite; or an artifact
       ([<baseline>.corrected] or the [--json] document) that cannot be removed
