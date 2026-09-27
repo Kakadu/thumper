@@ -803,9 +803,9 @@ val run :
     [config] is the protocol flags refine (default {!Config.default}); [budgets]
     are the suite-level budgets ({!Check.run}).
 
-    Raises [Invalid_argument] if [name] is empty or not a valid suite header
-    body (it names fresh baselines), or if [budgets] holds two budgets for one
-    metric — programmer errors, never exit codes. *)
+    Raises [Invalid_argument] if [name] is empty or not single-line (it names
+    fresh baselines), or if [budgets] holds two budgets for one metric —
+    programmer errors, never exit codes. *)
 
 val measure : ?config:Config.t -> ?filter:filter -> bench list -> Run.t
 (** [measure benches] measures the cases [filter] selects (default: all) under

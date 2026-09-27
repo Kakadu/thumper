@@ -64,7 +64,8 @@ type parsed =
   | Run of options
   | Help  (** [-h]/[--help]: print help, exit 0. *)
   | Version  (** [-V]/[--version]: print the version, exit 0. *)
-  | Usage_error of string  (** Malformed argv; {!main} prints it and exits 2. *)
+  | Usage_error of string
+      (** Malformed argv; {!main} prints it and returns 2. *)
 
 val parse : string array -> parsed
 (** [parse argv] is the grammar over [argv] (element 0 is the program name
@@ -353,7 +354,7 @@ val main :
       failure, deadline — is exit 2.
     + [check] writes [<baseline>.corrected] iff [Verdict.corrected] differs
       ([Baseline.write], atomic), writes [--json] atomically (temp + rename;
-      present iff measurement completed), renders {!render_check}, and exits
+      present iff measurement completed), renders {!render_check}, and returns
       [Verdict.exit_code ~strict]; a failed corrected-file write still prints
       the report, without its accept line, then the error, exit 2. [bless]
       writes the [Verdict.bless] candidate and renders the same report shape
