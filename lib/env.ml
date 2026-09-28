@@ -5,8 +5,6 @@
 
 let strf = Printf.sprintf
 
-(* Sleeps restart on EINTR until the wake time. *)
-
 let rec sleep_until wake =
   let remaining = wake -. Os.monotonic_s () in
   if remaining > 0. then
@@ -17,10 +15,7 @@ let rec sleep_until wake =
 (* Identity *)
 
 let hash s =
-  (* FNV-1a 64: offset basis 0xcbf29ce484222325, prime 0x100000001b3, over the
-     bytes of [s]; Int64 multiplication wraps modulo 2^64 and [%016Lx] prints
-     the unsigned value on 16 lowercase hex digits. The .mli paragraph is the
-     normative spec; this is its transcription. *)
+  (* [Int64.mul] wraps modulo 2^64, and [%016Lx] prints the unsigned value. *)
   let h = ref 0xcbf29ce484222325L in
   String.iter
     (fun c ->
@@ -72,15 +67,13 @@ let cpuinfo_model () =
 
 type facts = {
   hostname : string;
-  host : string; (* the key's machine identity (.mli) *)
+  host : string; (* the hardware UUID, else [hostname] *)
   os : string;
   arch : string;
   cpu_model : string;
 }
 
-(* Host facts are stable for the life of the process: read once, lazily (they
-   spawn uname/sysctl). The THUMPER_MACHINE override is NOT cached — it is
-   consulted on every [machine_key] call (.mli contract; tests rely on it). *)
+(* Read once, and only when needed: reading them spawns uname and sysctl. *)
 let facts =
   lazy
     (let os =
@@ -148,7 +141,7 @@ let host_description () =
 let ocaml_identity () =
   let profile =
     (* The runtime variant is the only execution-profile fact OCaml exposes at
-       run time; flambda is invisible (.mli contract). *)
+       run time; flambda is invisible. *)
     let variant =
       match Sys.runtime_variant () with
       | "" -> "release"
@@ -166,13 +159,12 @@ let ocaml_identity () =
   in
   strf "%s \xc2\xb7 %d-bit \xc2\xb7 %s" Sys.ocaml_version Sys.word_size profile
 
-(* The environment gate *)
+(* Sampling the load *)
 
 let cores () = Domain.recommended_domain_count ()
 let load_average () = Thumper_clock.load_average ()
 
-(* The gate trips at load / cores >= 1/2 (raven's hand rule, adopted as
-   the default threshold pending validation). *)
+(* An empirical threshold: half a runnable task per core. *)
 let load_threshold = 0.5
 
 type load = Quiet | Loaded of { load : float; cores : int }
@@ -222,7 +214,7 @@ let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?load:(sample = load) () =
   in
   loop ()
 
-(* The measurement lease *)
+(* Holding the measurement lock *)
 
 module Lock = struct
   type error =
@@ -235,11 +227,7 @@ module Lock = struct
           "timed out after %gs waiting for the measurement lock %s" wait_s path
     | Unusable msg -> Format.fprintf ppf "measurement lock unusable: %s" msg
 
-  (* The lease wait bounds one holder at 10 min; the deadline restarts
-     when the lease changes owner. *)
   let default_wait_s = 600.
-
-  (* Cadence of acquisition attempts while blocked (as in next/'s lease). *)
   let poll_s = 0.05
 
   let lock_path ?dir () =
@@ -256,16 +244,13 @@ module Lock = struct
   let same_file (a : Unix.stats) (b : Unix.stats) =
     a.st_dev = b.st_dev && a.st_ino = b.st_ino
 
-  (* Whether this process holds the lease: fcntl locks are per-process, so a
-     nested OS-level acquisition would silently succeed and its release would
-     drop the outer lock. Guarded by running measurement single-domain
-     (.mli). *)
+  (* Whether this process holds the lock. fcntl locks belong to the process,
+     so a nested acquisition would succeed at once and its release would drop
+     the outer lock. *)
   let held = ref false
 
-  (* The holder stamp: unique per acquisition (pid + monotonic timestamp),
-     written into the file under the lock. Waiters detect an ownership change
-     as a stamp change and restart their per-holder deadline. *)
-
+  (* The holder stamp is the pid and the clock at acquisition, so it differs
+     between two holders even when the second reuses the first one's pid. *)
   let read_stamp fd =
     ignore (Unix.lseek fd 0 Unix.SEEK_SET);
     let buf = Bytes.create 128 in
@@ -282,9 +267,8 @@ module Lock = struct
     ignore (Unix.lseek fd 0 Unix.SEEK_SET);
     Os.write_all fd stamp
 
-  (* Non-blockingly re-attempt [lockf F_TLOCK] until acquired or the
-     per-holder deadline expires; the lock region starts at offset 0, so seek
-     back before every attempt (reading the stamp moves the offset). *)
+  (* [lockf] locks from the current offset, which reading the stamp moves, so
+     every attempt seeks back to 0 first. *)
   let acquire ~path ~wait_s ~on_wait fd =
     let rec attempt ~deadline ~last_stamp =
       ignore (Unix.lseek fd 0 Unix.SEEK_SET);
@@ -317,9 +301,9 @@ module Lock = struct
 
   (* Open the lock file without ever creating through a symbolic link: OCaml's
      Unix binding exposes no O_NOFOLLOW, so the file is only ever created
-     under O_CREAT|O_EXCL — which POSIX requires to fail with EEXIST when the
-     path names a symbolic link, even a dangling one — while an existing path
-     is opened plainly and left to the symlink/swap validation in
+     under O_CREAT|O_EXCL, which POSIX requires to fail with EEXIST when the
+     path names a symbolic link, even a dangling one, while an existing path
+     is opened plainly and left to the symlink and swap checks in
      [acquire_fd]. In a shared sticky lock directory, creating through a
      planted symlink would create an attacker-chosen file with our
      credentials. The ENOENT/EEXIST alternation is bounded: a path flapping
@@ -340,11 +324,10 @@ module Lock = struct
 
   let unusable fmt = Printf.ksprintf (fun msg -> Error (Unusable msg)) fmt
 
-  (* Validate the opened file before use (as in next/): one stable regular
-     file — the fd's file and the named file must agree, refusing symlinks
-     and swaps — owned by the effective user, no group/other bits. Then
-     acquire, re-check the name still points at our file (an unlink race
-     would leave us locking an orphaned inode), and stamp the acquisition. *)
+  (* The descriptor's file and the named file must be one regular file
+     ([lstat] refuses a symbolic link, the inode comparison a swap), checked
+     again once locked: an unlink race would leave the lock on an orphaned
+     inode. *)
   let acquire_fd ~path ~wait_s ~on_wait =
     match open_lock ~attempts:8 path with
     | exception Unix.Unix_error (e, _, _) ->
@@ -400,8 +383,7 @@ module Lock = struct
            "Thumper.Env.Lock.with_lock: wait_s %g (need a non-negative wait in \
             seconds)"
            wait_s);
-    if !held then (* Reentrant: this process holds the lease (.mli). *)
-      Ok (f ())
+    if !held then Ok (f ())
     else
       let path = lock_path ?dir () in
       match acquire_fd ~path ~wait_s ~on_wait with
