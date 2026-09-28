@@ -371,7 +371,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
       let budget =
         match (strong, relative_budget mr) with
         | Verdict.Confirmed _, Some b -> "  " ^ b
-        | _ -> ""
+        | Verdict.Confirmed _, None | Verdict.Exact_change _, _ -> ""
       in
       Some
         ( (if fails then 0 else 1),
@@ -406,7 +406,7 @@ let reassurance_of ~primary (c : Verdict.case_report)
       match Run.Trial.measurement c.trial mr.metric with
       | Some (Run.Exact _) ->
           Some (6, frag "equivalent" (strf "(%s exact)" (metric_tag mr.metric)))
-      | _ -> None)
+      | Some (Run.Samples _) | None -> None)
   | _ -> None
 
 let check_cell (c : Verdict.case_report) =
@@ -636,7 +636,7 @@ let check r v =
                   accepting"
                  load cores);
           ]
-      | _ -> []
+      | true, Env.Quiet | false, _ -> []
     in
     rerun @ prompt @ load_warning
   in
