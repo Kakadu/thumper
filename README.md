@@ -183,8 +183,8 @@ See the `Thumper` module documentation for the full API.
 
 ## Documentation
 
-- [`examples/`](examples/) — six small, commented benchmark suites, from
-  a first benchmark to the full CI gate. Start here.
+- [`examples/`](examples/) — seven small benchmark suites, from a first
+  benchmark to the library without the command line. Start here.
 - [`doc/manual/`](doc/manual/) — the manual: getting started, how checks
   decide, running on more than one machine, the baseline file format, and
   using the library directly.

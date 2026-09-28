@@ -134,8 +134,8 @@ The determinism kit:
 
 ## Docs and examples
 
-`examples/` holds six graded, commented suites (first benchmark →
-regression gate → budgets, setup, config, programmatic);
+`examples/` holds seven graded suites (first benchmark, getting
+started, budgets, fixtures, tags, protocol, programmatic);
 `02-getting-started` carries the real `@bench` + `(locks bench)` +
 `diff?` rule the manual teaches. Nothing in `examples/` measures under
 runtest — the `@bench` alias is manual. `doc/manual/snippets/`

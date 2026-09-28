@@ -15,6 +15,7 @@ to a build-failing regression gate, to the library underneath the CLI.
   allocation pin.
 - `04-fixtures` — `bench_with_setup`: fixtures outside the timed region,
   a teardown, and a family of sizes by `List.map`.
+- `05-tags` — tags on groups and cases, and the cases `--tag` selects.
 - `06-protocol` — the protocol as a value: a preset refined by setters,
   the metrics a suite collects, and a case that collects fewer.
 - `07-programmatic` — the library without the CLI: `measure`, `Run`
@@ -56,6 +57,9 @@ scan/4-KiB
 scan/64-KiB
 scan/256-KiB
 io/read-4KiB
+$ dune exec examples/05-tags/bench_tags.exe -- list --tag large
+scan/256-KiB
+md5/256-KiB
 ```
 
 ## The gate cycle (example 02)
