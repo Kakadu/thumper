@@ -124,11 +124,6 @@ let fractional_of_stats (s : Stats.shift) =
     upper = expm1 s.Stats.interval.Stats.upper;
   }
 
-(* Degradation-oriented bounds: positive means worse. Every metric is
-   lower-is-better (polarity was deleted with its unconstructible
-   higher-is-better case; it returns with a real throughput metric and its
-   extension point, metric.mli). *)
-let oriented _metric (sh : shift) = (sh.lower, sh.upper)
 let is_loaded = function Env.Loaded _ -> true | Env.Quiet -> false
 
 (* One reading for both sides, from the sorted vector alone: a stored
@@ -182,16 +177,18 @@ let zero_tolerance_downgrade metric budget =
   | Some (Budget.Relative { max_regression = 0.; _ }) -> true
   | _ -> false
 
-(* The relation table over degradation-oriented fractional bounds
-   [l <= u], with the r = 0 chain restoring totality at a degenerate
-   band (e = 0 whenever r = 0: Budget enforces band <= max_regression). *)
+(* The relation table over the fractional bounds [l <= u]. Every metric is
+   lower-is-better, so a positive bound is worse. The r = 0 chain keeps the
+   table total at a degenerate band (e = 0 whenever r = 0: Budget enforces
+   band <= max_regression). *)
 
 type raw =
   | Strong of [ `Improved | `Regressed ]
   | Demonstrated of shift (* within budget: a demonstrated direction *)
   | Tame of relation (* equivalent or inconclusive: no direction claimed *)
 
-let table ~e ~r ~l ~u sh =
+let table ~e ~r sh =
+  let l = sh.lower and u = sh.upper in
   if r = 0. then
     if u < 0. then Strong `Improved
     else if l > 0. then Strong `Regressed
@@ -204,8 +201,7 @@ let table ~e ~r ~l ~u sh =
   else Tame (inconclusive ~shift:sh Wide_interval)
 
 (* First-pass judgment of one sampled comparison. *)
-let judge_sampled ~load ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
-    ~trial_k =
+let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
   let e, r = relative_params budget in
   if
     (* A zero sample breaks the log-space comparison, and no amount of
@@ -229,7 +225,6 @@ let judge_sampled ~load ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
         (Stats.shift ~alpha_per_side:alpha_initial ~baseline:baseline_log
            ~candidate:(log_all cand.Run.sorted))
     in
-    let l, u = oriented metric sh in
     let k_moved = row_k <> trial_k in
     if k_moved && Float.abs sh.estimate <= bias_comparability_factor *. e then
       (* After recalibration only a bias-comparable shift degrades; a
@@ -250,7 +245,7 @@ let judge_sampled ~load ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
           Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
         else settle ()
       in
-      match table ~e ~r ~l ~u sh with
+      match table ~e ~r sh with
       | Tame rel -> Settled (Judged rel)
       | Demonstrated sh ->
           unless_unstable (fun () -> Settled (Judged (Within_budget sh)))
@@ -276,7 +271,7 @@ let over_cap budget c =
   | Some (Budget.Relative _) | None -> false
 
 (* First-pass judgment of one exact (integer) comparison. *)
-let judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c =
+let judge_exact ~budget ~case_k ~trial_k ~b ~c =
   let k_moved = match case_k with Some kb -> kb <> trial_k | None -> false in
   let strong = Exact_change { baseline = b; candidate = c } in
   (* A moved batch size explains a changed count, never one over the cap. *)
@@ -354,15 +349,14 @@ let judge_metric ~load section ~id ~trial metric measurement budget =
       match (Baseline.row_evidence row, measurement) with
       | Baseline.Exact_int b, Run.Exact c ->
           let case_k = Baseline.case_frozen_k section ~id in
-          Settled (Judged (judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c))
+          Settled (Judged (judge_exact ~budget ~case_k ~trial_k ~b ~c))
       | Baseline.Exact_int _, Run.Samples _ | Baseline.Sampled _, Run.Exact _ ->
           Settled (Judged (inconclusive Exactness_lost))
       | Baseline.Sampled { k = row_k; samples }, Run.Samples cand ->
           if zero_tolerance_downgrade metric budget then
             Settled (Judged (inconclusive Exactness_lost))
           else
-            judge_sampled ~load ~metric ~budget ~row_k ~baseline:samples ~cand
-              ~trial_k)
+            judge_sampled ~load ~budget ~row_k ~baseline:samples ~cand ~trial_k)
 
 let absent_ids s ~case_ids =
   List.sort_uniq String.compare
@@ -490,11 +484,10 @@ let resolve_pending ~load ~conf metric pd =
                 (Stats.shift ~alpha_per_side:alpha_confirmation
                    ~baseline:pd.p_baseline_log ~candidate:(log_all s.Run.sorted))
             in
-            let l, u = oriented metric confirmation in
             let reproduced =
               match pd.p_dir with
-              | `Improved -> u < -.pd.p_e
-              | `Regressed -> l > pd.p_r
+              | `Improved -> confirmation.upper < -.pd.p_e
+              | `Regressed -> confirmation.lower > pd.p_r
             in
             (* An unstable confirmation counts only beyond 2e, as on the
                first pass. *)
