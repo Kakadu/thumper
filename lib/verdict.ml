@@ -405,13 +405,13 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
   | _ -> []
 
 let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
-  check_distinct ~what:"case id"
-    ~ids:(List.map (fun (c, _) -> Bench.id c) cases);
+  let case_ids = List.map (fun (c, _) -> Bench.id c) cases in
+  check_distinct ~what:"case id" ~ids:case_ids;
   let section = Baseline.section file identity.Baseline.machine in
   let comparison = classify_comparison identity section in
-  (* Only a current section is compared; a missing or stale one makes every
-     row NEW, and the candidate re-records the section wholesale. *)
-  let comparable = compared_section ~identity file in
+  let comparable =
+    match comparison with Compared -> section | No_baseline | Stale _ -> None
+  in
   let p_cases =
     List.map
       (fun (bench_case, trial) ->
@@ -444,7 +444,6 @@ let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
       cases
   in
   let cr_warnings =
-    let case_ids = List.map (fun (c, _) -> Bench.id c) cases in
     prune_notices ~selection ~comparison ~section ~case_ids
     @ stale_partial_notice ~selection ~comparison ~section ~case_ids
   in
