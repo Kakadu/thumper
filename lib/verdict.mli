@@ -66,8 +66,9 @@ type reason =
       (** This run's samples show severe outlier variance inflation and the
           shift is within [2e] of zero. Its JSON spelling is [unstable]. *)
   | Candidate_drifted
-      (** This run's trial carries the drift flag ({!Run.type-sampled}). The
-          flag is read only on a quiet host. Its JSON spelling is [drifted]. *)
+      (** This run's trial carries the drift flag ({!Run.type-sampled}) and the
+          shift is within [2e] of zero. The flag is read only on a quiet host.
+          Its JSON spelling is [drifted]. *)
 
 (** The type for demonstrated directions. *)
 type strong =
@@ -221,13 +222,13 @@ val judge :
       [wall_time].
     - [file] is kept for {!corrected}.
 
-    A sampled comparison tests, in order, a non-positive sample
-    ([Non_positive]), a loaded host ([Environment]) and this trial's drift flag
-    ([Candidate_drifted]). It then computes the shift at α = 0.005 per side and
-    tests a moved batch size ([Batch_drifted]) before the relation
-    ({!type-relation}). [Exactness_lost] is decided before all of these. An
-    exact comparison settles here, on a loaded host too, and a strong sampled
-    relation waits for {!decide}.
+    A sampled comparison tests, in order, a non-positive sample ([Non_positive])
+    and a loaded host ([Environment]). It then computes the shift at α = 0.005
+    per side and tests this trial's drift flag ([Candidate_drifted]) and a moved
+    batch size ([Batch_drifted]) before the relation ({!type-relation}).
+    [Exactness_lost] is decided before all of these. An exact comparison settles
+    here, on a loaded host too, and a strong sampled relation waits for
+    {!decide}.
 
     The caller must have checked that [budgets] holds at most one budget per
     metric and that [file]'s suite header, if any, is [suite], as {!Check.run}

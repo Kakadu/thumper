@@ -218,10 +218,6 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
   then Settled (Judged (inconclusive Non_positive))
   else if is_loaded load then Settled (Judged (inconclusive Environment))
   else if
-    (* Load explains drift, so drift is only read on a quiet host. *)
-    cand.Run.drifted
-  then Settled (Judged (inconclusive Candidate_drifted))
-  else if
     (* Defensive: public constructors require n >= 3. *)
     Array.length baseline < 3
   then Settled (Judged (inconclusive Wide_interval))
@@ -233,7 +229,12 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
            ~candidate:(log_all cand.Run.sorted))
     in
     let k_moved = row_k <> trial_k in
-    if k_moved && bias_comparable ~e sh then
+    if
+      (* Load explains drift, so drift is only read on a quiet host. Like
+         instability, it undermines only a shift within 2e. *)
+      cand.Run.drifted && bias_comparable ~e sh
+    then Settled (Judged (inconclusive ~shift:sh Candidate_drifted))
+    else if k_moved && bias_comparable ~e sh then
       (* After recalibration only a bias-comparable shift degrades; a
          large shift is a verdict, not a calibration event. *)
       Settled (Judged (inconclusive ~shift:sh Batch_drifted))

@@ -107,7 +107,7 @@ for the pure-core laws, cram for the rest ([`testing.md`](testing.md)).
    unsafe to accept.
 3. **Verdicts are earned.** `regressed`/`improved` arise only from an
    exact-integer comparison or a rank test plus confirmation; drifting
-   trials, unstable trials within 2e, and a loaded host yield
+   trials and unstable trials within 2e, and a loaded host yield
    `inconclusive`.
    *Prevents:* flaky CI; consumers re-implementing statistics.
 4. **Comparability or refusal.** Comparison requires the same machine

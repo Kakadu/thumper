@@ -29,10 +29,11 @@ diagnostics decide whether a trial can support a direction:
 
 - **drifted** (measurement time): two-sided Mann–Whitney between the
   first and second half in collection order, α = 0.01. A drifting
-  trial cannot produce a verdict. Collection order dies at sorting, so
-  this is the one flag `measure` computes and stores. Baseline rows
-  get no drift check: it ran when their trial was measured, though a
-  drifted trial can still be recorded.
+  trial produces no verdict within 2e of zero, like an unstable one; a
+  shift beyond 2e is judged. Collection order dies at sorting, so this
+  is the one flag `measure` computes and stores. Baseline rows get no
+  drift check: it ran when their trial was measured, though a drifted
+  trial can still be recorded.
 - **unstable** (judgment time): criterion's severe outlier-variance
   inflation (≥ 0.5 of variance explainable by outliers), computed from
   the sorted vector, the same way for a stored baseline row and for a

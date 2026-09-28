@@ -428,17 +428,42 @@ let decide_rejects_unrequested_or_duplicate_ids () =
 
 let unstable_baseline = spiked 1.0
 
-let drifted_candidate_never_produces_a_verdict () =
+let drifted_candidate_is_vetoed_within_2e () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let strong =
-    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
-  in
-  check_rel ~msg:"strong shift" strong ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_drifted";
   let equiv =
     run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
   in
   check_rel ~msg:"even an equivalent shift" equiv ~case:"a" ~metric:m_wall
+    "inconclusive:candidate_drifted";
+  let within =
+    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ]
+  in
+  check_rel ~msg:"a shift within 2e" within ~case:"a" ~metric:m_wall
+    "inconclusive:candidate_drifted";
+  (* Beyond 2e drift is no veto, as instability is none: a 2x drifted trial
+     queues, confirms, and fails the case. *)
+  let strong =
+    run_check ~file
+      ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
+      [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
+  in
+  check_rel ~msg:"a strong shift is judged" strong ~case:"a" ~metric:m_wall
+    "regressed-confirmed";
+  check_overall strong `Fail;
+  (* The bound is inclusive, as the instability veto's. *)
+  let d = expm1 (log 1.5) in
+  let budgets =
+    [
+      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
+        ~max_regression:0.3 ();
+    ]
+  in
+  let edge =
+    run_check ~file ~budgets
+      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
+      [ (bcase "a", wall_trial ~drifted:true (ties 5 1.5)) ]
+  in
+  check_rel ~msg:"exactly 2e" edge ~case:"a" ~metric:m_wall
     "inconclusive:candidate_drifted"
 
 let unstable_candidate_blocks_demonstrated_directions () =
@@ -1630,9 +1655,14 @@ let rank_tested_inconclusive_keeps_its_shift () =
        (run_check ~file
           ~load:(Env.Loaded { load = 8.; cores = 8 })
           [ (bcase "a", wall_trial (ties 5 2.0)) ]));
-  is_none ~msg:"drifted candidate: no comparison ran"
-    (inconclusive_shift
-       (run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]))
+  match
+    inconclusive_shift
+      (run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ])
+  with
+  | Some sh ->
+      is_true ~msg:"drifted candidate: the shift its veto read"
+        (Float.abs (sh.Verdict.estimate -. 0.04) < 1e-9)
+  | None -> failf "drifted candidate: expected the first-pass shift"
 
 let json_rank_tested_inconclusive_reports_its_deltas () =
   let d = expm1 (log 2.0) in
@@ -1664,7 +1694,7 @@ let json_rank_tested_inconclusive_reports_its_deltas () =
 let json_candidate_side_reason_wire_strings () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let drifted =
-    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
+    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
   in
   is_true ~msg:"drifted wire string"
     (contains ~sub:"\"reason\":\"drifted\"" (Verdict.to_json drifted));
@@ -1743,8 +1773,8 @@ let () =
         [
           test "a rank-tested inconclusive row keeps its shift"
             rank_tested_inconclusive_keeps_its_shift;
-          test "a drifting candidate trial never produces a verdict"
-            drifted_candidate_never_produces_a_verdict;
+          test "a drifting candidate trial is vetoed within 2e only"
+            drifted_candidate_is_vetoed_within_2e;
           test "an unstable candidate blocks demonstrated directions only"
             unstable_candidate_blocks_demonstrated_directions;
           test "a shift beyond 2e on unstable evidence is judged"
