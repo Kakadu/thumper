@@ -4,10 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 let strf = Printf.sprintf
-let err_duplicate what id = strf "Verdict: duplicate %s %S" what id
+
+let err_duplicate fname what id =
+  strf "%s: duplicate %s %s" fname what (Baseline.quote id)
 
 let err_unrequested id =
-  strf "Verdict.decide: confirmation for %S was not requested" id
+  strf "Verdict.decide: confirmation for %s was not requested"
+    (Baseline.quote id)
 
 type shift = { estimate : float; lower : float; upper : float }
 
@@ -327,11 +330,11 @@ let judge_exact ~budget ~case_k ~trial_k ~b ~c =
 
 (* Judging *)
 
-let check_distinct ~what ~ids =
+let check_distinct ~fname ~what ~ids =
   let tbl = Hashtbl.create 16 in
   List.iter
     (fun id ->
-      if Hashtbl.mem tbl id then invalid_arg (err_duplicate what id)
+      if Hashtbl.mem tbl id then invalid_arg (err_duplicate fname what id)
       else Hashtbl.add tbl id ())
     ids
 
@@ -411,7 +414,7 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
 
 let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
   let case_ids = List.map (fun (c, _) -> Bench.id c) cases in
-  check_distinct ~what:"case id" ~ids:case_ids;
+  check_distinct ~fname:"Verdict.judge" ~what:"case id" ~ids:case_ids;
   let section = Baseline.section file identity.Baseline.machine in
   let comparison = classify_comparison identity section in
   let comparable =
@@ -531,7 +534,8 @@ let resolve_pending ~load ~conf metric pd =
 
 let decide ~load ~confirmations:confs p =
   let queue = confirmations p in
-  check_distinct ~what:"confirmation id" ~ids:(List.map fst confs);
+  check_distinct ~fname:"Verdict.decide" ~what:"confirmation id"
+    ~ids:(List.map fst confs);
   List.iter
     (fun (id, _) ->
       if not (List.mem id queue) then invalid_arg (err_unrequested id))
