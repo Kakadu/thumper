@@ -16,7 +16,7 @@ type t = {
 }
 
 (* At a CoV of about 2%, 20 samples on each side detect a shift of about 3%,
-   and fit a case budget of about 0.4 s. *)
+   and fit the case budget of 0.5 s that [default_deadline] is derived from. *)
 let default_n = 20
 let quick_n = 11
 let precise_n = 40
