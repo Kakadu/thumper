@@ -79,7 +79,9 @@ val parse : string array -> parsed
     - bare positionals are [-f] patterns (never swallowed) — in particular
       [explore], whose subcommand is deleted, parses as a pattern and fails
       loudly at selection ({!main});
-    - long options accept both [--opt VALUE] and [--opt=VALUE];
+    - long options that take a value accept both [--opt VALUE] and
+      [--opt=VALUE]; [--flag=VALUE] on one that takes none is a [Usage_error]
+      (["option '--strict' takes no argument"]);
     - [--] ends option parsing: everything after it is a pattern;
     - a known flag on a subcommand outside its {!type:options} scope is a
       [Usage_error] naming both

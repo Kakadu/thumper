@@ -42,16 +42,21 @@ let subcommand_word = function
   | `Bless -> "bless"
   | `List -> "list"
 
+(* The long options that take no value: [--flag=V] on one is refused. *)
+let long_flags =
+  [ "--help"; "--version"; "--quick"; "--precise"; "--strict"; "--force" ]
+
 (* Expand [--opt=VALUE] into [--opt; VALUE]. Long options only, and only up
    to a ["--"] terminator — everything after it is a pattern and keeps its
    '='. A pattern or a short option's argument keeps its '=' too, and a
    nameless ["--=V"] stays whole so it fails as an unknown option instead of
-   silently becoming ["--"] plus a pattern. *)
+   silently becoming ["--"] plus a pattern. So does [--flag=V] on a flag
+   that takes no value: split, it would read as the flag plus a pattern. *)
 let split_eq args =
   let split1 arg =
     if String.length arg > 2 && arg.[0] = '-' && arg.[1] = '-' then
       match String.index_opt arg '=' with
-      | Some i when i > 2 ->
+      | Some i when i > 2 && not (List.mem (String.sub arg 0 i) long_flags) ->
           [
             String.sub arg 0 i;
             String.sub arg (i + 1) (String.length arg - i - 1);
@@ -161,8 +166,12 @@ let parse argv =
               (Printf.sprintf
                  "option '--color' takes auto, always, or never, got '%s'" v))
     | [ "--color" ] -> missing "--color"
-    | a :: _ when String.length a > 1 && a.[0] = '-' ->
-        fail (Printf.sprintf "unknown option '%s'" a)
+    | a :: _ when String.length a > 1 && a.[0] = '-' -> (
+        match String.index_opt a '=' with
+        | Some i when List.mem (String.sub a 0 i) long_flags ->
+            fail
+              (Printf.sprintf "option '%s' takes no argument" (String.sub a 0 i))
+        | Some _ | None -> fail (Printf.sprintf "unknown option '%s'" a))
     | a :: rest ->
         (* Bare positionals are [-f] patterns — never swallowed. *)
         patterns := a :: !patterns;

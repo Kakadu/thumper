@@ -332,6 +332,18 @@ let long_options_accept_equals_form () =
   equal ~msg:"baseline" (option string) (Some "b.thumper") o.Cli.baseline;
   equal ~msg:"wait" (option float_exact) (Some 2.5) o.Cli.wait_quiet
 
+let a_flag_refuses_an_equals_value () =
+  (* A flag that takes no value is never split: [--strict=no] must not read
+     as [--strict] plus the pattern [no]. *)
+  equal ~msg:"--strict=no" string "option '--strict' takes no argument"
+    (usage_error [ "--strict=no" ]);
+  equal ~msg:"--quick=1" string "option '--quick' takes no argument"
+    (usage_error [ "--quick=1" ]);
+  equal ~msg:"--nope" string "unknown option '--nope'"
+    (usage_error [ "--nope" ]);
+  equal ~msg:"--nope=1" string "unknown option '--nope'"
+    (usage_error [ "--nope=1" ])
+
 let value_flags_parse () =
   let o =
     opts
@@ -1575,6 +1587,7 @@ let () =
           test "repeatable flags keep encounter order"
             repeatable_flags_keep_encounter_order;
           test "long options accept --opt=value" long_options_accept_equals_form;
+          test "a flag refuses an equals value" a_flag_refuses_an_equals_value;
           test "value and boolean flags parse" value_flags_parse;
           test "--precise parses" precise_preset_parses;
           test "--color parses auto, always, never" color_parses;
