@@ -735,9 +735,9 @@ let wrong_suite_raises_before_measuring () =
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   raises
     (Invalid_argument
-       "Check.run: baseline is for suite \"digest\", not \"other\"; pass this \
-        suite's file, or update its '# suite:' header if the suite was renamed")
-    (fun () ->
+       "Thumper.Check.run: baseline is for suite 'digest', not 'other'; pass \
+        this suite's file, or update its '# suite:' header if the suite was \
+        renamed") (fun () ->
       Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~baseline "other"
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
@@ -751,8 +751,8 @@ let invalid_names_raise_before_measuring () =
     (fun name ->
       raises
         (Invalid_argument
-           "Check.run: suite name must be non-empty and single-line (it heads \
-            fresh baselines)") (fun () ->
+           "Thumper.Check.run: suite name must be non-empty and single-line \
+            (it heads fresh baselines)") (fun () ->
           Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base name
             [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]))
     [ ""; "two\nlines" ];
@@ -764,8 +764,8 @@ let duplicate_budgets_raise_before_measuring () =
   let w = world () in
   raises
     (Invalid_argument
-       "Check.run: two budgets for metric wall_time in one ~budgets list")
-    (fun () ->
+       "Thumper.Check.run: two budgets for metric wall_time in one ~budgets \
+        list") (fun () ->
       Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         "digest"

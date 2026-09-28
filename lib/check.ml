@@ -97,8 +97,8 @@ let empty_file =
 let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
     ?(config = Config.default) ?(budgets = []) ?(prune = false) ?filter
     ?baseline:(file = empty_file) name benches =
-  Baseline.check_suite ~fname:"Check.run" name;
-  Budget.check_distinct ~fname:"Check.run" budgets;
+  Baseline.check_suite ~fname:"Thumper.Check.run" name;
+  Budget.check_distinct ~fname:"Thumper.Check.run" budgets;
   let selected, selection =
     select ?filter ~metrics:config.Config.metrics ~budgets benches
   in
@@ -118,9 +118,10 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
   | Some s when not (String.equal s name) ->
       invalid_arg
         (strf
-           "Check.run: baseline is for suite %S, not %S; pass this suite's \
-            file, or update its '# suite:' header if the suite was renamed"
-           s name)
+           "Thumper.Check.run: baseline is for suite %s, not %s; pass this \
+            suite's file, or update its '# suite:' header if the suite was \
+            renamed"
+           (Baseline.quote s) (Baseline.quote name))
   | _ -> ());
   (* Batch sizes are frozen from the section judgment compares against: a
      stale one is re-recorded from this run, so it pins nothing. *)
