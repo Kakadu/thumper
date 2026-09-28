@@ -15,11 +15,11 @@
 
 (** {1:identity Identity} *)
 
-val fingerprint : string -> string
-(** [fingerprint s] is the 16-character lowercase hexadecimal rendering
-    ([%016x]) of the FNV-1a 64-bit hash of [s]'s bytes: the hash starts at the
-    offset basis [0xcbf29ce484222325]; each byte in turn is XORed into the hash,
-    which is then multiplied by the prime [0x100000001b3], modulo 2{^ 64}.
+val hash : string -> string
+(** [hash s] is the 16-character lowercase hexadecimal rendering ([%016x]) of
+    the FNV-1a 64-bit hash of [s]'s bytes: the hash starts at the offset basis
+    [0xcbf29ce484222325]; each byte in turn is XORed into the hash, which is
+    then multiplied by the prime [0x100000001b3], modulo 2{^ 64}.
 
     This paragraph is the normative machine-key recipe: fixed width,
     fully specified, no dependency. It is deliberately {e not} the pre-rewrite
@@ -29,7 +29,7 @@ val fingerprint : string -> string
 val machine_key : unit -> string
 (** [machine_key ()] is the key of this machine's baseline section: the
     [THUMPER_MACHINE] environment variable when set, else
-    [fingerprint (host ^ ":" ^ os ^ ":" ^ cpu_model)] where
+    [hash (host ^ ":" ^ os ^ ":" ^ cpu_model)] where
 
     - [host] is, on macOS, the hardware UUID as [gethostuuid(2)] returns it, in
       uppercase canonical form ([Thumper_clock.host_uuid]); elsewhere, and on

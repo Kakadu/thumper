@@ -72,7 +72,7 @@ let is_hex16 s =
    (a byte-sign-extending or NUL-terminated transcription would diverge
    exactly there; a 63-bit native-int transcription already fails on ""). *)
 
-let fingerprint_pins =
+let hash_pins =
   [
     ("", "cbf29ce484222325");
     ("a", "af63dc4c8601ec8c");
@@ -87,7 +87,7 @@ let fingerprint_pins =
 (* The tests below bind THUMPER_MACHINE with [setenv], which the runner undoes
    when each test ends; the guard skips if the suite's own environment sets
    the override. *)
-let default_key_is_a_fingerprint () =
+let default_key_is_a_hash () =
   if Sys.getenv_opt "THUMPER_MACHINE" <> None then
     skip ~reason:"THUMPER_MACHINE is set in the test environment" ();
   let key = Env.machine_key () in
@@ -130,12 +130,11 @@ let macos_key_hashes_the_hardware_uuid () =
   in
   let key = Env.machine_key () in
   equal ~msg:"key hashes the UUID" string
-    (Env.fingerprint (String.concat ":" [ uuid; "darwin"; cpu ]))
+    (Env.hash (String.concat ":" [ uuid; "darwin"; cpu ]))
     key;
   is_false ~msg:"key does not hash the hostname"
     (String.equal key
-       (Env.fingerprint
-          (String.concat ":" [ Unix.gethostname (); "darwin"; cpu ])))
+       (Env.hash (String.concat ":" [ Unix.gethostname (); "darwin"; cpu ])))
 
 let override_is_used_verbatim () =
   setenv "THUMPER_MACHINE" (Some "ci-runner-01");
@@ -498,15 +497,13 @@ let () =
     [
       group "machine key"
         [
-          prop "fingerprint is 16 lowercase hex for any input" Gen.string
-            (fun s -> is_true (is_hex16 (Env.fingerprint s)));
+          prop "hash is 16 lowercase hex for any input" Gen.string (fun s ->
+              is_true (is_hex16 (Env.hash s)));
           cases
             ~name:(fun (input, _) -> Printf.sprintf "%S" input)
-            "fingerprint pins the FNV-1a 64 recipe" fingerprint_pins
-            (fun (input, expected) ->
-              equal string expected (Env.fingerprint input));
-          test "default key is a stable 16-hex fingerprint"
-            default_key_is_a_fingerprint;
+            "hash pins the FNV-1a 64 recipe" hash_pins
+            (fun (input, expected) -> equal string expected (Env.hash input));
+          test "default key is a stable 16-hex hash" default_key_is_a_hash;
           test "on macOS the key hashes the hardware UUID"
             macos_key_hashes_the_hardware_uuid;
           test "THUMPER_MACHINE overrides the key verbatim"

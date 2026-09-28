@@ -14,7 +14,7 @@ let rec sleep_until wake =
 
 (* Identity *)
 
-let fingerprint s =
+let hash s =
   (* FNV-1a 64: offset basis 0xcbf29ce484222325, prime 0x100000001b3, over the
      bytes of [s]; Int64 multiplication wraps modulo 2^64 and [%016Lx] prints
      the unsigned value on 16 lowercase hex digits. The .mli paragraph is the
@@ -120,7 +120,7 @@ let machine_key () =
       else key
   | None ->
       let { host; os; cpu_model; _ } = Lazy.force facts in
-      fingerprint (String.concat ":" [ host; os; cpu_model ])
+      hash (String.concat ":" [ host; os; cpu_model ])
 
 (* Host strings are rendered verbatim into single-line output (the
    baseline's [# host:] header, the report's header): an interior control
