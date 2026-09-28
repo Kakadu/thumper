@@ -97,7 +97,7 @@ $ dune build @bench
 thumper: digest — 4 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 
   REGRESSED   1.84 us  ±1.1%  54 w  sha256/string-64
-      +31.4% [+30.0, +32.9]  budget +5%  confirmed; equivalent (alloc exact)
+      +31.4% [+30.0, +32.9]  budget +5%; equivalent (alloc exact)
   equivalent  1.10 us  ±0.7%   0 w  fib/10
   ...
 

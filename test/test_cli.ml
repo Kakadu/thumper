@@ -726,9 +726,9 @@ let mixed_run_renders_all_four_blocks () =
 thumper: digest — 3 cases vs digest.thumper [testkey]
 
   REGRESSED   2.00 us  ±0.0%     54 w  alpha
-      +100.0% [+100.0, +100.0]  budget +5%  confirmed; equivalent (alloc exact)
+      +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
   improved    1.00 us  ±0.0%  2,100 w  beta
-      -50.0% [-50.0, -50.0]  confirmed
+      -50.0% [-50.0, -50.0]
   equivalent  1.00 us  ±0.0%  3,000 w  gamma
 
   rerun:   bench.exe -f alpha
@@ -838,7 +838,7 @@ let improvement_only_renders_the_ratchet_prompt () =
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   improved  1.00 us  ±0.0%  54 w  alpha
-      -50.0% [-50.0, -50.0]  confirmed
+      -50.0% [-50.0, -50.0]
 
   ratchet the baseline:  dune promote
 

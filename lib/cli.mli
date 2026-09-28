@@ -267,8 +267,8 @@ val render_check : render -> Verdict.t -> string
       particular an [Absolute_max] budget gates proven exact evidence only,
       and a confirmed sampled regression under one renders lowercase [regressed]
       (yellow). Forms: [equivalent] faint · [within budget +x.x%] plain ·
-      [improved -x.x% [lo, hi]  confirmed] green ·
-      [REGRESSED +x.x% [lo, hi]  budget +r%  confirmed] red (exact:
+      [improved -x.x% [lo, hi]] green · [REGRESSED +x.x% [lo, hi]  budget +r%]
+      red, a sampled strong relation being always a confirmed one (exact:
       [REGRESSED 54 w → 71 w (exact)]) · [inconclusive: <reason>] yellow ·
       [proposed] plain (NEW/stale rows). The cell holds the case's notable
       relations — anything that is not a plain pass — most severe first,

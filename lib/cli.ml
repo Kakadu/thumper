@@ -665,9 +665,8 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
     else if body = "" then metric_tag m
     else metric_tag m ^ " " ^ body
   in
-  let confirmed = "  confirmed" in
   let strong_detail = function
-    | Verdict.Confirmed { first; _ } -> interval first ^ confirmed
+    | Verdict.Confirmed { first; _ } -> interval first
     | Verdict.Exact_change { baseline; candidate } ->
         Printf.sprintf "%s \xe2\x86\x92 %s (exact)" (exact_str m baseline)
           (exact_str m candidate)
@@ -683,12 +682,9 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
         | Verdict.Confirmed _, Some b -> "  " ^ b
         | _ -> ""
       in
-      let detail =
-        match strong with
-        | Verdict.Confirmed { first; _ } -> interval first ^ budget ^ confirmed
-        | Verdict.Exact_change _ -> strong_detail strong
-      in
-      Some ((if gates then 0 else 1), frag ~style word (tagged detail))
+      Some
+        ( (if gates then 0 else 1),
+          frag ~style word (tagged (strong_detail strong ^ budget)) )
   | Verdict.Judged (Verdict.Improved strong) ->
       Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
   | Verdict.Judged (Verdict.Within_budget s) ->
