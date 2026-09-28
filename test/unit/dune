@@ -63,8 +63,10 @@
 
 (test
  (name test_measure)
- ; The C fixture stops a forked worker as a traced child.
+ ; The C fixture stops a forked worker as a traced child. Its slow tests
+ ; measure on the real clock, so they take the cram sessions' lock.
  (modules test_measure)
+ (locks ../cram/measurement)
  (foreign_stubs
   (language c)
   (names stop_stubs))

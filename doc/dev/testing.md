@@ -72,16 +72,23 @@ before landing the real change.
 
 ## The measurement seam
 
-No protocol test measures real time but the forked deadline's
-(above). `Measure.instruments` (clock, CPU clock, GC counters) is
-injectable, so `test_measure` scripts every behavior
-deterministically: calibration doubling to the floor,
-frozen-k reuse inside [0.2×, 5×] and recalibration outside, the k/2k
-probe proving exactness with a planted harness constant and failing it
-on nondeterministic counters, the drift flag on a planted step, the
-in-process deadline. `Measure.Protocol.parse` is exposed so worker-pipe
-containment (malformed lines, truncation, hostile counts) is tested
-without forking.
+`Measure.instruments` (clock, CPU clock, GC counters) is injectable,
+so `test_measure` scripts the protocol's decisions in process:
+calibration doubling to the floor, frozen-k reuse inside [0.2×, 5×]
+and recalibration outside, the k/2k probe proving exactness with a
+planted harness constant and failing it on nondeterministic counters,
+the probe at the frozen batch size, the drift flag on a planted step,
+the in-process deadline. Every scripted read records the case's call
+count, so a test compares the batch sizes the protocol ran, in order.
+Scripted instruments also cross a fork: the worker runs on its copy of
+the world and its teardown writes what it recorded to a file.
+
+The tests that fork a worker or read the real instruments are declared
+`slow`, so `--exclude-tag slow` runs the scripted ones alone. They
+assert only what no timing moves: a failure, an exact count, a sample
+count. `Measure.Protocol.parse` is exposed so worker-pipe containment
+(malformed lines, truncation, hostile counts) is tested without
+forking.
 
 One level up, `Check.run_with` adds the gate predicate as a second
 seam: `test_check` drives the full loop in-process — a planted

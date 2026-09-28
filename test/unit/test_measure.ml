@@ -3,16 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Seam-driven tests for [Measure]. [Measure] is a private module of the library, reached — with its
-   [Metric], [Config], [Bench], and [Run] dependencies — through the facade's
-   [Thumper.Private] re-export.
-
-   Every protocol behavior is driven through scripted [Measure.instruments]:
-   the case closure advances a fake clock and fake counters, so calibration,
-   frozen-k reuse, warmup arms, the exactness probe, quality flags, and the
-   in-process deadline are all deterministic and consume zero wall-clock time.
-   Only the fork tests (the forked deadline, the parent's, among them) and the
-   pipe-parser tests touch the real OS. *)
+(* The protocol's decisions run in process on scripted instruments: a case
+   advances a scripted clock and scripted counters, so every batch size, every
+   count and every sample is exact and no assertion reads the host's time. The
+   fork tests are declared [slow]; scripted instruments cross the fork, since
+   the worker runs on its copy of the world, and the real ones are used only
+   where they are the subject. *)
 
 open Windtrap
 module Bench = Thumper.Private.Bench
@@ -21,25 +17,92 @@ module Measure = Thumper.Private.Measure
 module Metric = Thumper.Private.Metric
 module Run = Thumper.Private.Run
 
+(* Witnesses *)
+
+let pp_measurement ppf = function
+  | Run.Exact v -> Format.fprintf ppf "exact %d" v
+  | Run.Samples s ->
+      Format.fprintf ppf "samples [%s]%s"
+        (String.concat "; "
+           (List.map (Printf.sprintf "%.17g") (Array.to_list s.Run.sorted)))
+        (if s.Run.drifted then " drifted" else "")
+
+let equal_measurement a b =
+  match (a, b) with
+  | Run.Exact a, Run.Exact b -> Int.equal a b
+  | Run.Samples a, Run.Samples b ->
+      Bool.equal a.Run.drifted b.Run.drifted
+      && Array.length a.Run.sorted = Array.length b.Run.sorted
+      && Array.for_all2 Float.equal a.Run.sorted b.Run.sorted
+  | Run.Exact _, Run.Samples _ | Run.Samples _, Run.Exact _ -> false
+
+let measurement = Testable.make ~pp:pp_measurement ~equal:equal_measurement
+
+let pp_trial ppf t =
+  let pp_entry ppf (m, x) =
+    Format.fprintf ppf "%s %a" (Metric.id m) pp_measurement x
+  in
+  Format.fprintf ppf "@[<v>k %d@,%a@,warnings [%s]@]" (Run.Trial.k t)
+    (Format.pp_print_list pp_entry)
+    (Run.Trial.measurements t)
+    (String.concat "; " (Run.Trial.warnings t))
+
+let equal_trial a b =
+  let equal_entry (m, x) (m', x') =
+    Metric.equal m m' && equal_measurement x x'
+  in
+  Int.equal (Run.Trial.k a) (Run.Trial.k b)
+  && List.equal equal_entry (Run.Trial.measurements a)
+       (Run.Trial.measurements b)
+  && List.equal String.equal (Run.Trial.warnings a) (Run.Trial.warnings b)
+
+let trial = Testable.make ~pp:pp_trial ~equal:equal_trial
+
+let equal_failure a b =
+  match (a, b) with
+  | Measure.Worker_died a, Measure.Worker_died b ->
+      String.equal a.case b.case && String.equal a.detail b.detail
+  | Measure.Case_raised a, Measure.Case_raised b ->
+      String.equal a.case b.case && String.equal a.exn b.exn
+  | Measure.Deadline_exceeded a, Measure.Deadline_exceeded b ->
+      String.equal a.case b.case && Float.equal a.deadline b.deadline
+  | ( ( Measure.Worker_died _ | Measure.Case_raised _
+      | Measure.Deadline_exceeded _ ),
+      _ ) ->
+      false
+
+let failure = Testable.make ~pp:Measure.pp_failure ~equal:equal_failure
+
 (* The scripted world *)
 
 type world = {
-  mutable now : int; (* fake monotonic clock, ns *)
-  mutable cpu : int; (* fake process CPU clock, ns *)
-  mutable words : float; (* fake cumulative minor-heap words *)
-  mutable calls : int; (* case-closure invocations so far *)
+  mutable now : int; (* the monotonic clock, in ns *)
+  mutable cpu : int; (* the process's CPU clock, in ns *)
+  mutable words : float; (* the cumulative minor words *)
+  mutable calls : int; (* the case's calls so far *)
+  mutable reads : int list; (* [calls] at each instrument read, latest first *)
 }
 
-let world () = { now = 0; cpu = 0; words = 0.; calls = 0 }
+let world () = { now = 0; cpu = 0; words = 0.; calls = 0; reads = [] }
 
-(* Scripted instruments over [w]. [h] is the planted harness constant: every
-   counter read allocates [h] words visible to the next read — the model the differencing probe must cancel. *)
+(* Every read records the call count, so the batches the protocol ran are the
+   call counts between successive reads. [h] words are allocated by each
+   counter read and seen by the next: the harness constant the probe's
+   differencing cancels. *)
 let scripted ?(h = 0.) w =
+  let read () = w.reads <- w.calls :: w.reads in
   {
-    Measure.now_ns = (fun () -> w.now);
-    cpu_ns = (fun () -> w.cpu);
+    Measure.now_ns =
+      (fun () ->
+        read ();
+        w.now);
+    cpu_ns =
+      (fun () ->
+        read ();
+        w.cpu);
     gc =
       (fun () ->
+        read ();
         let s =
           {
             Metric.minor_words = w.words;
@@ -53,920 +116,984 @@ let scripted ?(h = 0.) w =
         s);
   }
 
-(* A case closure advancing the world: [step w.calls] gives this call's
-   (clock advance in ns, words allocated). *)
+(* The batch sizes the protocol ran, in order. *)
+let batches w =
+  let rec diffs acc = function
+    | a :: (b :: _ as rest) ->
+        diffs (if b > a then (b - a) :: acc else acc) rest
+    | [] | [ _ ] -> List.rev acc
+  in
+  diffs [] (0 :: List.rev w.reads)
+
+(* [step call] is the call's (clock advance in ns, words allocated). *)
 let stepper w step () =
   w.calls <- w.calls + 1;
   let dt_ns, words = step w.calls in
   w.now <- w.now + dt_ns;
   w.words <- w.words +. words
 
+let ms_ns = 1_000_000
 let constant_ns dt_ns _call = (dt_ns, 0.)
+let ones n = List.init n (fun _ -> 1)
 
 let resolved bench =
-  match Bench.resolve [ bench ] with
-  | Ok [ c ] -> c
-  | Ok cs -> failf "expected one resolved case, got %d" (List.length cs)
-  | Error e -> failf "resolve: %a" Bench.pp_error e
+  let cases = require_ok ~pp:Bench.pp_error (Bench.resolve [ bench ]) in
+  require_match (function [ c ] -> Some c | _ -> None) cases
 
-let bench_stepping ?(name = "case") w step =
-  resolved (Bench.bench name (stepper w step))
+let case ?(id = "case") w step = resolved (Bench.bench ~id id (stepper w step))
 
-(* In-process configs: the driver under scripted instruments, no fork. *)
-let base = Config.(default |> fork false)
-let wall_only = Config.(base |> metrics [ Metric.wall_time ])
+(* The in-process protocol with no timed warmup, so warmup is its 3 batches. *)
+let scripted_config = Config.(default |> fork false |> warmup 0.)
+let wall_only = Config.(scripted_config |> metrics [ Metric.wall_time ])
 
-let measure ?h ?(frozen_k = None) ~config w case =
-  Measure.case ~instruments:(scripted ?h w) ~config ~frozen_k case
+let measure ?h ?frozen_k ?(config = scripted_config) w c =
+  Measure.case ~instruments:(scripted ?h w) ~config ~frozen_k c
 
-(* Result plumbing *)
+let get_trial r = require_ok ~pp:Measure.pp_failure r
+let get_failure r = require_error ~pp:pp_trial r
+let alloc t = Run.Trial.measurement t Metric.alloc_words
 
-let failure = Testable.make ~pp:Measure.pp_failure ~equal:( = )
-
-let trial_ok = function
-  | Ok t -> t
-  | Error f -> failf "expected a trial, got failure: %a" Measure.pp_failure f
-
-let the_failure = function
-  | Ok _ -> failf "expected a failure, got a trial"
-  | Error f -> f
-
-let samples_of trial m =
-  match Run.Trial.measurement trial m with
-  | Some (Run.Samples s) -> s
-  | Some (Run.Exact v) ->
-      failf "%s: expected samples, got exact %d" (Metric.id m) v
-  | None -> failf "%s: not measured" (Metric.id m)
-
-let exact_of trial m =
-  match Run.Trial.measurement trial m with
-  | Some (Run.Exact v) -> v
-  | Some (Run.Samples _) ->
-      failf "%s: expected exact, got samples" (Metric.id m)
-  | None -> failf "%s: not measured" (Metric.id m)
-
-let contains_sub s sub =
-  let n = String.length sub and len = String.length s in
-  let rec go i =
-    i + n <= len && (String.equal (String.sub s i n) sub || go (i + 1))
-  in
-  go 0
-
-let has_warning trial sub =
-  List.exists (fun w -> contains_sub w sub) (Run.Trial.warnings trial)
-
-let ms_ns = 1_000_000
-
-(* Calibration *)
-
-(* Default floor is 5 ms; at 1 ms/call the batch meets it at k = 8. *)
-let calibration_doubles_to_floor () =
-  let w = world () in
-  let t =
-    trial_ok
-      (measure ~config:wall_only w (bench_stepping w (constant_ns ms_ns)))
-  in
-  equal ~msg:"k" int 8 (Run.Trial.k t);
-  let s = samples_of t Metric.wall_time in
-  equal ~msg:"n samples" int Config.default.Config.n (Array.length s.Run.sorted)
-
-(* The frozen-k window is [0.2x, 5x] of the floor: [1 ms, 25 ms] here. *)
-let frozen_k_cases =
-  [
-    ("reused inside the window", 1_000_000, 4);
-    ("reused just above the low edge", 260_000, 4);
-    (* 4 x 240 us = 0.96 ms < 1 ms: recalibrates; doubling at 240 us/call
-       reaches the 5 ms floor at k = 32. *)
-    ("recalibrated below the low edge", 240_000, 32);
-    ("reused just under the high edge", 6_000_000, 4);
-    (* 4 x 6.5 ms = 26 ms > 25 ms: recalibrates; one 6.5 ms call already
-       meets the floor, so k = 1. *)
-    ("recalibrated above the high edge", 6_500_000, 1);
-  ]
-
-let frozen_k_tests =
-  List.map
-    (fun (name, dt_ns, expected_k) ->
-      test name (fun () ->
-          let w = world () in
-          let case = bench_stepping w (constant_ns dt_ns) in
-          let t =
-            trial_ok (measure ~frozen_k:(Some 4) ~config:wall_only w case)
-          in
-          equal int expected_k (Run.Trial.k t)))
-    frozen_k_cases
-
-let frozen_k_zero_is_programmer_error () =
-  let w = world () in
-  let case = bench_stepping w (constant_ns ms_ns) in
-  raises (Invalid_argument "Measure.case: frozen_k must be >= 1") (fun () ->
-      measure ~frozen_k:(Some 0) ~config:wall_only w case)
-
-(* Warmup: max of the timed arm and the 3-batch arm *)
-
-(* At 5 ms/call the first calibration batch meets the floor, so k = 1 and
-   call counts decompose exactly: 1 calibration + warmup + n samples (no
-   probe: wall_time only). *)
-let warmup_batch_arm () =
-  let w = world () in
-  let case = bench_stepping w (constant_ns (5 * ms_ns)) in
-  let config = Config.(wall_only |> warmup 0.) in
-  ignore (trial_ok (measure ~config w case));
-  equal ~msg:"calls = 1 calib + 3 warmup + 20 samples" int 24 w.calls
-
-let warmup_timed_arm () =
-  let w = world () in
-  let case = bench_stepping w (constant_ns (5 * ms_ns)) in
-  (* 32.5 ms of timed warmup at 5 ms/batch: the timed arm needs 7 batches,
-     more than the 3-batch arm. *)
-  let config = Config.(wall_only |> warmup 0.0325) in
-  ignore (trial_ok (measure ~config w case));
-  equal ~msg:"calls = 1 calib + 7 warmup + 20 samples" int 28 w.calls
-
-(* The exactness probe *)
-
-(* k = 1 must pass for a deterministic case: the differencing cancels the
-   planted harness constant. *)
-let probe_exact_at_k1 () =
-  let w = world () in
-  let case = bench_stepping w (fun _ -> (5 * ms_ns, 54.)) in
-  let config = Config.(base |> warmup 0.) in
-  let t = trial_ok (measure ~h:10. ~config w case) in
-  equal ~msg:"k" int 1 (Run.Trial.k t);
-  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words);
-  equal ~msg:"no warnings" (list string) [] (Run.Trial.warnings t)
-
-let probe_exact_at_k8192 () =
-  let w = world () in
-  let case = bench_stepping w (fun _ -> (1_000, 54.)) in
-  let config = Config.(base |> warmup 0.) in
-  (* 8192 x 1 us = 8.192 ms sits inside the frozen-k window. *)
-  let t = trial_ok (measure ~h:10. ~frozen_k:(Some 8192) ~config w case) in
-  equal ~msg:"k" int 8192 (Run.Trial.k t);
-  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
-
-(* At 6.5 ms per call the frozen k = 4 batch takes 26 ms, past the window,
-   so the timing recalibrates to k = 1: 4 calls for the frozen batch, 1 to
-   calibrate, 3 of warmup and 20 samples. The probe still runs at k = 4, 4
-   and 8 calls, so the exact count is the one the baseline's batch size
-   gives. *)
-let probe_runs_at_the_frozen_k () =
-  let w = world () in
-  let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
-  let config = Config.(base |> warmup 0.) in
-  let t = trial_ok (measure ~h:10. ~frozen_k:(Some 4) ~config w case) in
-  equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
-  equal ~msg:"calls = 4 + 1 + 3 + 20 + (4 + 8)" int 40 w.calls;
-  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
-
-(* An allocator that takes 100 more words every 4th call reads 54 words a
-   call at k = 1 and 79 at k = 4. After the recalibration to k = 1 the probe
-   covers calls 29 to 40 at k = 4, and proves the count of k = 4. *)
-let probe_at_the_frozen_k_proves_its_count () =
-  let w = world () in
-  let case =
-    bench_stepping w (fun call ->
-        (6_500_000, if call mod 4 = 0 then 154. else 54.))
-  in
-  let config = Config.(base |> warmup 0.) in
-  let t = trial_ok (measure ~frozen_k:(Some 4) ~config w case) in
-  equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
-  equal ~msg:"alloc at k = 4" int 79 (exact_of t Metric.alloc_words)
-
-(* The bound on the probe's batch size, at 6.5 ms per call: a frozen k of
-   16 or 17 recalibrates the samples to k = 1. At 16 = 16 x 1 the probe runs
-   at the frozen k, 16 and 32 calls; at 17 it runs at k = 1, 1 and 2 calls.
-   The rest is the frozen batch, 1 calibration, 3 of warmup and 20
-   samples. *)
-let probe_k_bound =
-  [
-    ("probes at a frozen k of 16 times the new k", 16, 16 + 24 + 48);
-    ("probes at the new k past 16 times it", 17, 17 + 24 + 3);
-  ]
-  |> List.map (fun (name, frozen, calls) ->
-      test name (fun () ->
-          let w = world () in
-          let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
-          let config = Config.(base |> warmup 0.) in
-          let t =
-            trial_ok (measure ~h:10. ~frozen_k:(Some frozen) ~config w case)
-          in
-          equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
-          equal ~msg:"calls" int calls w.calls;
-          equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)))
-
-(* Without a frozen k the probe runs at the calibrated k, as before: 1
-   calibration call, 3 of warmup, 20 samples, then 1 and 2 probe calls. *)
-let probe_without_a_frozen_k_runs_at_the_calibrated_k () =
-  let w = world () in
-  let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
-  let config = Config.(base |> warmup 0.) in
-  let t = trial_ok (measure ~h:10. ~config w case) in
-  equal ~msg:"k" int 1 (Run.Trial.k t);
-  equal ~msg:"calls = 1 + 3 + 20 + (1 + 2)" int 27 w.calls;
-  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
-
-let probe_downgrades_nondeterministic_counters () =
-  let w = world () in
-  (* 54/55 words alternating: at k = 8 the k/2k deltas differ by 436, whose
-     division by 8 leaves residue 4 — no consistent integer per-call count
-     exists. *)
-  let case =
-    bench_stepping w (fun call -> (ms_ns, if call mod 2 = 0 then 54. else 55.))
-  in
-  let config = Config.(base |> warmup 0.) in
-  let t = trial_ok (measure ~h:10. ~config w case) in
-  (match Run.Trial.measurement t Metric.alloc_words with
-  | Some (Run.Samples _) -> ()
-  | Some (Run.Exact v) -> failf "expected downgrade to samples, got exact %d" v
-  | None -> fail "alloc_words not measured");
-  is_true ~msg:"probe warning present" (has_warning t "exactness probe failed");
-  is_true ~msg:"warning reports the overhead"
-    (has_warning t "per-batch overhead of 10")
-
-(* With [base] (5 ms floor, warmup 0.) and 5 ms calls, k = 1 and the call
-   indices are fixed: 1 calibration, 2-4 warmup, 5-24 samples, 25 the k probe
-   batch, 26-27 the 2k probe batch. [words call] plants that call's
-   allocation. *)
-let probe_planted w words =
-  bench_stepping w (fun call -> (5 * ms_ns, words call))
-
-let expect_downgrade t =
-  (match Run.Trial.measurement t Metric.alloc_words with
-  | Some (Run.Samples _) -> ()
-  | Some (Run.Exact v) -> failf "expected downgrade to samples, got exact %d" v
-  | None -> fail "alloc_words not measured");
-  is_true ~msg:"probe warning present" (has_warning t "exactness probe failed")
-
-(* Monotone counters can still produce a consistent negative slope: the k
-   batch allocates 3 words in total, the 2k batch 2, so dk = 3, d2k = 2,
-   a = -1 with h = 4 = h2 — the differencing alone would "prove" Exact (-1).
-   A negative per-call count is nondeterminism, never evidence. *)
-let probe_downgrades_when_the_2k_batch_underallocates () =
-  let w = world () in
-  let case = probe_planted w (function 25 -> 3. | 26 | 27 -> 1. | _ -> 0.) in
-  let config = Config.(base |> warmup 0.) in
-  expect_downgrade (trial_ok (measure ~config w case))
-
-(* dk = 5, d2k = 15 at k = 1: slope a = 10 with residue 0, but the implied
-   harness constant is h = -5 on both sides — a consistent negative h means
-   the k batch under-allocated its own slope, i.e. nondeterminism. *)
-let probe_downgrades_on_negative_harness_constant () =
-  let w = world () in
-  let case =
-    probe_planted w (function 25 -> 5. | 26 -> 10. | 27 -> 5. | _ -> 0.)
-  in
-  let config = Config.(base |> warmup 0.) in
-  expect_downgrade (trial_ok (measure ~config w case))
-
-(* A counter that goes backward violates the instruments contract (real
-   [Gc.counters] cannot): the probe rejects it loudly instead of feeding the
-   differencing a negative interval. *)
-let probe_rejects_backward_counters () =
-  let w = world () in
-  let case = probe_planted w (function 25 -> -5. | _ -> 0.) in
-  let config = Config.(base |> warmup 0.) in
-  raises_match
+let sampled m t =
+  require_match
     (function
-      | Invalid_argument m -> contains_sub m "non-decreasing" | _ -> false)
-    (fun () -> measure ~config w case)
+      | Some (Run.Samples s) -> Some s | Some (Run.Exact _) | None -> None)
+    (Run.Trial.measurement t m)
 
-(* The regression test for the probe's differencing hygiene, on the real
-   instruments: a deterministic 2-word allocator ([ref 0]) must prove
-   Exact 2 in-process under the default finite deadline. The bug class it
-   pins: any harness allocation between the probe's counter reads — one
-   boxed int64 from a deadline check's clock read sufficed — lands in one
-   interval but not the other, spuriously failing the probe at k >= 4 and
-   silently proving a wrong count (Exact 5) at k = 1. *)
-let probe_exact_with_real_instruments () =
-  let case =
-    resolved (Bench.bench "alloc2" (fun () -> Sys.opaque_identity (ref 0)))
-  in
-  let config =
-    Config.(default |> fork false |> samples 3 |> warmup 0. |> batch_floor 1e-6)
-  in
-  let t = trial_ok (Measure.case ~config ~frozen_k:None case) in
-  equal ~msg:"ref allocates exactly 2 words/call" int 2
-    (exact_of t Metric.alloc_words)
-
-(* Quality flags *)
-
-(* Steady 5 ms calls, then 5.25 ms from the 15th call on: with k = 1 and
-   warmup 0 the twenty samples are calls 5..24, so the two halves sit on
-   opposite sides of the step. A 5% step drifts the rank test. *)
-let drift_flag_on_planted_step () =
-  let w = world () in
-  let case =
-    bench_stepping w (fun call ->
-        ((if call < 15 then 5 * ms_ns else 5_250_000), 0.))
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  let t = trial_ok (measure ~config w case) in
-  let s = samples_of t Metric.wall_time in
-  is_true ~msg:"drifted" s.Run.drifted
-
-(* Two 200 ms spikes among 5 ms samples, one planted in each half: no drift,
-   and the spikes stay in the evidence (outliers are never removed; judgment
-   reads the inflation from the sorted vector). *)
-let planted_outliers_are_kept () =
-  let w = world () in
-  let case =
-    bench_stepping w (fun call ->
-        ((if call = 9 || call = 19 then 200 * ms_ns else 5 * ms_ns), 0.))
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  let t = trial_ok (measure ~config w case) in
-  let s = samples_of t Metric.wall_time in
-  is_false ~msg:"drifted" s.Run.drifted;
-  equal ~msg:"both spikes kept" int 2
-    (Array.fold_left (fun n x -> if x > 0.1 then n + 1 else n) 0 s.Run.sorted)
-
-let clean_case_has_no_flags () =
-  let w = world () in
-  let case = bench_stepping w (constant_ns (5 * ms_ns)) in
-  let config = Config.(wall_only |> warmup 0.) in
-  let t = trial_ok (measure ~config w case) in
-  let s = samples_of t Metric.wall_time in
-  is_false ~msg:"drifted" s.Run.drifted
-
-(* Alternating 5 ms / 6 ms calls: both collection-order halves hold five of
-   each, so there is no drift — but the {e sorted} halves are all-5s vs
-   all-6s, maximally different. A drift check computed after sorting would
-   flag every case with distinct values; this pins that the flag is computed
-   on collection order. *)
-let alternating_samples_do_not_drift () =
-  let w = world () in
-  let case =
-    bench_stepping w (fun call ->
-        ((if call mod 2 = 0 then 6 * ms_ns else 5 * ms_ns), 0.))
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  let t = trial_ok (measure ~config w case) in
-  let s = samples_of t Metric.wall_time in
-  is_false ~msg:"drifted" s.Run.drifted
-
-(* The deadline *)
-
-let jump_case w =
-  (* 5 ms calls; the 10th call jumps the clock by 100 s, blowing the default
-     10 s cap mid-sampling. *)
-  bench_stepping ~name:"jump" w (fun call ->
-      ((if call = 10 then 100_000 * ms_ns else 5 * ms_ns), 0.))
-
-let deadline_exceeded_on_clock_jump () =
-  let w = world () in
-  let config = Config.(wall_only |> warmup 0.) in
-  equal failure
-    (Measure.Deadline_exceeded { case = "jump"; deadline = 10. })
-    (the_failure (measure ~config w (jump_case w)))
-
-let deadline_infinity_removes_the_cap () =
-  let w = world () in
-  let config = Config.(wall_only |> warmup 0. |> deadline infinity) in
-  ignore (trial_ok (measure ~config w (jump_case w)))
-
-(* Teardown containment (bench.mli pins that [Bench] does not) *)
-
-let with_teardown ?id w ~torn ~step ~raise_teardown =
+(* A case whose teardown counts its runs into [torn]. *)
+let torn_down ?(raise_in_teardown = false) w ~torn step =
   resolved
-    (Bench.bench_with_setup ?id
+    (Bench.bench_with_setup ~id:"case"
        ~setup:(fun () -> ())
        ~teardown:(fun () ->
-         torn := !torn + 1;
-         if raise_teardown then failwith "teardown-boom")
+         incr torn;
+         if raise_in_teardown then failwith "teardown")
        "case"
        (fun () -> stepper w step ()))
 
-let teardown_runs_on_success () =
+(* The 10th call jumps the clock 100 s, past the default 10 s deadline. *)
+let jump call = ((if call = 10 then 100_000 * ms_ns else 5 * ms_ns), 0.)
+
+(* Real instruments and forks *)
+
+let fork_config = Config.(default |> samples 3 |> warmup 0. |> batch_floor 1e-6)
+
+external stop_traced : unit -> bool = "thumper_test_stop_traced"
+external sigkill_ends_tracee : unit -> bool = "thumper_test_sigkill_ends_tracee"
+
+(* Every test that forks or waits on a child has its own limit: a parent
+   that never reaps or kills its worker would wedge the run. *)
+
+(* Instruments *)
+
+(* A harness allocation between the probe's reads, such as a boxed clock
+   reading, fails the probe at k >= 4 and proves a wrong count at k = 1. *)
+let real_instruments_prove_a_real_count () =
+  let c =
+    resolved (Bench.bench "ref" (fun () -> Sys.opaque_identity (ref 0)))
+  in
+  let config = Config.(fork_config |> fork false) in
+  let t = get_trial (Measure.case ~config ~frozen_k:None c) in
+  equal (option measurement) (Some (Run.Exact 2)) (alloc t)
+
+(* At 5 ms a call k = 1, so call 25 is the probe's k batch. *)
+let a_decreasing_counter_raises_after_the_teardown () =
+  let w = world () and torn = ref 0 in
+  let c =
+    torn_down w ~torn (function 25 -> (5 * ms_ns, -5.) | _ -> (5 * ms_ns, 0.))
+  in
+  raises
+    (Invalid_argument
+       "Measure.case: alloc_words decreased across a probe batch (deltas -5, \
+        0); instrument counters must be non-decreasing") (fun () -> measure w c);
+  equal ~msg:"teardown runs" int 1 !torn
+
+(* Call 10 moves the clock back 1 ms. *)
+let a_backward_clock_gives_a_negative_sample () =
   let w = world () in
-  let torn = ref 0 in
-  let case =
-    with_teardown w ~torn ~step:(constant_ns (5 * ms_ns)) ~raise_teardown:false
+  let c =
+    case w (fun call -> ((if call = 10 then -ms_ns else 5 * ms_ns), 0.))
   in
-  let config = Config.(wall_only |> warmup 0.) in
-  ignore (trial_ok (measure ~config w case));
-  equal ~msg:"teardown ran once" int 1 !torn
-
-let teardown_runs_when_the_case_raises () =
-  let w = world () in
-  let torn = ref 0 in
-  let case =
-    with_teardown w ~torn
-      ~step:(fun call ->
-        if call = 3 then failwith "boom-inside" else (5 * ms_ns, 0.))
-      ~raise_teardown:false
+  let s =
+    sampled Metric.wall_time (get_trial (measure ~config:wall_only w c))
   in
-  let config = Config.(wall_only |> warmup 0.) in
-  (match the_failure (measure ~config w case) with
-  | Measure.Case_raised { case = "case"; exn } ->
-      is_true ~msg:"exn text" (contains_sub exn "boom-inside")
-  | f -> failf "expected Case_raised, got %a" Measure.pp_failure f);
-  equal ~msg:"teardown ran once" int 1 !torn
+  equal (float 1e-12) (-1e-3) s.Run.sorted.(0)
 
-let teardown_runs_when_the_deadline_fires () =
-  let w = world () in
-  let torn = ref 0 in
-  let case =
-    with_teardown ~id:"jump" w ~torn
-      ~step:(fun call ->
-        ((if call = 10 then 100_000 * ms_ns else 5 * ms_ns), 0.))
-      ~raise_teardown:false
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  equal failure
-    (Measure.Deadline_exceeded { case = "jump"; deadline = 10. })
-    (the_failure (measure ~config w case));
-  equal ~msg:"teardown ran once" int 1 !torn
-
-let raising_teardown_fails_the_case () =
-  let w = world () in
-  let torn = ref 0 in
-  let case =
-    with_teardown w ~torn ~step:(constant_ns (5 * ms_ns)) ~raise_teardown:true
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  match the_failure (measure ~config w case) with
-  | Measure.Case_raised { exn; _ } ->
-      is_true ~msg:"exn text" (contains_sub exn "teardown-boom")
-  | f -> failf "expected Case_raised, got %a" Measure.pp_failure f
-
-let raising_setup_fails_the_case () =
-  let w = world () in
-  let case =
-    resolved
-      (Bench.bench_with_setup
-         ~setup:(fun () -> failwith "setup-boom")
-         "case"
-         (fun () -> stepper w (constant_ns (5 * ms_ns)) ()))
-  in
-  let config = Config.(wall_only |> warmup 0.) in
-  match the_failure (measure ~config w case) with
-  | Measure.Case_raised { exn; _ } ->
-      is_true ~msg:"exn text" (contains_sub exn "setup-boom")
-  | f -> failf "expected Case_raised, got %a" Measure.pp_failure f
-
-(* Warnings *)
-
-let gc_param_mutation_is_warned () =
-  let saved = Gc.get () in
-  Fun.protect
-    ~finally:(fun () -> Gc.set saved)
-    (fun () ->
-      let w = world () in
-      let mutated = ref false in
-      let case =
-        resolved
-          (Bench.bench "mutator" (fun () ->
-               if not !mutated then (
-                 mutated := true;
-                 Gc.set
-                   {
-                     (Gc.get ()) with
-                     Gc.space_overhead = (Gc.get ()).Gc.space_overhead + 40;
-                   });
-               stepper w (constant_ns (5 * ms_ns)) ()))
-      in
-      let config = Config.(wall_only |> warmup 0.) in
-      let t = trial_ok (measure ~config w case) in
-      is_true ~msg:"names the parameter" (has_warning t "space_overhead"))
-
-(* Sub-nanosecond per-call medians smell of constant folding: 1 ns of clock
-   advance every second call is 0.5 ns/call. *)
-let fold_suspicion_is_warned () =
-  let w = world () in
-  let case =
-    bench_stepping w (fun call -> ((if call mod 2 = 0 then 1 else 0), 0.))
-  in
-  let config = Config.(wall_only |> warmup 0. |> batch_floor 1e-6) in
-  let t = trial_ok (measure ~config w case) in
-  is_true ~msg:"fold warning"
-    (has_warning t "possibly folded: wrap the input in black_box")
-
-(* CPU time (opt-in metric, via the seam's cpu clock) *)
-
-let cpu_time_is_sampled () =
-  let w = world () in
-  let case =
-    resolved
-      (Bench.bench "cpu" (fun () ->
-           w.calls <- w.calls + 1;
-           w.now <- w.now + 5_000_000;
-           w.cpu <- w.cpu + 2_000_000))
-  in
-  let config =
-    Config.(base |> warmup 0. |> metrics [ Metric.wall_time; Metric.cpu_time ])
-  in
-  let t = trial_ok (measure ~config w case) in
-  let s = samples_of t Metric.cpu_time in
-  equal ~msg:"n" int Config.default.Config.n (Array.length s.Run.sorted);
-  equal ~msg:"per-call cpu" (float 1e-15) 0.002 s.Run.sorted.(0)
-
-let measurement_order_follows_the_metric_list () =
-  let w = world () in
-  let case = bench_stepping w (fun _ -> (5 * ms_ns, 54.)) in
-  let config =
-    Config.(
-      base |> warmup 0. |> metrics [ Metric.alloc_words; Metric.wall_time ])
-  in
-  let t = trial_ok (measure ~config w case) in
-  equal (list string)
-    [ "alloc_words"; "wall_time" ]
-    (List.map (fun (m, _) -> Metric.id m) (Run.Trial.measurements t))
-
-(* The pipe protocol parser (containment without forking) *)
-
-let both_metrics = [ Metric.wall_time; Metric.alloc_words ]
-let parse = Measure.Protocol.parse ~case:"c"
-
-let protocol_round_trip () =
-  let sorted =
-    Run.sampled ~sorted:[| 6.883e-7; 6.911e-7; 7.084e-7 |] ~drifted:true
-  in
-  let trial =
-    Run.Trial.make ~k:8192
-      ~warnings:[ "wall_time 0.5 ns/call: possibly folded" ]
-      [
-        (Metric.wall_time, Run.Samples sorted);
-        (Metric.alloc_words, Run.Exact 54);
-      ]
-  in
-  let buf = Buffer.create 256 in
-  Measure.Protocol.write buf (Ok trial);
-  let parsed = trial_ok (parse ~metrics:both_metrics (Buffer.contents buf)) in
-  equal ~msg:"k" int (Run.Trial.k trial) (Run.Trial.k parsed);
-  equal ~msg:"warnings" (list string) (Run.Trial.warnings trial)
-    (Run.Trial.warnings parsed);
-  equal ~msg:"alloc" int 54 (exact_of parsed Metric.alloc_words);
-  let s = samples_of parsed Metric.wall_time in
-  equal ~msg:"samples survive %h exactly" (array float_exact)
-    [| 6.883e-7; 6.911e-7; 7.084e-7 |]
-    s.Run.sorted;
-  is_true ~msg:"drifted" s.Run.drifted
-
-let failure_round_trips =
-  [
-    ( "raised crosses the pipe",
-      "raised Failure(\"boom\")\n",
-      Measure.Case_raised { case = "c"; exn = "Failure(\"boom\")" } );
-  ]
-  |> List.map (fun (name, wire, expected) ->
-      test name (fun () ->
-          equal failure expected
-            (the_failure (parse ~metrics:both_metrics wire));
-          (* and the writer produces exactly this wire form *)
-          let buf = Buffer.create 64 in
-          Measure.Protocol.write buf (Error expected);
-          equal ~msg:"writer" string wire (Buffer.contents buf)))
-
-let write_rejects_parent_side_failures () =
-  List.iter
-    (fun f ->
-      raises_match
-        (function Invalid_argument _ -> true | _ -> false)
-        (fun () -> Measure.Protocol.write (Buffer.create 16) (Error f)))
+let instruments =
+  group "Instruments"
     [
-      Measure.Worker_died { case = "c"; detail = "d" };
-      Measure.Deadline_exceeded { case = "c"; deadline = 1. };
+      slow "the real instruments prove a 2-word allocation exact in process"
+        real_instruments_prove_a_real_count;
+      test "a counter that decreases across the probe raises after the teardown"
+        a_decreasing_counter_raises_after_the_teardown;
+      test "a clock that runs backwards gives a negative sample"
+        a_backward_clock_gives_a_negative_sample;
     ]
 
-let valid_wire =
-  "k 8\n\
-   samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-   exact alloc_words 54\n\
-   end\n"
+(* Failures *)
 
-let parse_accepts_the_pinned_grammar () =
-  let t = trial_ok (parse ~metrics:both_metrics valid_wire) in
-  equal ~msg:"k" int 8 (Run.Trial.k t);
-  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words);
-  equal ~msg:"wall n" int 3
-    (Array.length (samples_of t Metric.wall_time).Run.sorted);
-  let zero =
-    "k 8\n\
-     samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-     exact alloc_words 0\n\
-     end\n"
-  in
-  equal ~msg:"a zero count" int 0
-    (exact_of (trial_ok (parse ~metrics:both_metrics zero)) Metric.alloc_words)
-
-let malformed_wire =
+let printed_failures =
   [
-    ("empty output", "");
-    ("no final newline", "k 8\nend");
-    ("missing end", "k 8\nexact alloc_words 54\n");
-    ("text after end", valid_wire ^ "garbage\n");
-    ("a deadline line", "deadline\n");
-    ("text after raised", "raised boom\nend\n");
-    ("unparseable k line", "batch 8\nend\n");
-    ("unparseable batch size", "k eight\nend\n");
-    ( "k below 1",
-      "k 0\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "unknown metric",
-      "k 8\n\
-       exact bogus 54\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       end\n" );
-    ( "exact for a clock metric",
-      "k 8\nexact wall_time 5\nexact alloc_words 54\nend\n" );
-    ( "unparseable exact value",
-      "k 8\n\
-       exact alloc_words fifty\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       end\n" );
-    ( "negative exact value",
-      "k 8\n\
-       exact alloc_words -3\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       end\n" );
-    ("missing metric", "k 8\nexact alloc_words 54\nend\n");
-    ( "duplicate metric",
-      "k 8\n\
-       exact alloc_words 54\n\
-       exact alloc_words 54\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       end\n" );
-    ( "hostile sample count",
-      "k 8\n\
-       samples wall_time 999999999 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "short sample count",
-      "k 8\n\
-       samples wall_time 2 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "unparseable sample",
-      "k 8\n\
-       samples wall_time 3 0 0x1p-21 six 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "unsorted samples",
-      "k 8\n\
-       samples wall_time 3 0 0x1p-20 0x1.8p-21 0x1p-21\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "non-finite sample",
-      "k 8\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 inf\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "unparseable drifted flag",
-      "k 8\n\
-       samples wall_time 3 0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "non-boolean flag",
-      "k 8\n\
-       samples wall_time 3 2 0x1p-21 0x1.8p-21 0x1p-20\n\
-       exact alloc_words 54\n\
-       end\n" );
-    ( "metric line after warnings",
-      "k 8\n\
-       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
-       warning w\n\
-       exact alloc_words 54\n\
-       end\n" );
+    ( Measure.Worker_died { case = "a"; detail = "exited with code 3" },
+      "worker for a died: exited with code 3" );
+    ( Measure.Case_raised { case = "a"; exn = "Failure(\"x\")" },
+      "case a raised: Failure(\"x\")" );
+    ( Measure.Deadline_exceeded { case = "a"; deadline = 0.2 },
+      "case a exceeded its deadline of 0.2s" );
   ]
 
-let malformed_tests =
-  List.map
-    (fun (name, wire) ->
-      test name (fun () ->
-          match parse ~metrics:both_metrics wire with
-          | Error (Measure.Worker_died { case = "c"; detail }) ->
-              is_true ~msg:"detail names malformedness"
-                (contains_sub detail "malformed worker output"
-                || contains_sub detail "worker")
-          | Ok _ -> fail "malformed wire parsed successfully"
-          | Error f -> failf "expected Worker_died, got %a" Measure.pp_failure f))
-    malformed_wire
+let raised s = Printexc.to_string (Failure s)
 
-(* Real-fork smoke (full containment is wave-6 cram) *)
-
-let fork_round_trip () =
-  let case =
-    resolved (Bench.bench "alloc" (fun () -> Sys.opaque_identity (ref 0)))
-  in
-  let config = Config.(default |> samples 3 |> warmup 0. |> batch_floor 1e-6) in
-  let t = trial_ok (Measure.case ~config ~frozen_k:None case) in
-  is_true ~msg:"k >= 1" (Run.Trial.k t >= 1);
-  let s = samples_of t Metric.wall_time in
-  equal ~msg:"n" int 3 (Array.length s.Run.sorted);
-  (* The exact value, not just exactness: a cold child can calibrate to
-     k = 1, where a contaminated probe proves a plausible wrong count
-     instead of failing. *)
-  equal ~msg:"alloc proven exact" int 2 (exact_of t Metric.alloc_words)
-
-let fork_reports_a_raising_case () =
-  let case =
-    resolved (Bench.bench "boom" (fun () -> failwith "boom-in-child"))
-  in
-  let config = Config.(default |> samples 3 |> warmup 0. |> batch_floor 1e-6) in
-  match the_failure (Measure.case ~config ~frozen_k:None case) with
-  | Measure.Case_raised { case = "boom"; exn } ->
-      is_true ~msg:"exn text" (contains_sub exn "boom-in-child")
-  | f -> failf "expected Case_raised, got %a" Measure.pp_failure f
-
-(* A forked case's deadline is the parent's: the child never checks it, so a
-   scripted clock jump past the cap inside the worker is just a slow sample. *)
-let forked_child_does_not_check_the_deadline () =
+let a_raising_case_is_case_raised () =
   let w = world () in
-  let config = Config.(default |> warmup 0. |> metrics [ Metric.wall_time ]) in
-  ignore
-    (trial_ok
-       (Measure.case ~instruments:(scripted w) ~config ~frozen_k:None
-          (jump_case w)))
+  let c =
+    case w (fun call -> if call = 3 then failwith "case" else (5 * ms_ns, 0.))
+  in
+  equal failure
+    (Measure.Case_raised { case = "case"; exn = raised "case" })
+    (get_failure (measure w c))
 
-(* The parent kills a worker that has not reported by the deadline, even one
-   hung inside a single call. *)
-let parent_kills_a_hung_worker_at_the_deadline () =
-  let case =
+let a_raising_setup_is_case_raised () =
+  let c =
+    resolved
+      (Bench.bench_with_setup ~setup:(fun () -> failwith "setup") "case" ignore)
+  in
+  equal failure
+    (Measure.Case_raised { case = "case"; exn = raised "setup" })
+    (get_failure (measure (world ()) c))
+
+let a_raising_teardown_is_case_raised () =
+  let w = world () and torn = ref 0 in
+  let c = torn_down ~raise_in_teardown:true w ~torn (constant_ns (5 * ms_ns)) in
+  equal failure
+    (Measure.Case_raised { case = "case"; exn = raised "teardown" })
+    (get_failure (measure w c))
+
+let a_raising_teardown_keeps_the_first_failure () =
+  let w = world () and torn = ref 0 in
+  let c = torn_down ~raise_in_teardown:true w ~torn jump in
+  equal failure
+    (Measure.Deadline_exceeded { case = "case"; deadline = 10. })
+    (get_failure (measure w c))
+
+let past_the_deadline_in_process () =
+  let w = world () in
+  equal failure
+    (Measure.Deadline_exceeded { case = "case"; deadline = 10. })
+    (get_failure (measure w (case w jump)))
+
+let forked_raise () =
+  let c = resolved (Bench.bench "boom" (fun () -> failwith "boom")) in
+  equal failure
+    (Measure.Case_raised { case = "boom"; exn = raised "boom" })
+    (get_failure (Measure.case ~config:fork_config ~frozen_k:None c))
+
+let forked_exit () =
+  let c = resolved (Bench.bench "exit" (fun () -> Unix._exit 7)) in
+  equal failure
+    (Measure.Worker_died { case = "exit"; detail = "exited with code 7" })
+    (get_failure (Measure.case ~config:fork_config ~frozen_k:None c))
+
+let forked_kill () =
+  let c =
+    resolved
+      (Bench.bench "kill" (fun () -> Unix.kill (Unix.getpid ()) Sys.sigkill))
+  in
+  equal failure
+    (Measure.Worker_died { case = "kill"; detail = "killed by SIGKILL" })
+    (get_failure (Measure.case ~config:fork_config ~frozen_k:None c))
+
+let forked_hang () =
+  let c =
     resolved
       (Bench.bench "hang" (fun () ->
            while true do
              ()
            done))
   in
-  let config = Config.(default |> deadline 0.2) in
+  let config = Config.(default |> deadline 0.1) in
   equal failure
-    (Measure.Deadline_exceeded { case = "hang"; deadline = 0.2 })
-    (the_failure (Measure.case ~config ~frozen_k:None case))
+    (Measure.Deadline_exceeded { case = "hang"; deadline = 0.1 })
+    (get_failure (Measure.case ~config ~frozen_k:None c))
 
-external stop_traced : unit -> bool = "thumper_test_stop_traced"
-external sigkill_ends_tracee : unit -> bool = "thumper_test_sigkill_ends_tracee"
-
-(* A worker that writes its pid to a file, closes its report pipe and stops
-   as a traced child: the parent sees end of file, then a stopped child.
-   The failure names the signal, and the case returns: SIGKILL is sent and
-   the reap is bounded. Where the kernel ends a traced child on SIGKILL
-   (Linux), it is reaped before the case returns. macOS delivers the kill
-   only once the tracer exits, so there the worker dies with the test
-   runner and only the report is checked. A host that refuses tracing skips
-   the test (the child exits 3). *)
+(* The worker writes its pid, closes its report pipe and stops as a traced
+   child, so the parent sees end of file, then a stopped child. Where the
+   kernel ends a traced child on SIGKILL (Linux) it is reaped before the case
+   returns; macOS delivers the kill only once the tracer exits. A host that
+   refuses tracing makes the worker exit 3. *)
 let a_stopped_worker_is_killed_and_reaped () =
-  let pid_file = Filename.temp_file "thumper-stop" ".pid" in
-  let case =
+  let pid_file = temp_file () in
+  let c =
     resolved
       (Bench.bench "stop" (fun () ->
            Out_channel.with_open_bin pid_file (fun oc ->
                output_string oc (string_of_int (Unix.getpid ())));
-           if not (stop_traced ()) then exit 3))
+           if not (stop_traced ()) then Unix._exit 3))
   in
-  let config = Config.(default |> samples 3 |> warmup 0. |> deadline 10.) in
-  let outcome = Measure.case ~config ~frozen_k:None case in
-  let pid =
-    int_of_string (In_channel.with_open_bin pid_file In_channel.input_all)
-  in
-  Sys.remove pid_file;
-  match the_failure outcome with
+  let f = get_failure (Measure.case ~config:fork_config ~frozen_k:None c) in
+  (match f with
   | Measure.Worker_died { detail = "exited with code 3"; _ } ->
       skip ~reason:"this host refuses ptrace" ()
-  | Measure.Worker_died { case = "stop"; detail } ->
-      equal ~msg:"detail" string "stopped by SIGUSR1" detail;
-      if sigkill_ends_tracee () then
-        raises_match ~msg:"the worker is reaped"
-          (function Unix.Unix_error (Unix.ECHILD, _, _) -> true | _ -> false)
-          (fun () -> Unix.waitpid [ Unix.WNOHANG ] pid)
-  | f -> failf "expected Worker_died, got %a" Measure.pp_failure f
+  | Measure.Worker_died _ | Measure.Case_raised _ | Measure.Deadline_exceeded _
+    ->
+      ());
+  equal failure
+    (Measure.Worker_died { case = "stop"; detail = "stopped by SIGUSR1" })
+    f;
+  if sigkill_ends_tracee () then
+    let pid =
+      int_of_string (In_channel.with_open_bin pid_file In_channel.input_all)
+    in
+    raises_match
+      (function Unix.Unix_error (Unix.ECHILD, _, _) -> true | _ -> false)
+      (fun () -> Unix.waitpid [ Unix.WNOHANG ] pid)
 
-(* OCaml refuses [Unix.fork] once the process has spawned a domain, even a
-   joined one. A domain in this process would refuse every later fork, the
-   test runner's included, so the refusal is staged in a child: it spawns
-   and joins a domain, measures, and exits 0 iff the failure is
-   [Worker_died] carrying the runtime's message and both pipe ends were
-   closed (the next pipe reuses the lowest free descriptors, so a leak would
-   shift them). *)
-let refused_fork_is_worker_died () =
-  let case = resolved (Bench.bench "x" (fun () -> ())) in
-  let config = Config.(default |> samples 3 |> warmup 0. |> batch_floor 1e-6) in
+let pp_status ppf = function
+  | Unix.WEXITED c -> Format.fprintf ppf "exited %d" c
+  | Unix.WSIGNALED n -> Format.fprintf ppf "killed by signal %d" n
+  | Unix.WSTOPPED n -> Format.fprintf ppf "stopped by signal %d" n
+
+let status =
+  Testable.make ~pp:pp_status ~equal:(fun a b ->
+      match (a, b) with
+      | Unix.WEXITED a, Unix.WEXITED b
+      | Unix.WSIGNALED a, Unix.WSIGNALED b
+      | Unix.WSTOPPED a, Unix.WSTOPPED b ->
+          Int.equal a b
+      | (Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _), _ -> false)
+
+let open_descriptors () =
+  List.sort String.compare (Array.to_list (Sys.readdir "/dev/fd"))
+
+(* The runtime refuses to fork once a domain has been spawned, and this
+   process must keep forking, so a child spawns the domain, measures, and
+   records the failure and its open descriptors before and after, one per
+   line; the parent judges them. *)
+let a_refused_fork_is_worker_died () =
+  let record = temp_file () in
+  let c = resolved (Bench.bench "x" ignore) in
   match Unix.fork () with
   | 0 ->
-      Domain.join (Domain.spawn (fun () -> ()));
-      let free_fds () =
-        let r, w = Unix.pipe () in
-        Unix.close r;
-        Unix.close w;
-        (r, w)
-      in
-      let before = free_fds () in
       let code =
-        match Measure.case ~config ~frozen_k:None case with
-        | Error (Measure.Worker_died { case = "x"; detail })
-          when contains_sub detail "domain" ->
-            if free_fds () = before then 0 else 2
-        | _ -> 1
+        try
+          Domain.join (Domain.spawn ignore);
+          let before = open_descriptors () in
+          let outcome = Measure.case ~config:fork_config ~frozen_k:None c in
+          let after = open_descriptors () in
+          let printed =
+            match outcome with
+            | Ok t -> Format.asprintf "%a" pp_trial t
+            | Error f -> Format.asprintf "%a" Measure.pp_failure f
+          in
+          Out_channel.with_open_bin record (fun oc ->
+              List.iter (output_string oc)
+                [
+                  printed;
+                  "\n";
+                  String.concat " " before;
+                  "\n";
+                  String.concat " " after;
+                  "\n";
+                ]);
+          0
+        with _ -> 2
       in
       Unix._exit code
-  | pid -> (
-      match Unix.waitpid [] pid with
-      | _, Unix.WEXITED 0 -> ()
-      | _, Unix.WEXITED 2 -> fail "a refused fork leaked its pipe"
-      | _, Unix.WEXITED c ->
-          failf "a refused fork was not Worker_died (child exit %d)" c
-      | _ -> fail "the staging child died")
+  | pid ->
+      let _, st = Unix.waitpid [] pid in
+      equal ~msg:"the child's status" status (Unix.WEXITED 0) st;
+      let printed, before, after =
+        require_match
+          (function [ p; b; a ] -> Some (p, b, a) | _ -> None)
+          (In_channel.with_open_bin record In_channel.input_lines)
+      in
+      equal string
+        "worker for x died: Unix.fork may not be called after any domain has \
+         been spawned"
+        printed;
+      equal ~msg:"open descriptors" string before after
 
-(* Suite *)
-
-let () =
-  run "measure"
+let failures =
+  group "Failures"
     [
-      group "calibration"
-        ([
-           test "doubles k until a batch meets the floor"
-             calibration_doubles_to_floor;
-           test "frozen_k below 1 is a programmer error"
-             frozen_k_zero_is_programmer_error;
-         ]
-        @ frozen_k_tests);
-      group "warmup"
-        [
-          test "the 3-batch arm floors short warmups" warmup_batch_arm;
-          test "the timed arm extends past 3 batches" warmup_timed_arm;
-        ];
-      group "exactness probe"
-        [
-          test "proves a planted count at k = 1" probe_exact_at_k1;
-          test "proves a planted count at k = 8192" probe_exact_at_k8192;
-          test "runs at the frozen k when the timing recalibrates"
-            probe_runs_at_the_frozen_k;
-          test "proves the frozen k's count after a recalibration"
-            probe_at_the_frozen_k_proves_its_count;
-          test "runs at the calibrated k without a frozen k"
-            probe_without_a_frozen_k_runs_at_the_calibrated_k;
-          group "bound on the frozen k" probe_k_bound;
-          test "downgrades nondeterministic counters with a warning"
-            probe_downgrades_nondeterministic_counters;
-          test "downgrades when the 2k batch underallocates"
-            probe_downgrades_when_the_2k_batch_underallocates;
-          test "downgrades on a negative harness constant"
-            probe_downgrades_on_negative_harness_constant;
-          test "rejects backward counters" probe_rejects_backward_counters;
-          test "proves a real allocator exact under a finite deadline"
-            probe_exact_with_real_instruments;
-        ];
-      group "quality flags"
-        [
-          test "drift on a planted step" drift_flag_on_planted_step;
-          test "alternating samples do not drift (order preserved)"
-            alternating_samples_do_not_drift;
-          test "planted outliers are kept, without drift"
-            planted_outliers_are_kept;
-          test "clean case has no flags" clean_case_has_no_flags;
-        ];
-      group "deadline"
-        [
-          test "a clock jump past the cap fails the case"
-            deadline_exceeded_on_clock_jump;
-          test "deadline infinity removes the cap"
-            deadline_infinity_removes_the_cap;
-        ];
-      group "teardown"
-        [
-          test "runs on success" teardown_runs_on_success;
-          test "runs when the case raises" teardown_runs_when_the_case_raises;
-          test "runs when the deadline fires"
-            teardown_runs_when_the_deadline_fires;
-          test "raising teardown fails the case" raising_teardown_fails_the_case;
-          test "raising setup fails the case" raising_setup_fails_the_case;
-        ];
-      group "warnings"
-        [
-          test "gc parameter mutation names the parameter"
-            gc_param_mutation_is_warned;
-          test "sub-nanosecond medians suggest folding" fold_suspicion_is_warned;
-        ];
-      group "metrics"
-        [
-          test "cpu_time is sampled from the cpu clock" cpu_time_is_sampled;
-          test "measurement order follows the metric list"
-            measurement_order_follows_the_metric_list;
-        ];
-      group "protocol"
-        ([
-           test "trial round-trips through the wire" protocol_round_trip;
-           test "the pinned grammar parses" parse_accepts_the_pinned_grammar;
-           test "write rejects the parent-side failures"
-             write_rejects_parent_side_failures;
-         ]
-        @ failure_round_trips
-        @ [ group "malformed wire is Worker_died" malformed_tests ]);
-      group "fork"
-        [
-          test "protocol round-trips through a real fork" fork_round_trip;
-          test "a raising case is reported through the pipe"
-            fork_reports_a_raising_case;
-          test "a refused fork is Worker_died" refused_fork_is_worker_died;
-          test "the forked child does not check the deadline"
-            forked_child_does_not_check_the_deadline;
-          test "the parent kills a hung worker at the deadline"
-            parent_kills_a_hung_worker_at_the_deadline;
-          (* Its own limit: a blocking reap would otherwise wedge the run. *)
-          test ~timeout:30. "a stopped worker is killed and reaped"
-            a_stopped_worker_is_killed_and_reaped;
-        ];
+      cases "pp_failure prints"
+        ~name:(fun (_, s) -> s)
+        printed_failures
+        (fun (f, s) ->
+          equal string s (Format.asprintf "%a" Measure.pp_failure f));
+      test "a raising case is Case_raised with the exception's text"
+        a_raising_case_is_case_raised;
+      test "a raising setup is Case_raised" a_raising_setup_is_case_raised;
+      test "a raising teardown is Case_raised" a_raising_teardown_is_case_raised;
+      test "a teardown raising after another failure keeps the first"
+        a_raising_teardown_keeps_the_first_failure;
+      test "an in-process case past its deadline is Deadline_exceeded"
+        past_the_deadline_in_process;
+      slow ~timeout:30. "a raise in a forked worker is Case_raised" forked_raise;
+      slow ~timeout:30.
+        "a forked worker that exits is Worker_died with its code" forked_exit;
+      slow ~timeout:30.
+        "a forked worker killed by a signal is Worker_died with its name"
+        forked_kill;
+      slow ~timeout:30. "a forked worker hung in one call is Deadline_exceeded"
+        forked_hang;
+      slow ~timeout:30. "a stopped worker is Worker_died, killed and reaped"
+        a_stopped_worker_is_killed_and_reaped;
+      slow ~timeout:30. "a refused fork is Worker_died and leaks no descriptor"
+        a_refused_fork_is_worker_died;
     ]
-  |> exit
+
+(* Measuring *)
+
+(* At 1 ms a call, batches of 1, 2 and 4 calls stay under the 5 ms floor. *)
+let calibration_doubles_k () =
+  let w = world () in
+  let t =
+    get_trial (measure ~config:wall_only w (case w (constant_ns ms_ns)))
+  in
+  equal int 8 (Run.Trial.k t);
+  equal (list int)
+    ([ 1; 2; 4; 8; 8; 8; 8 ] @ List.init 20 (fun _ -> 8))
+    (batches w)
+
+(* A frozen k of 4 is kept while its batch lasts 1 ms to 25 ms, 0.2 and 5
+   times the 5 ms floor. *)
+let frozen_k_window =
+  [
+    ("inside the window", 1_000_000, 4);
+    ("just above the low edge", 260_000, 4);
+    ("below the low edge, recalibrated", 240_000, 32);
+    ("just under the high edge", 6_000_000, 4);
+    ("above the high edge, recalibrated", 6_500_000, 1);
+  ]
+
+(* At 5 ms a call a frozen k of 1 lasts the floor and is kept. *)
+let only_a_frozen_k_below_1_raises () =
+  let w = world () in
+  raises (Invalid_argument "Measure.case: frozen_k must be >= 1") (fun () ->
+      measure ~frozen_k:0 w (case w (constant_ns ms_ns)));
+  let t =
+    get_trial (measure ~frozen_k:1 w (case w (constant_ns (5 * ms_ns))))
+  in
+  equal int 1 (Run.Trial.k t)
+
+let warmup_runs_3_batches () =
+  let w = world () in
+  ignore
+    (get_trial (measure ~config:wall_only w (case w (constant_ns (5 * ms_ns)))));
+  equal (list int) (ones 24) (batches w)
+
+(* 32.5 ms of warmup at 5 ms a batch is 7 batches. *)
+let warmup_runs_its_time () =
+  let w = world () in
+  let config = Config.(wall_only |> warmup 0.0325) in
+  ignore (get_trial (measure ~config w (case w (constant_ns (5 * ms_ns)))));
+  equal (list int) (ones 28) (batches w)
+
+let each_batch_gives_one_sample () =
+  let w = world () in
+  let c =
+    resolved
+      (Bench.bench "cpu" (fun () ->
+           w.calls <- w.calls + 1;
+           w.now <- w.now + (5 * ms_ns);
+           w.cpu <- w.cpu + (2 * ms_ns)))
+  in
+  let config =
+    Config.(scripted_config |> metrics [ Metric.wall_time; Metric.cpu_time ])
+  in
+  let t = get_trial (measure ~config w c) in
+  equal
+    (array (float 1e-15))
+    (Array.make 20 5e-3) (sampled Metric.wall_time t).Run.sorted;
+  equal
+    (array (float 1e-15))
+    (Array.make 20 2e-3) (sampled Metric.cpu_time t).Run.sorted
+
+let measurements_follow_the_metrics () =
+  let w = world () in
+  let config =
+    Config.(scripted_config |> metrics [ Metric.alloc_words; Metric.wall_time ])
+  in
+  let t = get_trial (measure ~config w (case w (fun _ -> (5 * ms_ns, 54.)))) in
+  equal (list string)
+    [ "alloc_words"; "wall_time" ]
+    (List.map (fun (m, _) -> Metric.id m) (Run.Trial.measurements t))
+
+let case_metrics_replace_config_metrics () =
+  let w = world () in
+  let c =
+    resolved
+      (Bench.bench ~metrics:[ Metric.cpu_time ] "case"
+         (stepper w (constant_ns (5 * ms_ns))))
+  in
+  let t = get_trial (measure w c) in
+  equal (list string) [ "cpu_time" ]
+    (List.map (fun (m, _) -> Metric.id m) (Run.Trial.measurements t))
+
+(* The drift test reads collection order: alternating 5 and 6 ms calls sort
+   into two halves as different as they can be, and do not drift. *)
+let drift_rows =
+  [
+    ("constant calls do not drift", false, fun _ -> 5 * ms_ns);
+    ( "alternating calls do not drift",
+      false,
+      fun call -> if call mod 2 = 0 then 6 * ms_ns else 5 * ms_ns );
+    ( "a 5% step between the halves drifts",
+      true,
+      fun call -> if call < 15 then 5 * ms_ns else 5_250_000 );
+  ]
+
+(* Calls 5 to 24 are the samples; one spike falls in each half. *)
+let outliers_are_kept () =
+  let w = world () in
+  let c =
+    case w (fun call ->
+        ((if call = 9 || call = 19 then 200 * ms_ns else 5 * ms_ns), 0.))
+  in
+  let s =
+    sampled Metric.wall_time (get_trial (measure ~config:wall_only w c))
+  in
+  equal
+    (array (float 1e-12))
+    (Array.append (Array.make 18 5e-3) [| 0.2; 0.2 |])
+    s.Run.sorted;
+  equal ~msg:"drifted" bool false s.Run.drifted
+
+let the_probe_proves_a_count_at_k_1 () =
+  let w = world () in
+  let t = get_trial (measure ~h:10. w (case w (fun _ -> (5 * ms_ns, 54.)))) in
+  equal int 1 (Run.Trial.k t);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t);
+  equal (list string) [] (Run.Trial.warnings t)
+
+(* 8192 calls of 1 us is an 8.192 ms batch, inside the window. *)
+let the_probe_proves_a_count_at_k_8192 () =
+  let w = world () in
+  let c = case w (fun _ -> (1_000, 54.)) in
+  let t = get_trial (measure ~h:10. ~frozen_k:8192 w c) in
+  equal int 8192 (Run.Trial.k t);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t)
+
+(* At 6.5 ms a call the frozen batch of 4 lasts 26 ms, past the window, and
+   calibration keeps k = 1. *)
+let recalibrated_batches frozen probe =
+  [ frozen; 1 ] @ ones 23 @ [ probe; 2 * probe ]
+
+let the_probe_runs_at_the_frozen_k () =
+  let w = world () in
+  let t =
+    get_trial
+      (measure ~h:10. ~frozen_k:4 w (case w (fun _ -> (6_500_000, 54.))))
+  in
+  equal (list int) (recalibrated_batches 4 4) (batches w);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t)
+
+(* The same protocol in a worker: its teardown writes the batches it ran,
+   since the world it scripts is the worker's copy. *)
+let the_forked_probe_runs_at_the_frozen_k () =
+  let record = temp_file () in
+  let w = world () in
+  let c =
+    resolved
+      (Bench.bench_with_setup ~id:"case"
+         ~setup:(fun () -> ())
+         ~teardown:(fun () ->
+           Out_channel.with_open_bin record (fun oc ->
+               List.iter (Printf.fprintf oc "%d\n") (batches w)))
+         "case"
+         (fun () -> stepper w (fun _ -> (6_500_000, 54.)) ()))
+  in
+  let config = Config.(default |> warmup 0.) in
+  let t =
+    get_trial
+      (Measure.case ~instruments:(scripted ~h:10. w) ~config ~frozen_k:(Some 4)
+         c)
+  in
+  let ran = In_channel.with_open_bin record In_channel.input_lines in
+  equal (list int) (recalibrated_batches 4 4) (List.map int_of_string ran);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t)
+
+(* 100 more words every 4th call: 54 words a call at k = 1, 79 at k = 4. *)
+let the_probe_proves_the_frozen_k_count () =
+  let w = world () in
+  let c =
+    case w (fun call -> (6_500_000, if call mod 4 = 0 then 154. else 54.))
+  in
+  let t = get_trial (measure ~frozen_k:4 w c) in
+  equal int 1 (Run.Trial.k t);
+  equal (option measurement) (Some (Run.Exact 79)) (alloc t)
+
+let a_first_run_probes_at_the_calibrated_k () =
+  let w = world () in
+  let t = get_trial (measure ~h:10. w (case w (fun _ -> (6_500_000, 54.)))) in
+  equal (list int) (ones 24 @ [ 1; 2 ]) (batches w);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t)
+
+(* The probe's bound at a calibrated k of 1. *)
+let probe_bound =
+  [ ("16 times k probes at 16", 16, 16); ("17 times k probes at k", 17, 1) ]
+
+(* At 0.2 ms a call the frozen batch of 2 lasts 0.4 ms, under the window,
+   and calibration doubles to 32; the probe keeps the frozen 2. *)
+let a_frozen_k_below_the_new_k_is_probed () =
+  let w = world () in
+  let t =
+    get_trial (measure ~h:10. ~frozen_k:2 w (case w (fun _ -> (200_000, 54.))))
+  in
+  equal (list int)
+    ([ 2; 1; 2; 4; 8; 16; 32 ] @ List.init 23 (fun _ -> 32) @ [ 2; 4 ])
+    (batches w);
+  equal (option measurement) (Some (Run.Exact 54)) (alloc t)
+
+(* Counts the differencing cannot prove. At 1 ms a call k = 8, where
+   alternating 54 and 55 words leave a residue; at 5 ms k = 1 and calls 25,
+   26 and 27 are the probe's batches. *)
+let unprovable =
+  [
+    ( "alternating counts",
+      10.,
+      ms_ns,
+      (fun call -> if call mod 2 = 0 then 54. else 55.),
+      __POS_OF__
+        {| alloc_words: exactness probe failed: batch deltas 446 (k=8) and 882 (2k=16) give 54.5 words per call and a per-batch overhead of 10; treating as sampled |}
+    );
+    ( "a 2k batch allocating less than the k batch",
+      0.,
+      5 * ms_ns,
+      (function 25 -> 3. | 26 | 27 -> 1. | _ -> 0.),
+      __POS_OF__
+        {| alloc_words: exactness probe failed: batch deltas 3 (k=1) and 2 (2k=2) give -1 words per call and a per-batch overhead of 4; treating as sampled |}
+    );
+    ( "a negative harness constant",
+      0.,
+      5 * ms_ns,
+      (function 25 -> 5. | 26 -> 10. | 27 -> 5. | _ -> 0.),
+      __POS_OF__
+        {| alloc_words: exactness probe failed: batch deltas 5 (k=1) and 15 (2k=2) give 10 words per call and a per-batch overhead of -5; treating as sampled |}
+    );
+  ]
+
+(* 1 ns of clock every second call is 0.5 ns a call. *)
+let a_folded_body_is_warned () =
+  let w = world () in
+  let c = case w (fun call -> ((if call mod 2 = 0 then 1 else 0), 0.)) in
+  let config = Config.(wall_only |> batch_floor 1e-6) in
+  let t = get_trial (measure ~config w c) in
+  equal (list string)
+    [ "wall_time 0.5 ns/call: possibly folded: wrap the input in black_box" ]
+    (Run.Trial.warnings t)
+
+let a_changed_gc_parameter_is_warned () =
+  let saved = Gc.get () in
+  Fun.protect
+    ~finally:(fun () -> Gc.set saved)
+    (fun () ->
+      let w = world () in
+      let changed = ref false in
+      let before = saved.Gc.space_overhead in
+      let c =
+        resolved
+          (Bench.bench "case" (fun () ->
+               if not !changed then (
+                 changed := true;
+                 Gc.set { (Gc.get ()) with Gc.space_overhead = before + 40 });
+               stepper w (constant_ns (5 * ms_ns)) ()))
+      in
+      let t = get_trial (measure ~config:wall_only w c) in
+      equal (list string)
+        [
+          Printf.sprintf
+            "gc parameter space_overhead changed during measurement (%d -> %d)"
+            before (before + 40);
+        ]
+        (Run.Trial.warnings t))
+
+let an_infinite_deadline_removes_the_cap () =
+  let w = world () in
+  let config = Config.(scripted_config |> deadline infinity) in
+  ignore (get_trial (measure ~config w (case w jump)))
+
+let a_forked_worker_never_checks_the_deadline () =
+  let w = world () in
+  let config = Config.(default |> warmup 0. |> metrics [ Metric.wall_time ]) in
+  ignore
+    (get_trial
+       (Measure.case ~instruments:(scripted w) ~config ~frozen_k:None
+          (case w jump)))
+
+(* The case raises at call 3, during calibration. *)
+let teardown_rows =
+  [
+    ("after a trial", constant_ns (5 * ms_ns));
+    ( "after the case raised",
+      fun call -> if call = 3 then failwith "case" else (5 * ms_ns, 0.) );
+    ("after the deadline passed", jump);
+  ]
+
+(* A case with its own metrics under a config that lacks one: the parent
+   parses the report against the case's. *)
+let a_forked_case_returns_its_trial () =
+  let c =
+    resolved
+      (Bench.bench
+         ~metrics:[ Metric.wall_time; Metric.alloc_words; Metric.cpu_time ]
+         "ref" (fun () -> Sys.opaque_identity (ref 0)))
+  in
+  let t = get_trial (Measure.case ~config:fork_config ~frozen_k:None c) in
+  at_least int ~than:1 (Run.Trial.k t);
+  equal int 3 (Array.length (sampled Metric.cpu_time t).Run.sorted);
+  equal (option measurement) (Some (Run.Exact 2)) (alloc t)
+
+let measuring =
+  group "Measuring"
+    [
+      test "calibration doubles k until a batch lasts the floor"
+        calibration_doubles_k;
+      cases "a frozen k of 4"
+        ~name:(fun (name, _, _) -> name)
+        frozen_k_window
+        (fun (_, dt_ns, k) ->
+          let w = world () in
+          let t =
+            get_trial
+              (measure ~config:wall_only ~frozen_k:4 w
+                 (case w (constant_ns dt_ns)))
+          in
+          equal int k (Run.Trial.k t));
+      test "only a frozen k below 1 raises" only_a_frozen_k_below_1_raises;
+      test "warmup runs at least 3 batches" warmup_runs_3_batches;
+      test "warmup runs until its time has passed" warmup_runs_its_time;
+      test "each sampling batch gives every sampled metric one per-call sample"
+        each_batch_gives_one_sample;
+      test "the measurements follow the metric list"
+        measurements_follow_the_metrics;
+      test "a case's metrics replace the config's"
+        case_metrics_replace_config_metrics;
+      cases "drift"
+        ~name:(fun (name, _, _) -> name)
+        drift_rows
+        (fun (_, drifted, step) ->
+          let w = world () in
+          let c = case w (fun call -> (step call, 0.)) in
+          let s =
+            sampled Metric.wall_time (get_trial (measure ~config:wall_only w c))
+          in
+          equal bool drifted s.Run.drifted);
+      test "outliers are kept" outliers_are_kept;
+      test "the probe proves a count at k = 1" the_probe_proves_a_count_at_k_1;
+      test "the probe proves a count at k = 8192"
+        the_probe_proves_a_count_at_k_8192;
+      test "the probe runs at the frozen k when the timing recalibrates"
+        the_probe_runs_at_the_frozen_k;
+      slow ~timeout:30.
+        "a forked probe runs at the frozen k when the timing recalibrates"
+        the_forked_probe_runs_at_the_frozen_k;
+      test "the probe proves the frozen k's count"
+        the_probe_proves_the_frozen_k_count;
+      test "a first run probes at the calibrated k"
+        a_first_run_probes_at_the_calibrated_k;
+      cases "a frozen k of 16 or 17 at a calibrated k of 1"
+        ~name:(fun (name, _, _) -> name)
+        probe_bound
+        (fun (_, frozen, probe) ->
+          let w = world () in
+          let c = case w (fun _ -> (6_500_000, 54.)) in
+          let t = get_trial (measure ~h:10. ~frozen_k:frozen w c) in
+          equal (list int) (recalibrated_batches frozen probe) (batches w);
+          equal (option measurement) (Some (Run.Exact 54)) (alloc t));
+      test "a frozen k below the recalibrated one is the probe's"
+        a_frozen_k_below_the_new_k_is_probed;
+      cases "a count the probe cannot prove stays sampled"
+        ~name:(fun (name, _, _, _, _) -> name)
+        unprovable
+        (fun (_, h, dt_ns, words, pos) ->
+          let w = world () in
+          let t =
+            get_trial (measure ~h w (case w (fun call -> (dt_ns, words call))))
+          in
+          ignore (sampled Metric.alloc_words t);
+          expect (String.concat "\n" (Run.Trial.warnings t)) pos);
+      test "a median under 1 ns a call warns of a folded body"
+        a_folded_body_is_warned;
+      test "a GC parameter the case changed is warned by name"
+        a_changed_gc_parameter_is_warned;
+      test "an infinite deadline removes the in-process cap"
+        an_infinite_deadline_removes_the_cap;
+      slow ~timeout:30. "a forked worker never checks the deadline"
+        a_forked_worker_never_checks_the_deadline;
+      cases "the teardown runs once"
+        ~name:(fun (name, _) -> name)
+        teardown_rows
+        (fun (_, step) ->
+          let w = world () and torn = ref 0 in
+          ignore (measure w (torn_down w ~torn step));
+          equal int 1 !torn);
+      slow ~timeout:30. "a forked case returns its trial through the pipe"
+        a_forked_case_returns_its_trial;
+    ]
+
+(* The worker pipe protocol *)
+
+let text = Gen.string_of (Gen.char_range ' ' '~')
+
+let gen_report =
+  let open Gen in
+  let sampled =
+    let+ values = list ~size:(int_range 3 6) (such_that Float.is_finite float)
+    and+ drifted = bool in
+    let sorted = Array.of_list (List.sort Float.compare values) in
+    Run.Samples (Run.sampled ~sorted ~drifted)
+  in
+  let count = one_of [ map (fun v -> Run.Exact v) nat; sampled ] in
+  let entry m g =
+    let+ kept = bool and+ x = g in
+    if kept then [ (m, x) ] else []
+  in
+  let trial =
+    let+ k = int_range 1 (1 lsl 30)
+    and+ wall = entry Metric.wall_time sampled
+    and+ cpu = entry Metric.cpu_time sampled
+    and+ words = entry Metric.alloc_words count
+    and+ collections = entry Metric.minor_collections count
+    and+ warnings = list ~size:(int_range 0 3) text in
+    Ok
+      (Run.Trial.make ~k ~warnings
+         (List.concat [ wall; cpu; words; collections ]))
+  in
+  let raised =
+    map (fun exn -> Error (Measure.Case_raised { case = "c"; exn })) text
+  in
+  frequency [ (4, trial); (1, raised) ]
+
+let written r =
+  let b = Buffer.create 256 in
+  Measure.Protocol.write b r;
+  Buffer.contents b
+
+let metrics_of = function
+  | Ok t -> List.map fst (Run.Trial.measurements t)
+  | Error _ -> []
+
+let a_drifted_trial =
+  Ok
+    (Run.Trial.make ~k:8192
+       ~warnings:[ "wall_time 0.5 ns/call: possibly folded" ]
+       [
+         ( Metric.wall_time,
+           Run.Samples
+             (Run.sampled
+                ~sorted:[| 6.883e-7; 6.911e-7; 7.084e-7 |]
+                ~drifted:true) );
+         (Metric.alloc_words, Run.Exact 54);
+       ])
+
+let three = Run.sampled ~sorted:[| 0x1p-21; 0x1.8p-21; 0x1p-20 |] ~drifted:false
+
+let wire_rows =
+  [
+    ( "a trial",
+      "k 8\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      Run.Trial.make ~k:8
+        [
+          (Metric.wall_time, Run.Samples three);
+          (Metric.alloc_words, Run.Exact 54);
+        ] );
+    ( "metric lines in either order",
+      "k 8\n\
+       exact alloc_words 0\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       end\n",
+      Run.Trial.make ~k:8
+        [
+          (Metric.alloc_words, Run.Exact 0);
+          (Metric.wall_time, Run.Samples three);
+        ] );
+    ( "warning lines",
+      "k 8\n\
+       exact alloc_words 54\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       warning a b\n\
+       end\n",
+      Run.Trial.make ~k:8 ~warnings:[ "a b" ]
+        [
+          (Metric.alloc_words, Run.Exact 54);
+          (Metric.wall_time, Run.Samples three);
+        ] );
+  ]
+
+let both = [ Metric.wall_time; Metric.alloc_words ]
+
+let valid =
+  "k 8\n\
+   samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+   exact alloc_words 54\n\
+   end\n"
+
+let samples_line = "samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n"
+
+let malformed =
+  [
+    ("empty output", "", __POS_OF__ {| malformed worker output: empty output |});
+    ( "no final newline",
+      "k 8\nend",
+      __POS_OF__
+        {| malformed worker output: truncated output: no final newline |} );
+    ( "no end line",
+      "k 8\nexact alloc_words 54\n",
+      __POS_OF__ {| malformed worker output: truncated output: missing end |} );
+    ( "text after end",
+      valid ^ "garbage\n",
+      __POS_OF__ {| malformed worker output: text after end |} );
+    ( "an unknown first line",
+      "deadline\n",
+      __POS_OF__
+        {| malformed worker output: expected "k <int>", got "deadline" |} );
+    ( "text after raised",
+      "raised boom\nend\n",
+      __POS_OF__ {| malformed worker output: text after raised |} );
+    ( "a k line without k",
+      "batch 8\nend\n",
+      __POS_OF__
+        {| malformed worker output: expected "k <int>", got "batch 8" |} );
+    ( "a batch size that is no number",
+      "k eight\nend\n",
+      __POS_OF__ {| malformed worker output: unparseable batch size "eight" |}
+    );
+    ( "a batch size below 1",
+      "k 0\n" ^ samples_line ^ "exact alloc_words 54\nend\n",
+      __POS_OF__
+        {| malformed worker output: invalid trial: Run.Trial.make: k 0 < 1 |} );
+    ( "an unknown metric",
+      "k 8\nexact bogus 54\n" ^ samples_line ^ "end\n",
+      __POS_OF__ {| malformed worker output: unknown metric "bogus" |} );
+    ( "an exact clock metric",
+      "k 8\nexact wall_time 5\nexact alloc_words 54\nend\n",
+      __POS_OF__
+        {| malformed worker output: invalid trial: Run.Trial.make: exact evidence for wall_time, which no probe can prove exact |}
+    );
+    ( "an exact value that is no number",
+      "k 8\nexact alloc_words fifty\n" ^ samples_line ^ "end\n",
+      __POS_OF__ {| malformed worker output: unparseable exact value "fifty" |}
+    );
+    ( "a negative exact value",
+      "k 8\nexact alloc_words -3\n" ^ samples_line ^ "end\n",
+      __POS_OF__ {| malformed worker output: negative exact value -3 |} );
+    ( "a missing metric",
+      "k 8\nexact alloc_words 54\nend\n",
+      __POS_OF__ {| malformed worker output: expected 2 measurements, got 1 |}
+    );
+    ( "a repeated metric",
+      "k 8\nexact alloc_words 54\nexact alloc_words 54\n" ^ samples_line
+      ^ "end\n",
+      __POS_OF__ {| malformed worker output: expected 2 measurements, got 3 |}
+    );
+    ( "a sample count above the values",
+      "k 8\n\
+       samples wall_time 999999999 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__
+        {| malformed worker output: sample count 999999999 disagrees with 3 values present |}
+    );
+    ( "a sample count below the values",
+      "k 8\n\
+       samples wall_time 2 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__
+        {| malformed worker output: sample count 2 disagrees with 3 values present |}
+    );
+    ( "a sample that is no number",
+      "k 8\n\
+       samples wall_time 3 0 0x1p-21 six 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__ {| malformed worker output: unparseable sample "six" |} );
+    ( "unsorted samples",
+      "k 8\n\
+       samples wall_time 3 0 0x1p-20 0x1.8p-21 0x1p-21\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__
+        {| malformed worker output: invalid samples: Run.sampled: vector not sorted ascending |}
+    );
+    ( "a non-finite sample",
+      "k 8\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 inf\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__
+        {| malformed worker output: invalid samples: Run.sampled: non-finite sample |}
+    );
+    ( "a drifted flag that is no number",
+      "k 8\n\
+       samples wall_time 3 0,0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__ {| malformed worker output: unparseable drifted flag "0,0" |}
+    );
+    ( "a drifted flag other than 0 or 1",
+      "k 8\n\
+       samples wall_time 3 2 0x1p-21 0x1.8p-21 0x1p-20\n\
+       exact alloc_words 54\n\
+       end\n",
+      __POS_OF__ {| malformed worker output: unparseable drifted flag "2" |} );
+    ( "a measurement line after a warning",
+      "k 8\n" ^ samples_line ^ "warning w\nexact alloc_words 54\nend\n",
+      __POS_OF__
+        {| malformed worker output: measurement line after warnings: "exact alloc_words 54" |}
+    );
+  ]
+
+let the_protocol =
+  group "The worker pipe protocol"
+    [
+      prop "parse reads back what write wrote" ~examples:[ a_drifted_trial ]
+        gen_report (fun r ->
+          equal (result trial failure) r
+            (Measure.Protocol.parse ~case:"c" ~metrics:(metrics_of r)
+               (written r)));
+      test "write turns newlines in a warning into spaces" (fun () ->
+          let t = Run.Trial.make ~k:1 ~warnings:[ "a\nb\rc" ] [] in
+          equal string "k 1\nwarning a b c\nend\n" (written (Ok t)));
+      test "a raised case is one raised line" (fun () ->
+          equal string "raised Failure(\"a b\")\n"
+            (written
+               (Error
+                  (Measure.Case_raised { case = "c"; exn = "Failure(\"a\nb\")" }))));
+      cases "write refuses a failure only the parent produces" ~name:fst
+        [
+          ("Worker_died", Measure.Worker_died { case = "c"; detail = "d" });
+          ( "Deadline_exceeded",
+            Measure.Deadline_exceeded { case = "c"; deadline = 1. } );
+        ]
+        (fun (_, f) ->
+          raises
+            (Invalid_argument
+               "Measure.Protocol.write: Deadline_exceeded and Worker_died are \
+                parent-side classifications") (fun () -> written (Error f)));
+      cases "parse reads"
+        ~name:(fun (name, _, _) -> name)
+        wire_rows
+        (fun (_, wire, expected) ->
+          equal (result trial failure) (Ok expected)
+            (Measure.Protocol.parse ~case:"c" ~metrics:both wire));
+      cases "malformed output is Worker_died"
+        ~name:(fun (name, _, _) -> name)
+        malformed
+        (fun (_, wire, pos) ->
+          let detail =
+            require_match
+              (function
+                | Error (Measure.Worker_died { case = "c"; detail }) ->
+                    Some detail
+                | Ok _ | Error _ -> None)
+              (Measure.Protocol.parse ~case:"c" ~metrics:both wire)
+          in
+          expect detail pos);
+    ]
+
+let () = exit (run "measure" [ instruments; failures; measuring; the_protocol ])
