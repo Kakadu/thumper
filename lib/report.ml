@@ -5,6 +5,10 @@
 
 let strf = Printf.sprintf
 
+(* Every escape sequence thumper writes starts here: the styles of [styled]
+   and the status line's erase. *)
+let csi s = "\027[" ^ s
+
 let styled ~color style s =
   if not color then s
   else
@@ -16,7 +20,7 @@ let styled ~color style s =
       | `Bold -> "1"
       | `Faint -> "2"
     in
-    strf "\027[%sm%s\027[0m" code s
+    csi (code ^ "m") ^ s ^ csi "0m"
 
 (* The status line *)
 
@@ -27,6 +31,11 @@ let status_line (p : Check.progress) =
     | `Confirming -> "confirming"
   in
   strf "thumper: %s %d/%d — %s" verb p.Check.index p.Check.total p.Check.case
+
+(* The carriage return goes back to column 0 and the erase clears what a
+   longer previous line left beyond the new one. *)
+let status_erase = "\r" ^ csi "K"
+let status_redraw p = "\r" ^ status_line p ^ csi "K"
 
 (* Value formatting *)
 

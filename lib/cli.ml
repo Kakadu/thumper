@@ -467,9 +467,9 @@ let checked f =
 let with_status f =
   if not (Unix.isatty Unix.stderr) then f (fun _ -> ())
   else
-    let tick p = Printf.eprintf "\r%s\027[K%!" (Report.status_line p) in
+    let tick p = Printf.eprintf "%s%!" (Report.status_redraw p) in
     Fun.protect
-      ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
+      ~finally:(fun () -> Printf.eprintf "%s%!" Report.status_erase)
       (fun () -> f tick)
 
 (* A malformed THUMPER_MACHINE is a usage error (exit 2), not a crash. *)

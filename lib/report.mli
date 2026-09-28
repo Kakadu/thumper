@@ -23,6 +23,15 @@ val status_line : Check.progress -> string
     sequence. {!Cli.main} prints it on stderr at each tick while [check] and
     [bless] measure, when stderr is a terminal. *)
 
+val status_redraw : Check.progress -> string
+(** [status_redraw p] is the bytes that replace the status line on a terminal
+    with [status_line p]: a carriage return, [status_line p], and the erase to
+    the end of the line. *)
+
+val status_erase : string
+(** [status_erase] is the bytes that erase the status line on a terminal: a
+    carriage return and the erase to the end of the line. *)
+
 val shell_arg : string -> string
 (** [shell_arg s] is [s] as one argument of a POSIX shell command: [s] itself
     when it is non-empty and each of its bytes is an ASCII letter, a digit or
