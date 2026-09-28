@@ -712,8 +712,8 @@ module Verdict : sig
       - an improved metric's row advances, to the samples of both trials, which
         share one batch size, or to the new exact count;
       - a proposed metric's row is added;
-      - on a full selection, the rows of cases the suite no longer has are
-        removed;
+      - when {!Thumper.run}'s [check] selects every case, the rows of cases the
+        suite no longer has are removed; {!Check.run} removes none;
       - every other row and byte stays, other machines' sections included.
 
       Against a missing or stale section, the section is recorded from this
@@ -770,6 +770,9 @@ module Check : sig
         section for this machine is missing or stale, every metric is proposed.
 
       [name] is the suite's name.
+
+      [benches] need not be the whole suite: in a current section, the corrected
+      file ({!Verdict.corrected}) keeps every row the run did not judge.
 
       The run measures every selected case once, then judges. A sampled
       improvement or regression is measured again in a second trial, after every

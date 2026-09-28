@@ -220,9 +220,9 @@ val judge :
     - [identity] is this machine's identity; its [ocaml] decides staleness.
     - [suite] heads the file {!corrected} builds over the empty-file baseline.
     - [load] is the load the first pass is judged under.
-    - [selection] must be [`Full] iff [cases] is every case of the suite. On a
-      compared section, [`Full] lets {!corrected} prune the rows of absent cases
-      and adds one warning per pruned case id ({!val-warnings}).
+    - [selection] may be [`Full] only when [cases] is every case of the suite.
+      On a compared section, [`Full] lets {!corrected} prune the rows of absent
+      cases and adds one warning per pruned case id ({!val-warnings}).
     - [budgets] are the suite's budgets. For each metric a case's own budget
       wins and the others inherit [budgets]; budgets on metrics the trial did
       not measure are dropped, and a case left with none gets

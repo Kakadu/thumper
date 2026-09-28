@@ -585,7 +585,10 @@ let uncollected_budgets_are_invalid_suite () =
         ]);
   equal ~msg:"no case was measured" int 0 w.calls
 
-let selection_plumbs_full_vs_partial () =
+let only_the_suite_owner_prunes () =
+  (* [benches] need not be the whole suite: a library check keeps every row
+     it did not judge. Only a caller holding the whole suite passes
+     [~prune:true], and then only a selection of every case prunes. *)
   let w = world () in
   let baseline =
     baseline_of [ wall_row "a" (ties 1.0e-3); wall_row "dead" (ties 1.0e-3) ]
@@ -595,23 +598,39 @@ let selection_plumbs_full_vs_partial () =
   let has_prune_notice v =
     List.exists (fun s -> contains ~sub:"dead" s) (Verdict.warnings v)
   in
-  let v_full =
+  let keeps_dead v =
+    match Verdict.corrected v with
+    | None -> true
+    | Some f -> contains ~sub:"dead\t" (Baseline.to_string f)
+  in
+  let v_library =
     Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       "digest"
       [ bench_a () ]
   in
-  is_true ~msg:"a full selection notices the dead row" (has_prune_notice v_full);
+  equal ~msg:"a library check prunes nothing" (list string) []
+    (Verdict.warnings v_library);
+  is_true ~msg:"its corrected file keeps the unjudged row"
+    (keeps_dead v_library);
+  let v_full =
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
+      ~prune:true "digest"
+      [ bench_a () ]
+  in
+  is_true ~msg:"the suite's owner notices the dead row"
+    (has_prune_notice v_full);
+  is_true ~msg:"and prunes it" (not (keeps_dead v_full));
   (* A filter matching every case is still a full selection. *)
   let v_all =
     Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      ~filter:(`Id "") "digest"
+      ~prune:true ~filter:(`Id "") "digest"
       [ bench_a () ]
   in
   is_true ~msg:"an all-matching filter is a full selection"
     (has_prune_notice v_all);
   let v_partial =
     Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      ~filter:(`Id "a") "digest"
+      ~prune:true ~filter:(`Id "a") "digest"
       [ bench_a (); bench_b () ]
   in
   equal ~msg:"a narrowed selection never prunes" (list string) []
@@ -843,8 +862,7 @@ let () =
             duplicate_ids_are_invalid_suite;
           test "a budget on an uncollected metric is an invalid suite"
             uncollected_budgets_are_invalid_suite;
-          test "full vs partial selection plumbs to the prune rule"
-            selection_plumbs_full_vs_partial;
+          test "only the suite's owner prunes" only_the_suite_owner_prunes;
         ];
       group "operational failures"
         [

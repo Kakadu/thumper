@@ -1588,6 +1588,32 @@ let partial_bless_rerecords_the_selected_cases_only () =
   is_true ~msg:"unselected rows dropped (wholesale re-record)"
     (not (contains (corrected ()) "g/beta"))
 
+(* The command line holds the whole suite, so a check of every case prunes
+   the rows of a case the suite no longer has. *)
+let check_prunes_a_vanished_case () =
+  let dir = temp_dir () in
+  e2e_env dir;
+  let bl = Filename.concat dir "digest.thumper" in
+  let current = { ident with Baseline.ocaml = Env.ocaml_identity () } in
+  Baseline.write bl
+    (Baseline.set_section
+       (Baseline.empty ~suite:"digest")
+       current
+       [ wall_row "alpha" (ties 5 1e-6); wall_row "dead" (ties 5 1e-6) ]);
+  let (_ : int) =
+    with_quiet_stderr (fun () ->
+        Cli.main ~config:fast_config
+          ~argv:[| "bench.exe"; "check"; "--baseline"; bl |]
+          ~name:"digest" benches)
+  in
+  assert_contains ~msg:"the prune notice" (output ())
+    "case dead no longer exists in this binary; its rows will be pruned from \
+     the corrected file";
+  let corrected =
+    In_channel.with_open_bin (bl ^ ".corrected") In_channel.input_all
+  in
+  is_true ~msg:"the row is pruned" (not (contains corrected "dead\t"))
+
 (* The real fixture executable, invoked through its [_build] path from a
    scratch cwd: the candidate must land next to the fixture's {e source}
    directory (test/cram/fixture — the committable location), and an explicit
@@ -1815,6 +1841,7 @@ let () =
           test "--strict turns NEW into exit 1" strict_turns_new_into_exit_1;
           test "a partial bless re-records the selected cases only"
             partial_bless_rerecords_the_selected_cases_only;
+          test "check prunes a vanished case" check_prunes_a_vanished_case;
           test "default path lands next to the benchmark source"
             default_path_lands_next_to_the_source;
         ];

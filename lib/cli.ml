@@ -1302,8 +1302,8 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     checked (fun () ->
         with_status (fun tick ->
             with_lock_progress (fun () ->
-                Check.run_with ~on_progress:tick ~config ?budgets ?filter
-                  ?baseline:file name benches)))
+                Check.run_with ~on_progress:tick ~config ?budgets ~prune:true
+                  ?filter ?baseline:file name benches)))
   in
   (* The JSON document first: its contract is "present iff measurement
      completed", and measurement has — a corrected-file write that fails (a
