@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type t = {
   n : int;
   batch_floor : float;
@@ -13,18 +15,19 @@ type t = {
   fork : bool;
 }
 
-(* Power: at CoV ≈ 2%, m = n = 20 detects ~3% shifts;
-   scaled against the ~0.4 s case budget. *)
+(* At a CoV of about 2%, 20 samples on each side detect a shift of about 3%,
+   and fit a case budget of about 0.4 s. *)
 let default_n = 20
 let quick_n = 11
 let precise_n = 40
 
-(* Clock read: ≤ 0.01% of a batch needs ≥ 1 ms; the ×5
-   margin lets one batch amortize a minor-GC cycle. *)
+(* A clock read is at most 0.01% of a batch of 1 ms or more; the fivefold
+   margin lets one batch amortize a minor collection. *)
 let default_batch_floor = 5e-3
 
-(* Warmup: fixed, never adaptive (protocol identity);
-   sized to cover frequency ramp and cache/pagefault settling. *)
+(* Warmup is fixed, never adaptive, so every trial runs one protocol; it is
+   long enough for the CPU frequency to ramp and for caches and page faults to
+   settle. *)
 let default_warmup_time = 0.1
 let default_warmup_batches = 3
 
@@ -42,13 +45,7 @@ let default_warmup_batches = 3
    takes the slowdown times its baseline time of 1 to 25 ms, so only a case
    slowed by several hundred times can reach the deadline there. *)
 let default_deadline = 10.
-
-(* Default quantities: wall_time (sampled) and alloc_words (exact when
-   proven); the rest are opt-in. *)
 let default_metrics = [ Metric.wall_time; Metric.alloc_words ]
-
-(* Forked worker per case is the default; [fork false] is the
-   in-process library/test seam. *)
 let default_fork = true
 
 let default =
@@ -67,16 +64,15 @@ let precise = { default with n = precise_n }
 
 let samples n t =
   if n < 3 then
-    invalid_arg
-      (Printf.sprintf "Thumper.Config.samples: %d (need at least 3 batches)" n);
+    invalid_arg (strf "Thumper.Config.samples: %d (need at least 3 batches)" n);
   { t with n }
 
 let batch_floor s t =
-  (* [not (s > 0.)] also rejects NaN; the explicit finiteness check rejects
-     [infinity] (calibration would never meet the floor). *)
+  (* NaN fails [s > 0.]; [infinity] is refused because calibration would never
+     reach the floor. *)
   if (not (s > 0.)) || not (Float.is_finite s) then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "Thumper.Config.batch_floor: %g (need a finite positive duration in \
           seconds)"
          s);
@@ -85,7 +81,7 @@ let batch_floor s t =
 let warmup s t =
   if (not (s >= 0.)) || not (Float.is_finite s) then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "Thumper.Config.warmup: %g (need a finite non-negative duration in \
           seconds)"
          s);
@@ -95,8 +91,8 @@ let deadline s t =
   (* [infinity] passes and removes the cap; NaN fails [s > 0.]. *)
   if not (s > 0.) then
     invalid_arg
-      (Printf.sprintf
-         "Thumper.Config.deadline: %g (need a positive duration in seconds)" s);
+      (strf "Thumper.Config.deadline: %g (need a positive duration in seconds)"
+         s);
   { t with deadline = s }
 
 let rec check_no_duplicate = function
