@@ -195,7 +195,7 @@ $ dune exec examples/06-programmatic/programmatic.exe
 == measure: evidence, no judgment ==
 rev  wall_time median 1399 ns (11 samples), alloc_words exact 3000
 sum  wall_time median 2769 ns (11 samples), alloc_words exact 0
-== check: the CI gate as a program ==
+== check: judge against a baseline ==
 recorded first section for machine ca352e279bc47cb1
 {"overall":"inconclusive","machine":"ca352e279bc47cb1","summary":{"wall_time":{"n_improved":0,"n_regressed":0,"n_equivalent":1,"n_inconclusive":1,"geomean_delta":0.0032353722919238326},"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":2,"n_inconclusive":0,"geomean_delta":0}},"cases":[...]}
 exit code: 0

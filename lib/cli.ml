@@ -1358,7 +1358,7 @@ let help_text exe =
       "  --baseline PATH    baseline file (default: <suite>.thumper next to";
       "                     the benchmark's source; a rule action's cwd)";
       "  --json PATH        check: write the verdict document to PATH";
-      "  --strict           check: inconclusive, NEW, and stale exit 1";
+      "  --strict           check: inconclusive, proposed, and stale exit 1";
       "  --wait-quiet SECS  wait up to SECS for a quiet host before measuring";
       "  --force            bless despite a loaded host (recorded)";
       "  --color MODE       color the report: auto (default), always, never";

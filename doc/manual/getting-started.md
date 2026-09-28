@@ -234,7 +234,7 @@ error:
 | `--quick` / `--precise` | check, bless | 11 / 40 timed batches instead of 20 |
 | `--baseline PATH` | check, bless | the baseline file; default `<suite>.thumper` next to the benchmark's source (see [Checking](checking.md#the-grammar)) |
 | `--json PATH` | check | write the [JSON verdict](checking.md#the-json-verdict) |
-| `--strict` | check | inconclusive, NEW, and stale [exit 1](checking.md#exit-codes) |
+| `--strict` | check | inconclusive, proposed, and stale [exit 1](checking.md#exit-codes) |
 | `--wait-quiet SECS` | check, bless | wait for a quiet machine ([Machines and noise](machines-and-noise.md)) |
 | `--force` | bless | `bless` despite a busy machine ([Machines and noise](machines-and-noise.md)) |
 | `--color MODE` | all | `auto` (default), `always`, `never`; `always` beats `NO_COLOR` |

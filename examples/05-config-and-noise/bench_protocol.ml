@@ -24,7 +24,7 @@
    comparisons still gate. Inconclusive exits 0. Knobs for better hosts:
 
      --wait-quiet 60    wait up to 60 s for a quiet host instead of degrading
-     --strict           inconclusive, NEW, and stale exit 1 — for dedicated
+     --strict           inconclusive, proposed, and stale exit 1 — for dedicated
                         runners that must never go green on unread evidence
      --color never      strip ANSI styling from the report (auto honors
                         NO_COLOR; --color always overrides it)

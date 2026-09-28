@@ -61,9 +61,9 @@ let at_most ~metric v =
   if not (Metric.exact_capable metric) then
     invalid_arg
       (Printf.sprintf
-         "Thumper.Budget.at_most: metric %s can never be measured exactly, \
-          and an absolute cap gates proven exact evidence only; use a \
-          relative budget"
+         "Thumper.Budget.at_most: metric %s can never be measured exactly, and \
+          an absolute cap applies to exact evidence only; use a relative \
+          budget"
          (Metric.id metric));
   { metric; contract = Absolute_max v }
 

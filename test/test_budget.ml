@@ -189,7 +189,9 @@ let rejects_at_most_on_never_exact_metrics () =
     (fun m ->
       raises_match
         (function
-          | Invalid_argument msg -> contains msg "can never be measured exactly"
+          | Invalid_argument msg ->
+              contains msg "can never be measured exactly"
+              && contains msg "applies to exact evidence only"
           | _ -> false)
         (fun () -> ignore (Budget.at_most ~metric:m 1.0)))
     [ Metric.wall_time; Metric.cpu_time ]

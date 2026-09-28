@@ -61,7 +61,7 @@ let () =
 
 (* The gate: check against a baseline, ratchet, expose the verdict. *)
 let () =
-  print_endline "== check: the CI gate as a program ==";
+  print_endline "== check: judge against a baseline ==";
   let path = Filename.temp_file "programmatic" ".thumper" in
   (* First pass, under the default check protocol: no [baseline], so every
      case is NEW. The candidate — retained by the verdict, no file to thread
