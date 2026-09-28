@@ -16,9 +16,8 @@ to a build-failing regression gate, to the library underneath the CLI.
 - `04-setup-and-tags` — `bench_with_setup`: fixtures outside the timed
   region, families by partial application, tags, and `--tag` / `-f`
   selection.
-- `05-config-and-noise` — the protocol as a value: presets and setters,
-  `--quick` / `--precise`, what inconclusive means, `--wait-quiet` /
-  `--strict` / `--color`, and `THUMPER_MACHINE` CI lanes.
+- `06-protocol` — the protocol as a value: a preset refined by setters,
+  the metrics a suite collects, and a case that collects fewer.
 - `07-programmatic` — the library without the CLI: `measure`, `Run`
   projections, `Baseline`, `Check.run`, and `Verdict.corrected` / `to_json` /
   `exit_code` — the CI gate as a program.
@@ -182,7 +181,6 @@ warning: load 7.6 on 10 cores; timing verdicts degraded
 
 Still exit 0 — noise is never a red build — and the exact allocation
 comparisons stayed earned and visible while the timing side degraded.
-Example 05 is about exactly this.
 
 ## The library without the command line (example 07)
 
