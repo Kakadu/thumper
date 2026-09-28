@@ -13,9 +13,8 @@ to a build-failing regression gate, to the library underneath the CLI.
   `no_more_alloc_than 0.0` allocation pin, an absolute `at_most` cap, and
   per-metric inheritance — a case that relaxes wall time keeps its group's
   allocation pin.
-- `04-setup-and-tags` — `bench_with_setup`: fixtures outside the timed
-  region, families by partial application, tags, and `--tag` / `-f`
-  selection.
+- `04-fixtures` — `bench_with_setup`: fixtures outside the timed region,
+  a teardown, and a family of sizes by `List.map`.
 - `06-protocol` — the protocol as a value: a preset refined by setters,
   the metrics a suite collects, and a case that collects fewer.
 - `07-programmatic` — the library without the CLI: `measure`, `Run`
@@ -52,13 +51,11 @@ PATH` points the whole flow anywhere, as example 03 shows.)
 (id substring, OR'd) and `--tag` (exact membership, AND'd):
 
 ```
-$ dune exec examples/04-setup-and-tags/bench_corpus.exe -- list
+$ dune exec examples/04-fixtures/bench_fixtures.exe -- list
 scan/4-KiB
 scan/64-KiB
 scan/256-KiB
 io/read-4KiB
-$ dune exec examples/04-setup-and-tags/bench_corpus.exe -- list --tag large
-scan/256-KiB
 ```
 
 ## The gate cycle (example 02)

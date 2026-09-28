@@ -1,3 +1,3 @@
 (executable
- (name bench_corpus)
+ (name bench_fixtures)
  (libraries thumper))
