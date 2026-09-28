@@ -293,9 +293,15 @@ let strong_estimate = function
           ((float_of_int candidate -. float_of_int baseline)
           /. float_of_int baseline)
 
-(* First-pass judgment of one exact (integer) comparison. *)
+(* First-pass judgment of one exact (integer) comparison. The count was
+   probed at [Measure.probe_k], the case's frozen k unless this trial's k is
+   more than 16 times smaller. *)
 let judge_exact ~budget ~case_k ~trial_k ~b ~c =
-  let k_moved = match case_k with Some kb -> kb <> trial_k | None -> false in
+  let k_moved =
+    match case_k with
+    | Some kb -> Measure.probe_k ~frozen_k:case_k ~k:trial_k <> kb
+    | None -> false
+  in
   let strong = Exact_change { baseline = b; candidate = c } in
   (* A moved batch size explains a changed count, never one over the cap. *)
   if over_cap budget c then Regressed strong

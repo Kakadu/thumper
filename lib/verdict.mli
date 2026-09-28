@@ -61,8 +61,10 @@ type reason =
   | Batch_drifted
       (** The batch size moved. For a sampled row, this trial's batch size is
           not the row's and the shift is within [2e] of zero; for an exact row,
-          it is not the case's frozen one ({!Baseline.case_frozen_k}) and the
-          counts differ. Its JSON spelling is [batch_drifted]. *)
+          the count was probed at a batch size other than the case's frozen one
+          ({!Baseline.case_frozen_k}), which happens only when the frozen one is
+          more than 16 times this trial's ({!Measure.probe_k}), and the counts
+          differ. Its JSON spelling is [batch_drifted]. *)
   | Candidate_unstable
       (** This run's samples show severe outlier variance inflation and the
           shift is within [2e] of zero. Its JSON spelling is [unstable]. *)
@@ -110,9 +112,10 @@ type strong =
     [Regressed] when it exceeds [r] of [b] or starts from [b = 0], and is
     [Changed_within_budget] otherwise. Under an [at_most] cap [v], a count
     [c > v] is [Regressed] whatever [b], and any other growth is
-    [Changed_within_budget]. When this trial's batch size is not the case's
-    frozen one ({!Baseline.case_frozen_k}), a changed count is [Batch_drifted],
-    except over the cap.
+    [Changed_within_budget]. When the count was probed at a batch size other
+    than the case's frozen one ({!Baseline.case_frozen_k}), as
+    {!Measure.probe_k} decides from the frozen one and this trial's, a changed
+    count is [Batch_drifted], except over the cap.
 
     An [at_most] cap thus yields [Equivalent None], [Improved],
     [Changed_within_budget], [Regressed] or [Inconclusive Batch_drifted] on

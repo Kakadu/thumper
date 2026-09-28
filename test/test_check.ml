@@ -374,6 +374,64 @@ let measure_ticks_each_case () =
 
 (* Frozen batch sizes *)
 
+(* A loaded host slows the case to 6.5 ms a call, and it allocates 20
+   words a call against the row's 6. The row's k observes a batch past the
+   25 ms window, and the samples recalibrate to k = 1. *)
+let exact_under_recalibration ~row_k =
+  let w = world () in
+  let words = ref 0. in
+  let instruments =
+    {
+      (scripted w) with
+      Measure.gc =
+        (fun () ->
+          {
+            Metric.minor_words = !words;
+            promoted_words = 0.;
+            major_words = 0.;
+            minor_collections = 0;
+            major_collections = 0;
+          });
+    }
+  in
+  let baseline =
+    baseline_of
+      [
+        Baseline.exact_row ~id:"a" ~metric:"alloc_words" 6;
+        wall_row ~k:row_k "a" (ties 1.0e-3);
+      ]
+  in
+  let config = Config.(base |> metrics [ m_wall; Metric.alloc_words ]) in
+  let v =
+    Check.run_with ~instruments ~load:loaded ~config
+      ~budgets:[ Budget.no_more_alloc_than 0. ]
+      ~baseline "digest"
+      [
+        Bench.bench "a" (fun () ->
+            stepper w (constant_ns 6_500_000) ();
+            words := !words +. 20.);
+      ]
+  in
+  equal ~msg:"the samples recalibrated" int 1
+    (Run.Trial.k (case_report v "a").Verdict.trial);
+  check_rel ~msg:"time" v ~case:"a" ~metric:m_wall "inconclusive:environment";
+  v
+
+(* At a row k of 16, 16 times the new k, the probe still runs at k = 16, so
+   the counts compare like for like: the case regresses on its count. *)
+let exact_regression_under_a_recalibrated_k () =
+  let v = exact_under_recalibration ~row_k:16 in
+  check_rel ~msg:"alloc" v ~case:"a" ~metric:Metric.alloc_words
+    "regressed-exact";
+  check_overall v `Fail
+
+(* At 17 the probe runs at the new k, and the changed count drifts. *)
+let exact_drift_past_the_probe_bound () =
+  let v = exact_under_recalibration ~row_k:17 in
+  check_rel ~msg:"alloc" v ~case:"a" ~metric:Metric.alloc_words
+    "inconclusive:batch_drifted";
+  check_overall v `Inconclusive
+
 let sweep_freezes_the_rows_k () =
   let w = world () in
   (* Free calibration at 1 ms/call gives k = 8; the row's k = 4 observes a
@@ -843,6 +901,10 @@ let () =
         ];
       group "frozen k"
         [
+          test "an exact regression under a recalibrated k is regressed"
+            exact_regression_under_a_recalibrated_k;
+          test "an exact count past the probe's bound drifts"
+            exact_drift_past_the_probe_bound;
           test "the sweep freezes the baseline row's k" sweep_freezes_the_rows_k;
           test "a stale section freezes nothing" a_stale_section_freezes_nothing;
           test "the freeze reads the first sampled row"

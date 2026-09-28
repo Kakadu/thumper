@@ -906,12 +906,14 @@ let exact_zero_baseline_regresses_any_relative_budget () =
   in
   equal string "regressed-exact" r
 
-let exact_batch_drift_edge () =
-  (* An exact row whose case's frozen k moved compares as inconclusive
-     when the values differ, and as equivalent when they agree. *)
+let exact_rows_and_the_probe_k () =
+  (* The exact count is probed at the frozen k 32 while it is at most 16
+     times this trial's k, so an exact row compares as integers after a
+     recalibration down to k = 2; at k = 1 the probe ran at the trial's k,
+     and differing counts drift. The sampled row reads its moved k. *)
   let file =
     (fun f -> f)
-      (file_of [ wall_row ~k:8 "a" (ties 5 1.0); alloc_row "a" 54 ])
+      (file_of [ wall_row ~k:32 "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let run_at ~k cand =
     run_check ~file
@@ -924,15 +926,18 @@ let exact_batch_drift_edge () =
             ] );
       ]
   in
-  let moved = run_at ~k:16 55 in
-  check_rel ~msg:"k moved, values differ" moved ~case:"a" ~metric:m_alloc
-    "inconclusive:batch_drifted";
-  check_rel ~msg:"the sampled row at zero shift also drifts" moved ~case:"a"
+  let moved = run_at ~k:2 55 in
+  check_rel ~msg:"k moved to 1/16, values differ" moved ~case:"a"
+    ~metric:m_alloc "regressed-exact";
+  check_rel ~msg:"the sampled row at zero shift drifts" moved ~case:"a"
     ~metric:m_wall "inconclusive:batch_drifted";
-  let same_value = run_at ~k:16 54 in
-  check_rel ~msg:"k moved, values agree" same_value ~case:"a" ~metric:m_alloc
-    "equivalent-exact";
-  let same_k = run_at ~k:8 55 in
+  let past = run_at ~k:1 55 in
+  check_rel ~msg:"k moved past 1/16, values differ" past ~case:"a"
+    ~metric:m_alloc "inconclusive:batch_drifted";
+  let past_same = run_at ~k:1 54 in
+  check_rel ~msg:"k moved past 1/16, values agree" past_same ~case:"a"
+    ~metric:m_alloc "equivalent-exact";
+  let same_k = run_at ~k:32 55 in
   check_rel ~msg:"same k compares normally" same_k ~case:"a" ~metric:m_alloc
     "regressed-exact"
 
@@ -2043,8 +2048,8 @@ let () =
             exact_integer_comparison;
           test "a change from a zero baseline exceeds any relative budget"
             exact_zero_baseline_regresses_any_relative_budget;
-          test "a moved frozen k makes differing integers inconclusive"
-            exact_batch_drift_edge;
+          test "an exact row drifts only past the probe's bound"
+            exact_rows_and_the_probe_k;
           test "a recalibrated improvement stands and records the new k"
             recalibrated_improvement_stands_and_records_new_k;
           test "mixed exact/sampled comparisons lose exactness"
