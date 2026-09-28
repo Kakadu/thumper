@@ -65,8 +65,11 @@ let select ?filter ~metrics ~budgets benches =
 let frozen_k section ~id =
   Option.bind section (fun s -> Baseline.case_frozen_k s ~id)
 
-(* The first measurement failure aborts the run (.mli): a silently shrunk
-   selection would lie to the ratchet's prune rule. *)
+(* The first measurement failure aborts the run (.mli), in both sweeps. In
+   the first, a verdict over fewer cases than were selected would, under a full
+   selection, prune the rows of the cases that failed from the corrected file.
+   In the confirmation sweep, [Verdict.decide] reads a missing trial as
+   [Unconfirmed], an outcome that exits 0: a dead worker must not pass. *)
 let measured ?instruments ~config ~frozen_k case =
   match Measure.case ?instruments ~config ~frozen_k case with
   | Ok trial -> trial
@@ -183,5 +186,8 @@ let run_with ?instruments ?load ?(on_progress = ignore)
               in
               Verdict.decide ~load:quiet ~confirmations provisional))
 
+(* The seams cannot be optional arguments of [run] itself: the facade exports
+   [run] with a type that has none, and a signature constraint cannot remove an
+   optional argument from a value's type. *)
 let run ?config ?budgets ?filter ?baseline name benches =
   run_with ?config ?budgets ?filter ?baseline name benches

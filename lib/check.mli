@@ -3,66 +3,62 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The orchestrator: measure, judge, confirm, re-judge.
+(** The check loop: selecting cases, then measuring, judging, confirming and
+    deciding under the measurement lock.
 
-    [Check] lives at the OS edge because confirmation {e is} measurement:
-    acquire the lease (the library's only lease acquisition), sample the
-    environment gate, measure every selected case, [Verdict.judge], re-sample
-    the gate, measure the confirmation queue (fresh workers, the provisional
-    trial's frozen k, spaced to the end), [Verdict.decide]. All policy is in
-    [Verdict]; all mechanism in [Measure]; this module is the join. It renders
-    nothing, writes nothing, and reads no files — the CLI composes baseline I/O,
-    JSON, and exit codes around the returned {!Verdict.t}. *)
+    {!run} is the loop and {!run_with} the same loop with its host seams
+    exposed; {!measure} measures without judging, and {!select} is the selection
+    all three make. {!Verdict} decides every relation and {!Measure} measures
+    one case; this module owns the order between them: when the load is sampled,
+    which batch size each trial is frozen at, and when the confirmation sweep is
+    skipped. It reads and writes no baseline or JSON file; through {!Env} it
+    takes the lock, whose file it writes, and reads host facts. *)
 
 (** {1:errors Errors}
 
-    Operational failures: the environment, not the code under test, stopped the
-    run. The CLI maps every case to exit 2. *)
+    An error stops the run without a verdict. *)
 
+(** The type for operational failures. *)
 type error =
   | Lock of Env.Lock.error
-      (** The measurement lease timed out or its lock file is unusable. *)
+      (** The measurement lock timed out or its file is unusable. The command
+          line takes the lock before calling this module, so only a library
+          caller meets it. *)
   | Measurement of Measure.failure
-      (** A case could not be measured — dead worker, raising closure, or blown
-          deadline. The first failure aborts the run, in either sweep, for two
-          distinct reasons. First sweep: the selection a verdict reports must be
-          the selection that was measured, and under a full selection a silently
-          dropped case would read as dead code and lose its baseline rows to
-          the prune rule. Confirmation sweep: [Verdict.decide] reads a case
-          absent from the confirmations as [Inconclusive Unconfirmed] — a
-          statistical outcome that exits 0 — and that totality rule exists for
-          pure offline re-judging, not for laundering a dead worker into a pass;
-          worker failure is exit 2 wherever it strikes. *)
-  | Empty_selection
-      (** The filter selects no case. A broken filter must not silently pass. *)
+      (** A case could not be measured, because its worker died, the case, its
+          setup or its teardown raised, or it passed its deadline. The first
+          failure ends the run, in either sweep. *)
+  | Empty_selection  (** The filter selects no case, or the suite has none. *)
   | Invalid_suite of Bench.error
-      (** [Bench.resolve] or [Bench.check_collected] rejected the suite.
-          Detected on the whole suite before filtering — a narrowed selection
-          never masks a broken suite. *)
+      (** {!Bench.resolve} or {!Bench.check_collected} refused the suite because
+          two cases share an id or a budget names a metric its scope does not
+          collect. The whole suite is checked before the filter, so a filter
+          never hides the defect. *)
 
 exception Error of error
-(** Operational failure; the CLI maps it to exit 2. *)
+(** Raised by {!select}, {!run}, {!run_with} and {!measure}. A printer
+    registered by this module prints an uncaught [Error e] as
+    [Thumper.Check.Error: ] followed by {!pp_error}'s text. *)
 
 val pp_error : Format.formatter -> error -> unit
-(** [pp_error ppf e] formats [e] for users, naming the failing case, path, or
-    selection defect. *)
+(** [pp_error ppf e] formats [e] for users: the text of the lock error, of the
+    measurement failure or of the suite error, and
+    [no case matches the selection] for [Empty_selection]. *)
 
 (** {1:progress Progress} *)
 
 type progress = {
   phase : [ `Measuring | `Confirming ];
-      (** The sweep in flight: the first measurement sweep or the confirmation
+      (** [`Measuring] in the first sweep, [`Confirming] in the confirmation
           sweep. *)
-  index : int;  (** 1-based position of [case] within the sweep. *)
-  total : int;  (** The sweep's length. *)
-  case : string;  (** The id of the case about to be measured. *)
+  index : int;  (** The case's 1-based position in the sweep. *)
+  total : int;  (** The number of cases in the sweep. *)
+  case : string;  (** The case id. *)
 }
-(** The type for progress ticks. {!run_with} and {!measure} report one tick per
-    case, immediately {e before} measuring it, so a consumer always names the
-    case currently holding the run. Ticks are narration, not evidence: they
-    carry no measurements and their consumer must not influence the run (the
-    CLI's status line is the intended client; the default consumer does
-    nothing). *)
+(** The type for progress ticks. A sweep reports one tick per case, immediately
+    before measuring it, so the last tick names the case being measured. A tick
+    carries no measurement. Its consumer runs under the lock, before each case,
+    and an exception it raises ends the run. *)
 
 (** {1:selecting Selecting} *)
 
@@ -72,17 +68,18 @@ val select :
   budgets:Budget.t list ->
   Bench.t list ->
   Bench.case list * [ `Full | `Partial ]
-(** [select ?filter ~metrics ~budgets benches] is the selection {!run} and
-    {!measure} measure: [benches] resolved by [Bench.resolve] and narrowed by
-    [filter] (default: all), in authoring order, and whether it covers every
-    resolved case ([`Full], which licenses [Verdict]'s prune rule) or not
-    ([`Partial]). [metrics] and [budgets] are the run's scope — the config's
-    metrics and the run's budgets — for [Bench.check_collected]. Neither
-    measures nor takes the lease. Raises {!Error} [(Invalid_suite _)] on a suite
-    [Bench.resolve] or [Bench.check_collected] rejects, checked on the whole
-    suite before filtering, and {!Error} [Empty_selection] when nothing is
-    selected. A caller that holds the lease itself (the CLI) calls it before
-    acquiring the lease, so a broken suite or filter fails without waiting. *)
+(** [select ?filter ~metrics ~budgets benches] is the cases of [benches] that
+    [filter] selects, all of them without a filter, in the order of
+    {!Bench.resolve}, and [`Full] iff they are every case of the suite, else
+    [`Partial]. A [`Full] selection lets {!Verdict.corrected} prune the rows of
+    cases the suite no longer has. [metrics] and [budgets] are the run's, for
+    {!Bench.check_collected}. It measures nothing and takes no lock, so a caller
+    that takes the lock itself can select first, and a broken suite or filter
+    then fails without waiting.
+
+    Raises [Error (Invalid_suite _)] if {!Bench.resolve} or
+    {!Bench.check_collected} refuses [benches], and [Error Empty_selection] if
+    no case is selected. *)
 
 (** {1:checking Checking} *)
 
@@ -94,60 +91,41 @@ val run :
   string ->
   Bench.t list ->
   Verdict.t
-(** [run name benches] is the whole loop against [baseline] — this machine's
-    section is derived from it here, so judging another machine's evidence is
-    unrepresentable — and is the decided verdict. In order:
+(** [run ?config ?budgets ?filter ?baseline name benches] measures the cases of
+    [benches] that [filter] selects, judges them against this machine's section
+    of [baseline], and is the decided verdict. In order, it:
+    + checks [name] ({!Baseline.check_suite}) and [budgets]
+      ({!Budget.check_distinct}), selects the cases ({!select}, with [config]'s
+      metrics and [budgets]), reads the machine key ({!Env.machine_key}), and
+      checks that [baseline]'s suite header, if it has one, is [name].
+      {!Verdict.judge} relies on these checks.
+    + takes the measurement lock and samples the load.
+    + measures each selected case ({!Measure.case}) at the batch size
+      {!Baseline.case_frozen_k} reads from this machine's section when that
+      section is compared ({!Verdict.compared_section}); a missing or stale
+      section, or a case without a sampled row, freezes nothing. {!Measure.case}
+      reuses a frozen batch size only while its batch time stays within [0.2] to
+      [5] times the batch floor, and recalibrates otherwise.
+    + judges the trials ({!Verdict.judge}) under the first load sample.
+    + when {!Verdict.confirmations} is not empty, samples the load again. On a
+      quiet host it measures each queued case once more, in queue order, at the
+      batch size of its first trial. On a loaded host it measures nothing, since
+      {!Verdict.decide} then makes every pending relation
+      [Inconclusive Environment] whatever trials it gets.
+    + decides ({!Verdict.decide}) under the last load sample.
 
-    + {b Selection.} [benches] is resolved and [filter] (default: all) applied —
-      before the lease, so a broken suite or filter fails without waiting.
-      Duplicate ids and a budget on a metric its scope does not collect are
-      {!Error} [(Invalid_suite _)], an empty selection {!Error}
-      [Empty_selection]. A selection covering every resolved case is judged
-      [`Full] (licensing [Verdict]'s prune rule), anything narrower [`Partial].
-    + {b Lock.} Everything below runs under {!Env.Lock.with_lock}; acquisition
-      failure is {!Error} [(Lock _)].
-    + {b Gate.} The environment gate is sampled and fed to [Verdict.judge]
-      (sampled at run start and again before the confirmation queue).
-    + {b Measurement sweep.} Each selected case is measured by {!Measure.case}
-      with [frozen_k] read from this machine's section when it is current
-      ({!Verdict.compared_section}): the k of the case's first sampled row in
-      the section's canonical (id, metric) order — the same row [Verdict] reads
-      when it annotates exact evidence with batch drift, so the k frozen here
-      and the k judgment compares against agree. A case's rows normally share
-      one k (they come from one trial); they can disagree only where the ratchet
-      advanced a single row at a recalibrated k, and the first sampled row then
-      still pins one deterministic choice. No section, a stale one, or no
-      sampled row for the case, means free calibration ([frozen_k = None]).
-    + {b Judgment and confirmation.} [Verdict.judge], then, when the
-      confirmation queue is nonempty, the gate is re-sampled. Under a [Quiet]
-      re-sample each queued case is measured again — a fresh worker, fresh
-      warmup, and [frozen_k] equal to the {e provisional trial}'s {!Run.Trial.k}
-      (protocol identity; the confirmation trial records the k actually
-      used and a confirmed relation carries it). Under a [Loaded] re-sample the
-      queue is {e not} measured: [Verdict.decide] degrades every pending
-      relation to [Inconclusive Environment] whatever confirmation evidence is
-      passed, so measuring would spend minutes collecting evidence judgment must
-      discard. [Verdict.decide] then folds the confirmations in; an empty queue
-      skips the re-sample and decides under the start gate (with nothing
-      pending, the gate cannot matter).
+    [config] defaults to {!Config.default}; with [config.fork] each trial runs
+    in a fresh worker process, else in this process. [budgets] are the suite's
+    budgets and default to [[]] (per-case resolution is {!Verdict.judge}'s).
+    [baseline] defaults to the empty-file baseline, against which every metric
+    is proposed. [name] heads the file {!Verdict.corrected} proposes over the
+    empty-file baseline.
 
-    Defaults: [config] is {!Config.default}; [budgets] is [[]] (suite-level —
-    per-case budgets come from each case, and a case left with none once the
-    uncollected ones are dropped gets [Budget.defaults]; [Verdict.judge]'s
-    contract); no [baseline] means the empty-file baseline — every case is NEW.
-    [name] is the suite's name, the header of the fresh baseline a first run
-    proposes.
-
-    [run] raises [Invalid_argument] if [name] is empty or not single-line, if
-    [baseline]'s header names another suite than [name] (the wrong-ruler class —
-    the CLI refuses the same mismatch with exit 2 at read time), and if
-    [budgets] holds two budgets for one metric ({!Budget.check_distinct}). The
-    checks run before the lease: a programmer error must not cost a wait plus a
-    full measurement sweep to surface. [Verdict.judge] relies on them and does
-    not repeat them.
-
-    Raises {!Error}. Equal to {!run_with} on the live host seams; the type of
-    [run] itself is pinned by the facade ([Thumper.Check]). *)
+    Raises [Invalid_argument] if [name] is empty or not single-line, if
+    [budgets] holds two budgets for one metric, if [THUMPER_MACHINE] is set to
+    an invalid key, or if [baseline]'s header names another suite, all before
+    the lock is taken. Raises [Error] on an operational failure: [Invalid_suite]
+    and [Empty_selection] before the lock, [Lock] and [Measurement] under it. *)
 
 val run_with :
   ?instruments:Measure.instruments ->
@@ -160,29 +138,16 @@ val run_with :
   string ->
   Bench.t list ->
   Verdict.t
-(** [run_with name benches] is {!run} with the loop's two OS seams exposed,
-    mirroring [Measure]'s, plus the progress tap:
+(** [run_with ?instruments ?load ?on_progress name benches] is {!run} with its
+    host seams exposed:
+    - [instruments] reads every clock and counter of both sweeps
+      ({!Measure.case}), {!Measure.default_instruments} by default.
+    - [load] samples the load at the start and before a non-empty confirmation
+      queue, {!Env.val-load} by default.
+    - [on_progress] receives the ticks of both sweeps, and of none for a queue
+      left unmeasured on a loaded host. It ignores them by default. *)
 
-    - [instruments] (default {!Measure.default_instruments}) drives every clock
-      and counter read of both measurement sweeps ({!Measure.case}'s seam);
-    - [load] (default {!Env.load}) is the sampled gate predicate
-      ({!Env.classify}'s seam, as in {!Env.wait_quiet}), called once at run
-      start and once more before a nonempty confirmation queue — its second call
-      is therefore also the observable point between the two sweeps;
-    - [on_progress] (default: nothing) receives one {!type:progress} tick per
-      case of each sweep, before the case is measured — the CLI's status line.
-      An unmeasured confirmation queue (loaded re-sample) ticks nothing.
-
-    Scripted seams make the full loop — a planted regression confirming, an
-    improvement pooling 2n, the gate sampling points — deterministically
-    testable in-process. The seams cannot ride on {!run} itself: the facade
-    re-exports {!run} with the facade's exact type, and module inclusion cannot
-    erase optional arguments. Library callers use {!run}; the CLI is the seams'
-    one production caller, for [on_progress], which drives its status line (the
-    gate its report's load message must agree with is [Verdict.load]). Raises
-    {!Error}. *)
-
-(** {1:measuring Measuring (the numbers path)} *)
+(** {1:measuring Measuring} *)
 
 val measure :
   ?instruments:Measure.instruments ->
@@ -191,15 +156,14 @@ val measure :
   ?filter:Bench.filter ->
   Bench.t list ->
   Run.t
-(** [measure benches] measures the selection under the lease and is the
-    collected evidence, one trial per selected case in authoring order — the
-    evidence-only path behind [bless] and the public [Thumper.measure]. No
-    baseline is consulted (every case calibrates freely: there is no row to
-    freeze against), no verdict is formed, and the environment gate is not
-    sampled — there is no judgment to degrade, and trial quality travels with
-    the evidence ({!Run.sampled}'s drift flag and sorted vector). Selection and
-    failure behave as in {!run}: resolution happens before the lease, an empty
-    selection and duplicate ids are {!Error}s, and the first measurement failure
-    aborts the run. [instruments] is {!Measure.case}'s seam and [on_progress]
-    the per-case tick (always [`Measuring] — there is no confirmation sweep), as
-    in {!run_with}; [config] defaults to {!Config.default}. Raises {!Error}. *)
+(** [measure ?instruments ?on_progress ?config ?filter benches] measures the
+    cases of [benches] that [filter] selects, under the measurement lock, and is
+    their evidence, one trial per case in selection order. Every case calibrates
+    its batch size freely. No machine key, suite name or load is read and
+    nothing is judged; a trial's warnings and drift flag travel with it
+    ({!Run}). The selection is {!select}'s with [config]'s metrics and no run
+    budgets, so a case or group budget on a metric its scope does not collect is
+    still refused. [instruments] and [on_progress] are as for {!run_with}, every
+    tick being [`Measuring]; [config] defaults to {!Config.default}.
+
+    Raises [Error] as {!run} does. *)
