@@ -3,191 +3,196 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The committed baseline file: format-v1 codec, sections, atomic write.
+(** The baseline file: the format-v1 codec, reading and the atomic write, and
+    the primitives the write paths build files with.
 
-    Pure codec plus one atomic write. The file stores {e evidence} — sample
-    vectors and proven exact integers — never conclusions. One file per suite:
+    A file holds evidence, sample vectors and exact counts, never conclusions.
+    It has an optional suite header, then one section per machine key, each with
+    its identity header and its rows. The format is specified in
+    [doc/manual/baseline-format.md], which tools may rely on, so a change to
+    what this module reads or prints is a change to that specification. Read a
+    file with {!read} or {!of_string}, observe it with {!val-section} and
+    {!val-rows}, and build a new one with {!set_section} or {!update_rows}.
+    Everything read prints back byte for byte, so a written file differs from
+    the one read only in the rows and sections the write paths add, replace or
+    remove, and in the annotations they append. Which rows change is
+    {!Verdict}'s decision; this module places rows and keeps their order. *)
 
-    {v
-    # thumper baseline v1
-    # suite: NAME
-
-    # machine: KEY
-    # host: DESCRIPTION
-    # ocaml: IDENTITY
-
-    ID	METRIC	exact	COUNT
-    ID	METRIC	batch=K	n=N	MEDIAN	S1 S2 … SN
-    v}
-
-    Fields are tab-separated; samples are space-separated, sorted ascending,
-    printed [%.3e] (the id charset ban on whitespace is what keeps the grammar
-    escape-free). The stored median is redundant: the midpoint of the two
-    central {e stored} samples for even [N], the central stored sample for odd
-    [N], printed [%.3e]. On read it must string-equal that re-derivation — a
-    per-row checksum and the number a reviewer reads in a diff.
-
-    Parsing is strict: rows sort by (id, metric), sections by machine key,
-    layout is canonical (one blank line before each section and between a
-    section's header comments and its rows). A missing file reads as [None] —
-    the ordinary first-run state — while an unreadable or corrupt file is always
-    its own {{!type:error}error}, never conflated with absence. The empty
-    (zero-byte) file is the valid zero-section baseline.
-
-    Rows and section headers keep their verbatim source text, so anything read
-    re-emits byte-identically: an advanced case is a one-row diff, an equivalent
-    run no diff at all. This module is mechanism only: {e which} rows
-    advance is [Verdict]'s policy, and machine keys are computed in [Env] — here
-    they are opaque strings. *)
-
-(** {1:types Types and errors} *)
+(** {1:types Types, errors and quoting} *)
 
 type t
-(** A parsed baseline file: optional suite header plus per-machine sections in
-    ascending machine-key order. Values are immutable; every value renders to a
-    canonical file via {!to_string}. *)
+(** The type for baseline files: an optional suite header, then sections in
+    ascending machine-key order. Values are immutable, and every value prints
+    ({!to_string}) to a text {!of_string} accepts. *)
 
 type section
-(** One machine's identity header and evidence rows, in ascending (id, metric)
-    order. *)
+(** The type for one machine's section: its key, its [# host:] and [# ocaml:]
+    lines, which are never empty, its annotations (the other [#] lines of its
+    header) and its rows, in ascending (id, metric) order. A section may have no
+    rows. *)
 
 type row
-(** One case-metric evidence row. Rows keep their verbatim line text; a row read
-    from a file re-emits byte-identically. *)
+(** The type for rows: the evidence of one metric of one case. A row keeps the
+    text of its line, so a row read from a file prints back byte for byte. *)
 
+(** The type for errors. An absent file is not an error ({!read}). [Corrupt]
+    does not name the file, whose path the caller holds. *)
 type error =
   | Corrupt of { line : int; reason : string }
-      (** The file violates the format-v1 grammar at the 1-based [line]:
-          malformed structure or a failed stored-median checksum. Never treated
-          as an absent file — exit 2 at the CLI. *)
+      (** The text violates the grammar at the 1-based [line], and [reason] says
+          how, showing file content through {!quote}. A missing final newline is
+          reported at the last line. *)
   | Io of string
-      (** The file exists but could not be read, or could not be written. Never
-          treated as an absent file — exit 2 at the CLI. *)
+      (** The file could not be read or written. The message names the path and
+          the system's error. *)
 
 exception Error of error
+(** Raised by {!read_exn} and {!write}. A printer registered by this module
+    prints an uncaught [Error e] as [Thumper.Baseline.Error: ] followed by
+    {!pp_error}'s text. *)
 
 val pp_error : Format.formatter -> error -> unit
-(** [pp_error ppf e] formats [e] for users, with its line number and remedy when
-    present. *)
+(** [pp_error ppf e] formats [e] for users:
+    [corrupt baseline (line <line>): <reason>] for [Corrupt], the message for
+    [Io]. *)
+
+val quote : string -> string
+(** [quote s] is [s] between single quotes, with each byte below [0x20] and the
+    byte [0x7f] written [\xNN] and every other byte, UTF-8 included, as it is.
+    This module's parser, {!Env} and the command line show file content and
+    environment values through it, so their messages cannot write control
+    sequences to a terminal. *)
 
 (** {1:grammar Identifiers}
 
-    The file grammar owns the identifier charset: case ids are ['/']-separated
-    segments, metric ids and machine keys are single segments, and a segment is
-    a nonempty run of [[A-Za-z0-9._-]]. The whitespace ban is what keeps the
-    tab- and space-separated grammar escape-free. [Bench] (case ids) and [Env]
-    (the [THUMPER_MACHINE] override) validate against these predicates, so an id
-    or key they accept is one this module can write. *)
+    The file grammar owns the identifier charset. A segment is a non-empty run
+    of [[A-Za-z0-9._-]]; a case id is ['/']-separated segments, and a metric id
+    and a machine key are one segment each. No identifier holds a space or a
+    tab, so the tab- and space-separated grammar needs no escapes. {!Bench}
+    validates case ids and {!Env} the [THUMPER_MACHINE] key against these
+    predicates, so every id and key they accept is one this module can write. *)
 
 val is_id_char : char -> bool
 (** [is_id_char c] is [true] iff [c] is in [[A-Za-z0-9._-]]. *)
 
-val quote : string -> string
-(** [quote s] is [s] in single quotes for a message, every control byte (below
-    [0x20], and [0x7f]) written [\xNN]: text read from a file or the environment
-    cannot write escape sequences to a terminal. Other bytes, UTF-8 included,
-    are kept. *)
-
 val valid_segment : string -> bool
-(** [valid_segment s] is [true] iff [s] is nonempty and every character
+(** [valid_segment s] is [true] iff [s] is not empty and every character of [s]
     satisfies {!is_id_char}. *)
 
 val check_suite : fname:string -> string -> unit
-(** [check_suite ~fname name] checks that [name] can be the [# suite:] header's
-    body: non-empty and single-line. This is the one statement of the rule:
-    {!empty}, [Check.run] and the CLI entry point all call it. Raises
-    [Invalid_argument], prefixed with [fname]. *)
+(** [check_suite ~fname name] checks that [name] can be the body of a [# suite:]
+    line, that is, that it is not empty and holds no newline. Any other byte
+    passes, a tab or a carriage return included, and the header keeps it as it
+    is. Every entry point that takes a suite name checks it with this function.
 
-(** {1:reading Reading} *)
+    Raises [Invalid_argument], the message starting with [fname], if [name] is
+    empty or holds a newline. *)
+
+(** {1:reading Reading and printing} *)
 
 val read : string -> (t option, error) result
-(** [read path] is the baseline stored at [path]: [Ok None] if no file exists at
-    [path] (the ordinary first-run state; what absence means, the NEW-baseline
-    flow, is the caller's policy); [Error (Io _)] if it exists but cannot be
-    read; [Error (Corrupt _)] if it does not parse as format v1. The three cases
-    are decided here, where the failing system call is — a failure to read is
-    never conflated with absence. *)
+(** [read path] is:
+    - [Ok (Some t)] for the file at [path];
+    - [Ok None] if no file exists at [path], that is if opening it fails with
+      [ENOENT], which a missing parent directory gives too;
+    - [Error (Io _)] if it exists but cannot be read, a directory at [path]
+      included;
+    - [Error (Corrupt _)] if its text is refused by {!of_string}.
+
+    A failure to read is never taken for an absent file. *)
 
 val read_exn : string -> t option
-(** [read_exn path] is [read path]. Raises {!Error} if the file exists but
-    cannot be read or parsed; an absent file is [None]. *)
+(** [read_exn path] is [read path] without its errors.
+
+    Raises [Error] if the file exists but cannot be read or parsed. *)
 
 val of_string : string -> (t, error) result
-(** [of_string s] parses [s] strictly as a format-v1 file. [""] is the valid
-    zero-section baseline. Every accepted input re-emits byte-identically:
-    [to_string t = s] for [Ok t]. *)
+(** [of_string s] parses [s] as a format-v1 file. The empty string is the valid
+    file with no section. The parser requires the printer's layout: the header
+    lines, the blank lines, rows in ascending (id, metric) order and sections in
+    ascending key order (byte order, no duplicate), and a final newline. It
+    requires each row's stored median to equal the median derived from its
+    stored samples. It is lenient on the spelling of numbers: a sample is any
+    finite float that [float_of_string] reads, and a count, a [batch=] or an
+    [n=] value is any run of decimal digits, leading zeros included. A row
+    edited by hand may therefore differ from the line {!sampled_row} prints.
+    Every accepted [s] prints back as [s]: [to_string t = s] when the result is
+    [Ok t]. *)
 
 val to_string : t -> string
-(** [to_string t] is [t]'s canonical file text. Content that was read (rows,
-    header comments) is byte-identical to its source; content built with
-    {!exact_row}, {!sampled_row}, or {!set_section} renders with the pinned
-    print contract ([%.3e], tab-separated, derived median). *)
+(** [to_string t] is [t]'s file text: what was read, byte for byte, and what was
+    built in the print format, with fields separated by tabs, samples by spaces
+    and printed [%.3e], and the median derived from the printed samples. That
+    median is the central sample for an odd count and the midpoint [a/2 + b/2]
+    of the two central ones for an even count, printed [%.3e]. It is [""] for
+    the empty-file baseline. *)
 
 (** {1:writing Writing} *)
 
 val write : string -> t -> unit
-(** [write path t] writes [to_string t] to [path] atomically: a fresh temp file
-    in [path]'s directory, full write plus fsync, then rename over [path]. No
-    reader ever observes a partial file; the temp file is removed on failure,
-    and an existing [path] keeps its permission bits. Atomicity is the whole
-    concurrency story: the lease serializes measurement, not writes (the CLI
-    writes after releasing it), and concurrent writers are
-    last-wins-whole-file. Raises {!Error} ([Io _]) on failure. *)
+(** [write path t] writes [to_string t] to [path] atomically
+    ({!Os.write_atomic}). It writes a new temporary file in [path]'s directory,
+    flushes it with [fsync] and renames it over [path], so no reader sees a
+    partial file; the temporary file is removed on failure. An existing [path]
+    keeps its permission bits, and a symbolic link at [path] is replaced by a
+    regular file. The measurement lock covers measurement only, so writes are
+    not serialized: of two concurrent writers, the last one's whole file wins.
 
-(** {1:file File observers} *)
+    Raises [Error (Io _)] if the write fails. *)
+
+(** {1:file Files} *)
 
 val empty : suite:string -> t
-(** [empty ~suite] is the baseline with no sections, as proposed for a fresh
-    suite. Raises [Invalid_argument] if [suite] is empty or contains a newline.
-*)
+(** [empty ~suite] is the file with the suite header [suite] and no section,
+    which prints as [# thumper baseline v1\n# suite: <suite>\n].
+
+    Raises [Invalid_argument] if {!check_suite} refuses [suite]. *)
 
 val suite : t -> string option
-(** [suite t] is the [# suite:] header. [None] iff [t] derives from the
-    empty-file baseline ({!of_string} [""]), which has no header. *)
+(** [suite t] is the body of [t]'s [# suite:] line. It is [None] iff [t] is the
+    empty-file baseline, [of_string ""]. *)
 
 val machines : t -> string list
-(** [machines t] is the section keys, in ascending order. *)
+(** [machines t] is the keys of [t]'s sections, in ascending order. *)
 
 val section : t -> string -> section option
-(** [section t key] is [key]'s section, if any. *)
+(** [section t key] is [t]'s section for [key], if any. *)
 
 (** {1:sections Section observers} *)
 
 val machine_of : section -> string
-(** [machine_of s] is the section's [# machine:] key. *)
+(** [machine_of s] is [s]'s machine key. *)
 
 val ocaml_of : section -> string
-(** [ocaml_of s] is the section's recorded [# ocaml:] identity line — always
-    present, the grammar requires it. A mismatch with the current identity makes
-    the section stale — that comparison is [Verdict]'s policy; here it is an
-    opaque string. Never empty: the parser and {!set_section} refuse an empty
-    identity. *)
+(** [ocaml_of s] is the body of [s]'s [# ocaml:] line. {!Verdict} compares it
+    with the running program's identity to decide staleness. *)
 
 val rows : section -> row list
-(** [rows s] is the section's rows in ascending (id, metric) order. *)
+(** [rows s] is [s]'s rows, in ascending (id, metric) order. *)
 
 val find_row : section -> id:string -> metric:string -> row option
-(** [find_row s ~id ~metric] is the row keyed (id, metric), if any. *)
+(** [find_row s ~id ~metric] is [s]'s row for case [id] and metric [metric], if
+    any. *)
 
 val case_frozen_k : section -> id:string -> int option
-(** [case_frozen_k s ~id] is the batch size of [id]'s first sampled row in the
-    section's canonical (id, metric) order, and [None] when the case has no
-    sampled row. This is the single reading of the frozen-k rule: [Measure]
-    freezes this k and [Verdict] compares against it, so the two sides agree by
-    construction. A case's rows need not share one k — a ratchet can advance a
-    single row at a recalibrated k — which is why the rule names the {e first}
-    sampled row, not {e the} k. *)
+(** [case_frozen_k s ~id] is the batch size of the first sampled row of case
+    [id] in [s]'s order, and [None] when the case has no sampled row.
+    {!Check.run} freezes a case's first trial at it, and {!Verdict.judge}
+    compares this run's batch size with it when it judges an exact row, so both
+    read one value. The rows of one case can hold different batch sizes, when a
+    row was advanced or re-recorded from a trial at another batch size; the
+    first sampled row then decides. *)
 
 (** {1:rows Row observers} *)
 
+(** The type for a row's evidence. *)
 type evidence =
-  | Exact_int of int  (** A proven exact per-call integer. *)
+  | Exact_int of int  (** An exact per-call count, never negative. *)
   | Sampled of {
-      k : int;  (** The frozen batch size. *)
+      k : int;  (** The batch size ([batch=]), at least [1]. *)
       samples : float array;
-          (** Per-call values, sorted ascending, exactly as the file stores
-              them. Rows built with {!sampled_row} hold them at file precision
-              ([%.3e] — four significant digits). *)
+          (** The per-call values as the file stores them, sorted ascending, at
+              least three of them, all finite; they may be zero or negative. *)
     }
 
 val row_id : row -> string
@@ -197,45 +202,55 @@ val row_metric : row -> string
 (** [row_metric r] is [r]'s metric id. *)
 
 val row_evidence : row -> evidence
-(** [row_evidence r] is [r]'s stored evidence. [Sampled] arrays are fresh
-    copies; mutating one does not affect [r]. *)
+(** [row_evidence r] is [r]'s evidence. A [Sampled] array is a fresh copy, so
+    mutating it leaves [r] unchanged. *)
 
-(** {1:editing Construction and editing — the write-path primitives}
+(** {1:editing Building files}
 
-    Both mutators are mechanical: they place rows, keep canonical order, and
-    byte-preserve everything they do not touch. Deciding {e which} rows advance
-    is [Verdict]'s policy. *)
+    The write paths build a file from these values. {!set_section} and
+    {!update_rows} return a new file that keeps the canonical order and every
+    byte they do not replace. Every function here refuses what the grammar
+    refuses, so a file built from them always prints to a text {!of_string}
+    accepts. *)
 
 type identity = { machine : string; host : string; ocaml : string }
-(** A section's identity header: key, [# host:] line, [# ocaml:] line. Keys are
-    computed in [Env]; [host] and [ocaml] are display strings. *)
+(** The type for a section's identity header, which {!Env} computes. [machine]
+    is the key; [host] is the body of the [# host:] line, only displayed;
+    [ocaml] is the body of the [# ocaml:] line, compared byte for byte for
+    staleness. *)
 
 val exact_row : id:string -> metric:string -> int -> row
-(** [exact_row ~id ~metric n] is the row [id\tmetric\texact\tn]. Raises
-    [Invalid_argument] if [n < 0], if [id] is not [/]-separated segments of
-    [[A-Za-z0-9._-]+], or if [metric] is not one such segment. *)
+(** [exact_row ~id ~metric n] is the row [id], [metric], [exact], [n], separated
+    by tabs.
+
+    Raises [Invalid_argument] if [id] is not ['/']-separated segments, if
+    [metric] is not a segment, or if [n] is negative. *)
 
 val sampled_row :
   id:string -> metric:string -> k:int -> samples:float array -> row
-(** [sampled_row ~id ~metric ~k ~samples] is a sampled evidence row. [samples]
-    must be sorted ascending, finite, and hold at least 3 values; [k >= 1].
-    Values are stored at file precision: each sample is printed [%.3e] and the
-    row's evidence re-reads those texts, so a round-trip through {!to_string}
-    and {!of_string} is the identity. The stored median is derived from the
-    printed samples. Raises [Invalid_argument] on invalid [id], [metric],
-    [k], or [samples]. *)
+(** [sampled_row ~id ~metric ~k ~samples] is the row of [samples] measured at
+    batch size [k]. Each sample is stored as its [%.3e] text read back, so the
+    row's evidence is what its line holds and a print and parse leave it
+    unchanged; the median is derived from the stored samples. [samples] must
+    hold at least three finite values in ascending order, and [k] must be at
+    least [1].
+
+    Raises [Invalid_argument] if [id] or [metric] is invalid (as for
+    {!exact_row}), if [k < 1], or if [samples] breaks its requirement. *)
 
 val set_section : ?annotations:string list -> t -> identity -> row list -> t
-(** [set_section t identity rows] replaces or adds [identity.machine]'s section
-    wholesale (bless, fresh proposal, stale re-record), sorted into place,
-    preserving every other section byte-for-byte. [rows] may be given in any
-    order and are sorted canonically. [annotations] adds [# ] comment lines
-    after the identity header (e.g. the [--force] record). Raises
-    [Invalid_argument] on a suite-less [t] (a sectioned file without the header
-    is unparseable — start from {!empty}), an invalid machine key, an empty
-    identity field or one with a newline, duplicate (id, metric) rows, or an
-    annotation that is multi-line or starts with a reserved header word
-    ([machine:], [host:], [ocaml:], [suite:]). *)
+(** [set_section ?annotations t identity rows] is [t] with the section of
+    [identity.machine] replaced, or added at its place in key order, by a
+    section with [identity]'s header, [annotations] as its annotation lines
+    ([[]] by default), and [rows] in canonical order whatever order they come
+    in. The old section's annotations are dropped; every other section keeps its
+    bytes.
+
+    Raises [Invalid_argument] if [t] has no suite header (start from {!empty}),
+    if [identity.machine] is not a segment, if [identity.host] or
+    [identity.ocaml] is empty or holds a newline, if an annotation holds a
+    newline or starts with [machine:], [host:], [ocaml:] or [suite:], or if two
+    rows share a case id and a metric. *)
 
 val update_rows :
   ?annotations:string list ->
@@ -244,12 +259,18 @@ val update_rows :
   advance:row list ->
   prune:(string * string) list ->
   t
-(** [update_rows t ~machine ~advance ~prune] edits [machine]'s section in place:
-    each [advance] row replaces or inserts at its (id, metric) key; each [prune]
-    (id, metric) is removed (absent keys are ignored); every other row keeps its
-    verbatim text and the section stays in canonical (id, metric) order.
-    [annotations] (default none) are appended as [# ] comment lines after the
-    section's existing header lines, which keep their text. Other sections are
-    byte-preserved. Raises [Invalid_argument] if [machine] has no section, on
-    duplicate keys within [advance], when a key appears in both [advance] and
-    [prune], or on an annotation {!set_section} would refuse. *)
+(** [update_rows ?annotations t ~machine ~advance ~prune] is [t] with the
+    section of [machine] edited in place:
+    - each row of [advance] replaces the row with its case id and metric, or is
+      inserted in order;
+    - the row of each (id, metric) pair of [prune] is removed, and a pair
+      without a row is ignored;
+    - [annotations], [[]] by default, are appended after the section's
+      annotations.
+
+    The header lines, [# host:] and [# ocaml:] included, every other row and
+    every other section keep their bytes.
+
+    Raises [Invalid_argument] if an annotation is refused as by {!set_section},
+    if [advance] holds two rows with one case id and metric, if a pair is in
+    both [advance] and [prune], or if [t] has no section for [machine]. *)
