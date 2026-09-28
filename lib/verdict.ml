@@ -95,7 +95,7 @@ type pcase = {
 type core = {
   cr_identity : Baseline.identity;
   cr_suite : string;
-  cr_file : Baseline.t;  (* the baseline judged against; the ratchet's input *)
+  cr_file : Baseline.t; (* the baseline judged against; the ratchet's input *)
   cr_selection : [ `Full | `Partial ];
   cr_comparison : comparison;
   cr_warnings : string list;
@@ -129,7 +129,6 @@ let fractional_of_stats (s : Stats.shift) =
    higher-is-better case; it returns with a real throughput metric and its
    extension point, metric.mli). *)
 let oriented _metric (sh : shift) = (sh.lower, sh.upper)
-
 let is_loaded = function Env.Loaded _ -> true | Env.Quiet -> false
 
 (* One reading for both sides, from the sorted vector alone: a stored
