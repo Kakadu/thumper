@@ -7,6 +7,8 @@
    lines, order) is part of the grammar rather than reconstructed, so every
    file the parser accepts prints back byte for byte. *)
 
+let strf = Printf.sprintf
+
 type evidence =
   | Exact_int of int
   | Sampled of { k : int; samples : float array }
@@ -78,14 +80,14 @@ let valid_key = valid_segment
 let check_suite ~fname name =
   if name = "" || String.contains name '\n' then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "%s: suite name must be non-empty and single-line (it heads fresh \
           baselines)"
          fname)
 
 (* Printing samples *)
 
-let e3 = Printf.sprintf "%.3e"
+let e3 = strf "%.3e"
 
 let derived_median samples =
   let n = Array.length samples in
@@ -114,35 +116,34 @@ let row_evidence r =
 let check_row_names fname ~id ~metric =
   if not (valid_id id) then
     invalid_arg
-      (Printf.sprintf
-         "%s: invalid id %S ('/'-separated segments of [A-Za-z0-9._-])" fname id);
+      (strf "%s: invalid id %S ('/'-separated segments of [A-Za-z0-9._-])" fname
+         id);
   if not (valid_metric metric) then
     invalid_arg
-      (Printf.sprintf "%s: invalid metric id %S (must be [A-Za-z0-9._-]+)" fname
-         metric)
+      (strf "%s: invalid metric id %S (must be [A-Za-z0-9._-]+)" fname metric)
 
 let exact_row ~id ~metric n =
   let fname = "Baseline.exact_row" in
   check_row_names fname ~id ~metric;
-  if n < 0 then invalid_arg (Printf.sprintf "%s: negative count %d" fname n);
+  if n < 0 then invalid_arg (strf "%s: negative count %d" fname n);
   {
     r_id = id;
     r_metric = metric;
     r_evidence = Exact_int n;
-    r_text = Printf.sprintf "%s\t%s\texact\t%d" id metric n;
+    r_text = strf "%s\t%s\texact\t%d" id metric n;
   }
 
 let sampled_row ~id ~metric ~k ~samples =
   let fname = "Baseline.sampled_row" in
   check_row_names fname ~id ~metric;
-  if k < 1 then invalid_arg (Printf.sprintf "%s: batch size %d < 1" fname k);
+  if k < 1 then invalid_arg (strf "%s: batch size %d < 1" fname k);
   let n = Array.length samples in
   if n < 3 then
-    invalid_arg (Printf.sprintf "%s: %d samples (at least 3 required)" fname n);
+    invalid_arg (strf "%s: %d samples (at least 3 required)" fname n);
   Array.iter
     (fun x ->
       if not (Float.is_finite x) then
-        invalid_arg (Printf.sprintf "%s: non-finite sample %h" fname x))
+        invalid_arg (strf "%s: non-finite sample %h" fname x))
     samples;
   for i = 0 to n - 2 do
     if samples.(i) > samples.(i + 1) then
@@ -152,8 +153,7 @@ let sampled_row ~id ~metric ~k ~samples =
   let texts = Array.map e3 samples in
   let stored = Array.map float_of_string texts in
   let text =
-    Printf.sprintf "%s\t%s\tbatch=%d\tn=%d\t%s\t%s" id metric k n
-      (derived_median stored)
+    strf "%s\t%s\tbatch=%d\tn=%d\t%s\t%s" id metric k n (derived_median stored)
       (String.concat " " (Array.to_list texts))
   in
   {
@@ -169,8 +169,7 @@ let sort_rows fname rows =
     | a :: (b :: _ as rest) ->
         if compare_rows a b = 0 then
           invalid_arg
-            (Printf.sprintf "%s: duplicate row for %s %s" fname a.r_id
-               a.r_metric);
+            (strf "%s: duplicate row for %s %s" fname a.r_id a.r_metric);
         check rest
     | _ -> ()
   in
@@ -434,6 +433,9 @@ let to_string t =
    [Sys.file_exists] races the answer, and one matching [Io]'s text parses
    the errno again. *)
 let read path =
+  let cannot_read e =
+    Stdlib.Error (Io (strf "cannot read %s: %s" path (Unix.error_message e)))
+  in
   let rec open_read () =
     match Unix.openfile path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
     | fd -> fd
@@ -441,9 +443,7 @@ let read path =
   in
   match open_read () with
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
-  | exception Unix.Unix_error (e, _, _) ->
-      Stdlib.Error
-        (Io (Printf.sprintf "cannot read %s: %s" path (Unix.error_message e)))
+  | exception Unix.Unix_error (e, _, _) -> cannot_read e
   | fd -> (
       (* Drain with [Unix.read] directly: a channel over the descriptor
          ([in_channel_of_descr]) rejects non-regular files (a directory at
@@ -465,10 +465,7 @@ let read path =
           Result.map Option.some (of_string (Buffer.contents buf))
       | exception Unix.Unix_error (e, _, _) ->
           close ();
-          Stdlib.Error
-            (Io
-               (Printf.sprintf "cannot read %s: %s" path (Unix.error_message e)))
-      )
+          cannot_read e)
 
 let read_exn path =
   match read path with Ok t -> t | Stdlib.Error e -> raise (Error e)
@@ -476,9 +473,7 @@ let read_exn path =
 let write path t =
   try Os.write_atomic path (to_string t)
   with Unix.Unix_error (e, _, _) ->
-    raise
-      (Error
-         (Io (Printf.sprintf "cannot write %s: %s" path (Unix.error_message e))))
+    raise (Error (Io (strf "cannot write %s: %s" path (Unix.error_message e))))
 
 (* File and section observers *)
 
@@ -517,11 +512,10 @@ let check_annotations fname annotations =
   List.iter
     (fun a ->
       if String.contains a '\n' then
-        invalid_arg (Printf.sprintf "%s: multi-line annotation %S" fname a);
+        invalid_arg (strf "%s: multi-line annotation %S" fname a);
       if reserved_annotation a then
         invalid_arg
-          (Printf.sprintf "%s: annotation %S starts with a reserved header word"
-             fname a))
+          (strf "%s: annotation %S starts with a reserved header word" fname a))
     annotations
 
 let set_section ?(annotations = []) t identity row_list =
@@ -532,13 +526,13 @@ let set_section ?(annotations = []) t identity row_list =
      ^ ": baseline has no suite header; start from Baseline.empty ~suite");
   if not (valid_key identity.machine) then
     invalid_arg
-      (Printf.sprintf "%s: invalid machine key %S (must be [A-Za-z0-9._-]+)"
-         fname identity.machine);
+      (strf "%s: invalid machine key %S (must be [A-Za-z0-9._-]+)" fname
+         identity.machine);
   List.iter
     (fun (what, value) ->
-      if value = "" then invalid_arg (Printf.sprintf "%s: empty %s" fname what);
+      if value = "" then invalid_arg (strf "%s: empty %s" fname what);
       if String.contains value '\n' then
-        invalid_arg (Printf.sprintf "%s: newline in %s %S" fname what value))
+        invalid_arg (strf "%s: newline in %s %S" fname what value))
     [ ("host", identity.host); ("ocaml", identity.ocaml) ];
   check_annotations fname annotations;
   let sec =
@@ -571,8 +565,7 @@ let update_rows ?(annotations = []) t ~machine ~advance ~prune =
     (fun (id, metric) ->
       if advanced (id, metric) then
         invalid_arg
-          (Printf.sprintf "%s: %s %s is both advanced and pruned" fname id
-             metric))
+          (strf "%s: %s %s is both advanced and pruned" fname id metric))
     prune;
   let pruned key = List.exists (fun k -> compare_key k key = 0) prune in
   let edit sec =
@@ -599,9 +592,7 @@ let update_rows ?(annotations = []) t ~machine ~advance ~prune =
     }
   in
   let rec update = function
-    | [] ->
-        invalid_arg
-          (Printf.sprintf "%s: no section for machine %S" fname machine)
+    | [] -> invalid_arg (strf "%s: no section for machine %S" fname machine)
     | s :: rest ->
         if String.equal s.s_machine machine then edit s :: rest
         else s :: update rest
