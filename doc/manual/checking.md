@@ -63,8 +63,8 @@ let budgets =
 Budgets attach at three levels — `run`, `group`, `bench` — and merge
 *per metric*: the nearest scope with a budget for a metric wins for
 that metric, and other metrics keep flowing from outer scopes. A case
-with no budget from any level gets the default: wall-clock time may
-regress by at most 5%.
+left with no budget once the uncollected ones are dropped (below) gets
+the default: wall-clock time may regress by at most 5%.
 
 Budgets name metrics; the config decides which are collected. The
 default collects `wall_time` and `alloc_words`; the other built-ins —

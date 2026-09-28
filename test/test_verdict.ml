@@ -850,6 +850,22 @@ let default_binds_only_a_case_collecting_wall_time () =
   is_some ~msg:"the default binds wall_time"
     (report t ~case:"a" ~metric:m_wall).Verdict.budget
 
+let the_default_binds_after_the_drop () =
+  (* A suite that budgets only alloc, a case that collects wall_time only:
+     the alloc budget drops, nothing remains, so the default binds wall_time
+     and a large regression fails the case. *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let t =
+    run_check ~file
+      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
+      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
+      [ (bcase "a", wall_trial (ties 5 1.5)) ]
+  in
+  is_some ~msg:"the default binds wall_time"
+    (report t ~case:"a" ~metric:m_wall).Verdict.budget;
+  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
+  check_overall ~msg:"the regression fails the case" t `Fail
+
 let unbudgeted_metrics_report_but_never_gate () =
   let file =
     (fun f -> f)
@@ -1707,6 +1723,8 @@ let () =
             uncollected_inherited_budget_is_dropped;
           test "the default binds only a case collecting wall_time"
             default_binds_only_a_case_collecting_wall_time;
+          test "the default binds a case whose budgets all drop"
+            the_default_binds_after_the_drop;
           test "unbudgeted metrics report but never gate"
             unbudgeted_metrics_report_but_never_gate;
           test "no cross-metric forgiveness; improvements still ratchet"

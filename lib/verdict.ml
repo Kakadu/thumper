@@ -137,9 +137,11 @@ let unstable samples =
   && Stats.severe_outlier_inflation_sorted samples
 
 (* Budget resolution (per case): the case's per-metric merge wins, other
-   metrics fall through to the run's list, a case with no budgets from any
-   level gets [Budget.defaults], and budgets on metrics the case does not
-   collect are dropped (bench.mli module doc). *)
+   metrics fall through to the run's list, budgets on metrics the case does
+   not collect are dropped, and a case left with none gets [Budget.defaults]
+   (bench.mli module doc). The default comes after the drop: chosen before
+   it, a wall_time-only case under an alloc-only suite would drop the alloc
+   budget and end with no budget at all. *)
 
 let budget_for budgets metric =
   List.find_opt (fun b -> Metric.equal (Budget.metric b) metric) budgets
@@ -151,12 +153,14 @@ let effective_budgets ~run_budgets ~collected case =
       (fun b -> budget_for case_b (Budget.metric b) = None)
       run_budgets
   in
-  let budgets =
-    match case_b @ inherited with [] -> Budget.defaults | l -> l
+  let binding budgets =
+    List.filter
+      (fun b -> List.exists (Metric.equal (Budget.metric b)) collected)
+      budgets
   in
-  List.filter
-    (fun b -> List.exists (Metric.equal (Budget.metric b)) collected)
-    budgets
+  match binding (case_b @ inherited) with
+  | [] -> binding Budget.defaults
+  | l -> l
 
 let relative_params budget =
   match Option.map Budget.contract budget with

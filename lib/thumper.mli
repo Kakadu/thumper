@@ -176,9 +176,10 @@ end
 (** Per-metric performance contracts. A budget names one {!Metric.t} and one
     tolerance; judgment compares every budgeted metric of a case against that
     metric's budget alone — a case fails iff some budgeted metric fails, and
-    there is no cross-metric forgiveness. A case with no budgets from any level
-    (case, group, or {!run}) gets the default: wall-clock time may regress by at
-    most 5%, with a 2.5% equivalence band.
+    there is no cross-metric forgiveness. A case left with no budget (from case,
+    group, or {!run}) once the budgets on metrics it does not collect are
+    dropped gets the default: wall-clock time may regress by at most 5%, with a
+    2.5% equivalence band.
 
     All constructors raise [Invalid_argument] on a negative or NaN tolerance — a
     nonsense budget is a programmer error, never a measurement outcome. *)
@@ -346,12 +347,12 @@ end
       outer scopes. A case that relaxes its [wall_time] budget therefore still
       inherits the group's allocation pin — wholesale replacement would silently
       drop it. The same per-metric rule extends outward: a metric with no budget
-      at any group level falls through to {!run}'s budget list, and a case with
-      no budgets from any level gets the default ({!Budget}). A budget binds
+      at any group level falls through to {!run}'s budget list. A budget binds
       only a metric the case collects: a case that narrows [?metrics] drops the
-      inherited budgets on the others (the default binds only a case that
-      collects [wall_time]), and a budget stated at a scope that does not
-      collect its metric makes the suite invalid ({!Check.error}).
+      inherited budgets on the others, and a case left with no budget once the
+      uncollected ones are dropped gets the default ({!Budget}), which binds
+      only a case that collects [wall_time]. A budget stated at a scope that
+      does not collect its metric makes the suite invalid ({!Check.error}).
 
     {b Errors.} All constructors raise [Invalid_argument] — at construction, a
     bad suite is a programmer error, never a measurement outcome — if:

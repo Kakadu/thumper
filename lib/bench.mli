@@ -38,13 +38,13 @@
       author intent and raise [Invalid_argument] at construction, so
       nearest-scope-wins is the only duplicate-budget semantics that exists. The
       same per-metric rule extends outward: a metric with no budget in
-      {!budgets} falls through to the run's budget list, and a case with no
-      budgets from any level gets [Budget.defaults] (resolution above the case
-      level is the judge's job, not this module's). A budget binds only a metric
-      the case collects: a case that narrows its metrics drops the inherited
-      budgets on the others, and the default binds only a case that collects
-      [wall_time]. A budget stated where its metric is not collected is a
-      contradiction ({!check_collected}). *)
+      {!budgets} falls through to the run's budget list (resolution above the
+      case level is the judge's job, not this module's). A budget binds only a
+      metric the case collects: a case that narrows its metrics drops the
+      inherited budgets on the others, and a case left with no budget once the
+      uncollected ones are dropped gets [Budget.defaults], which binds only a
+      case that collects [wall_time]. A budget stated where its metric is not
+      collected is a contradiction ({!check_collected}). *)
 
 (** {1:types Types} *)
 

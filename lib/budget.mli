@@ -18,8 +18,8 @@
     [e], resolved at construction: [equivalent_within] when given, else
     [min band_cap (max_regression /. 2.)] — v1's own [r /. 2.] rule with a 2.5%
     cap. Either way the band never exceeds the budget it serves: the relations
-    partition confirmed shifts only when [e <= r]. Cases with
-    no budgets from any level get {!defaults}. *)
+    partition confirmed shifts only when [e <= r]. Cases left with no budget
+    once the uncollected ones are dropped get {!defaults}. *)
 
 (** {1:types Types} *)
 
@@ -127,5 +127,6 @@ val band_cap : float
 
 val defaults : t list
 (** [defaults] is [[no_slower_than default_max_regression]] — the budget list
-    for cases that specify none at any level (case, group, or run): wall-clock
-    time may regress by at most 5%, with a 2.5% band. *)
+    for cases left with none (from case, group, or run) once the budgets on
+    metrics they do not collect are dropped: wall-clock time may regress by at
+    most 5%, with a 2.5% band. *)

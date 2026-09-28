@@ -133,10 +133,11 @@ val run :
       pending, the gate cannot matter).
 
     Defaults: [config] is {!Config.default}; [budgets] is [[]] (suite-level —
-    per-case budgets come from each case, and a case with none from any level
-    gets [Budget.defaults]; [Verdict.judge]'s contract); no [baseline] means the
-    empty-file baseline — every case is NEW. [name] is the suite's name, the
-    header of the fresh baseline a first run proposes.
+    per-case budgets come from each case, and a case left with none once the
+    uncollected ones are dropped gets [Budget.defaults]; [Verdict.judge]'s
+    contract); no [baseline] means the empty-file baseline — every case is NEW.
+    [name] is the suite's name, the header of the fresh baseline a first run
+    proposes.
 
     [run] raises [Invalid_argument] if [name] is empty or not single-line, if
     [baseline]'s header names another suite than [name] (the wrong-ruler class —

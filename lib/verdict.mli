@@ -184,12 +184,12 @@ val judge :
     the comparison is [Compared], records one prune notice per dead id in the
     verdict's {!warnings}. [budgets] are suite-level; per-case overrides come
     from each [Bench.case]: for each metric the case's budget wins, other
-    metrics fall through to [budgets], and a case with no budgets from any level
-    gets [Budget.defaults]; then budgets on metrics the case's trial did not
-    measure are dropped (a case that narrows its metrics sheds the inherited
-    budgets on the others, and the default binds only a case that measures
-    [wall_time]). [suite] names fresh candidates built over the empty-file
-    baseline (see {!corrected}).
+    metrics fall through to [budgets], and budgets on metrics the case's trial
+    did not measure are dropped (a case that narrows its metrics sheds the
+    inherited budgets on the others); a case left with no budget gets
+    [Budget.defaults], which binds only a case that measures [wall_time].
+    [suite] names fresh candidates built over the empty-file baseline (see
+    {!corrected}).
 
     The entry points check their inputs before measuring, and [judge] relies on
     it: [budgets] binds each metric at most once ([Budget.check_distinct]), and

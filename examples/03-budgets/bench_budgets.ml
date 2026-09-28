@@ -7,8 +7,9 @@
 
    A budget names one metric and one tolerance; a case fails iff some
    budgeted metric fails — there is no cross-metric forgiveness. A case
-   with no budgets from any level gets the default: wall-clock time may
-   regress by at most 5%, with a 2.5% equivalence band. Budgets flow from
+   left with no budget once the budgets on metrics it does not collect are
+   dropped gets the default: wall-clock time may regress by at most 5%,
+   with a 2.5% equivalence band. Budgets flow from
    [Thumper.run] through groups to cases and merge PER METRIC: the nearest
    scope with a budget for a metric wins for that metric only, so a case
    that relaxes its wall_time budget still inherits its group's allocation
