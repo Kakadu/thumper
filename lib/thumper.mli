@@ -443,24 +443,31 @@ val run :
     summary. The warnings include each case's {!Run.warnings}, its second
     trial's too.
 
-    [REGRESSED] marks a metric that fails its case and is the report's only
-    capitalised word; [regressed] is a regression that fails nothing. An
-    allocation marked [~] is sampled. In [bless]'s report, and in [check]'s
-    against a missing or stale section, every row reads [proposed] unless it
-    fails.
+    A row's time is the median of the case's first time metric, followed after
+    [±] by the half-width of that median's 95% confidence interval, as a
+    percentage of the median. [REGRESSED] marks a metric that fails its case and
+    is the report's only capitalised word; [regressed] is a regression that
+    fails nothing. An allocation marked [~] is sampled. In [bless]'s report, and
+    in [check]'s against a missing or stale section, every row reads [proposed]
+    unless it fails.
 
     The actions are:
     - [rerun:], when some case fails and the run is not a dune rule action: a
-      command that measures the failing cases again. Its [-f <id>] patterns are
-      substrings and may select other cases too.
+      command that measures the failing cases again. It repeats the run's
+      [--quick] or [--precise], a [--baseline] given on the command line, and
+      its [--tag]s. Its [-f <id>] patterns are substrings and may select other
+      cases too.
     - [accept:], when a corrected file was written: [dune promote] in a dune
       rule action and [mv <corrected> <baseline>] otherwise. [bless] always
       prints it.
 
-    In the summary, a case whose row shows only a [regressed] that fails
-    nothing, or an [inconclusive] without a budget, counts as passed. The
-    summary ends with [; failed under --strict] when [--strict] alone made the
-    run exit 1. *)
+    The summary counts each case once, by its outcome: [regressed] when it
+    fails, [inconclusive] when a budgeted metric is inconclusive, and among the
+    passing cases [proposed] when no metric has a baseline row, [improved] when
+    its row opens on [improved], and [passed] otherwise. A case whose row shows
+    only a [regressed] that fails nothing, or an [inconclusive] without a
+    budget, counts as passed. The summary ends with [; failed under --strict]
+    when [--strict] alone made the run exit 1. *)
 
 (** {2:files Files}
 
