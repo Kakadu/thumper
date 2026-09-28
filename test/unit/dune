@@ -79,7 +79,10 @@
 
 (test
  (name test_check)
+ ; Its slow tests measure on the real clock, so they take the cram
+ ; sessions' lock.
  (modules test_check)
+ (locks ../cram/measurement)
  (libraries thumper unix windtrap))
 
 (test

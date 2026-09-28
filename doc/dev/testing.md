@@ -90,12 +90,21 @@ count. `Measure.Protocol.parse` is exposed so worker-pipe containment
 (malformed lines, truncation, hostile counts) is tested without
 forking.
 
-One level up, `Check.run_with` adds the gate predicate as a second
-seam: `test_check` drives the full loop in-process — a planted
-regression confirming, an improvement pooling 2n, the two gate
-sampling points — with scripted instruments and a scripted gate.
-Scripted clocks must advance across batches: a stuck scripted clock
-hangs the warmup arm by contract (`measure.mli`).
+One level up, `Check.run_with` adds the load as a second seam:
+`test_check` drives the loop in process with scripted instruments and
+a scripted load, whose second sample also marks the point between the
+two sweeps: a regression confirmed, an improvement pooled at the frozen
+batch size, the two load samples, the batch size each trial is frozen
+at, pruning. Each test states its environment with `setenv`
+(`THUMPER_MACHINE`, a `THUMPER_LOCK_DIR` under its own `temp_dir`).
+Two `slow` tests run `Check.run` and `Check.measure` on their default
+seams and read only what no timing moves. Scripted clocks must advance
+across batches: a stuck scripted clock hangs the warmup arm by contract
+(`measure.mli`).
+
+The stanzas of `test_measure` and `test_check` take the cram sessions'
+measurement lock, so their real measurements never share the host with
+a cram session's.
 
 ## Cram conventions
 

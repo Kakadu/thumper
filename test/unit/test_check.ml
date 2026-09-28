@@ -3,13 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Integration tests for [Check]: the full loop driven through its two seams — [instruments]
-   scripts every clock read, [load] scripts the environment predicate — so a
-   planted regression confirms, a planted improvement pools 2n, and the gate
-   sampling points are observable, all in-process ([Config.fork false]) with
-   zero wall-clock dependence. [Check] is a private module of the library,
-   reached — with its dependencies — through the facade's [Thumper.Private]
-   re-export. *)
+(* The loop's order runs in process on its two seams: scripted instruments
+   measure every case exactly, and a scripted [load] decides the host's load
+   and marks the point between the sweeps. What a relation means is
+   [Verdict]'s; these tests read a relation only to see that the loop measured
+   and decided what it should. The two tests on the default seams are [slow]
+   and read nothing a timing can move. *)
 
 open Windtrap
 module Baseline = Thumper.Private.Baseline
@@ -23,55 +22,40 @@ module Metric = Thumper.Private.Metric
 module Run = Thumper.Private.Run
 module Verdict = Thumper.Private.Verdict
 
-(* Process environment
-
-   Runs before any test (declaration order): every lease acquisition in this
-   executable resolves under a scratch directory — tests must not contend
-   with real thumper runs on the host — and the sections built below are
-   keyed ["testmachine"] to match [Env.machine_key]'s override. *)
-
-let scratch_root =
-  let rec rm_rf path =
-    match Unix.lstat path with
-    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
-    | { Unix.st_kind = Unix.S_DIR; _ } ->
-        Array.iter
-          (fun entry -> rm_rf (Filename.concat path entry))
-          (Sys.readdir path);
-        Unix.rmdir path
-    | _ -> Unix.unlink path
-  in
-  let root = "test-check.scratch" in
-  rm_rf root;
-  Unix.mkdir root 0o700;
-  root
-
-let () =
-  let locks = Filename.concat scratch_root "locks" in
-  Unix.mkdir locks 0o700;
-  Unix.putenv "THUMPER_LOCK_DIR" locks;
-  Unix.putenv "THUMPER_MACHINE" "testmachine"
+(* The stated environment: this machine is [testmachine], and the lock lives
+   in the test's own directory. *)
+let state_env () =
+  setenv "THUMPER_MACHINE" (Some "testmachine");
+  setenv "THUMPER_LOCK_DIR" (Some (temp_dir ()));
+  List.iter
+    (fun v -> setenv v None)
+    [
+      "INSIDE_DUNE";
+      "DUNE_SOURCEROOT";
+      "CI";
+      "GITHUB_ACTIONS";
+      "NO_COLOR";
+      "TERM";
+    ]
 
 (* The scripted world *)
 
 type world = {
-  mutable now : int; (* fake monotonic clock, ns *)
-  mutable cpu : int; (* fake process CPU clock, ns *)
-  mutable calls : int; (* case-closure invocations so far *)
+  mutable now : int; (* the monotonic clock, in ns *)
+  mutable words : float; (* the cumulative minor words *)
+  mutable calls : int; (* the cases' calls so far *)
 }
 
-let world () = { now = 0; cpu = 0; calls = 0 }
+let world () = { now = 0; words = 0.; calls = 0 }
 
-(* Scripted instruments over [w]. The GC counters never move: the configs
-   below measure clock metrics only, so the exactness probe never runs. *)
 let scripted w =
   {
     Measure.now_ns = (fun () -> w.now);
-    cpu_ns = (fun () -> w.cpu);
+    cpu_ns = (fun () -> w.now);
     gc =
       (fun () ->
         {
-          Metric.minor_words = 0.;
+          Metric.minor_words = w.words;
           promoted_words = 0.;
           major_words = 0.;
           minor_collections = 0;
@@ -79,33 +63,39 @@ let scripted w =
         });
   }
 
-(* A case closure advancing the world: [step w.calls] is this call's cost in
-   ns; the wall and cpu clocks move together. *)
+(* A case that takes [step call] ns a call. *)
 let stepper w step () =
   w.calls <- w.calls + 1;
-  let dt = step w.calls in
-  w.now <- w.now + dt;
-  w.cpu <- w.cpu + dt
+  w.now <- w.now + step w.calls
 
-let constant_ns dt _call = dt
 let ms_ns = 1_000_000
-
-(* In-process protocol: scripted instruments cannot cross a fork. Warmup 0
-   keeps the 3-batch arm only; wall_time only keeps the probe out. *)
-let base =
-  Config.(default |> fork false |> warmup 0. |> metrics [ Metric.wall_time ])
-
-let default_n = Config.default.Config.n
-let m_wall = Metric.wall_time
+let bench w id dt_ns = Bench.bench id (stepper w (fun _ -> dt_ns))
 let quiet () = Env.Quiet
 let loaded () = Env.Loaded { load = 8.; cores = 8 }
 
-(* Baseline fixtures *)
+(* In process with no timed warmup, and wall time only unless a test says. *)
+let scripted_config =
+  Config.(default |> fork false |> warmup 0. |> metrics [ Metric.wall_time ])
 
-(* The section identity must carry the live ocaml identity line: a mismatch
-   would make every comparison stale, which is not what these tests
-   exercise. *)
-let test_identity () =
+let check ?(load = quiet) ?on_progress ?(config = scripted_config) ?budgets
+    ?prune ?filter ?baseline ?(name = "digest") w benches =
+  state_env ();
+  Check.run_with ~instruments:(scripted w) ~load ?on_progress ~config ?budgets
+    ?prune ?filter ?baseline name benches
+
+(* A load that counts its samples and answers [answer n] to the nth. *)
+let counted answer =
+  let n = ref 0 in
+  let load () =
+    incr n;
+    answer !n
+  in
+  (n, load)
+
+(* Baselines *)
+
+(* The live compiler identity, so that the section is compared. *)
+let identity () =
   {
     Baseline.machine = "testmachine";
     host = Env.host_description ();
@@ -113,842 +103,650 @@ let test_identity () =
   }
 
 let baseline_of rows =
-  Baseline.set_section (Baseline.empty ~suite:"digest") (test_identity ()) rows
+  Baseline.set_section (Baseline.empty ~suite:"digest") (identity ()) rows
 
-let wall_row ?(k = 8) id samples =
-  Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples
+let wall_row ?(k = 8) id per_call =
+  Baseline.sampled_row ~id ~metric:"wall_time" ~k
+    ~samples:(Array.make 5 per_call)
 
-let ties value = Array.make 5 value
+let corrected_ids v =
+  let file = require_some (Verdict.corrected v) in
+  let section = require_some (Baseline.section file "testmachine") in
+  List.map Baseline.row_id (Baseline.rows section)
 
-(* Verdict plumbing *)
+(* Verdicts *)
 
-let case_report v id =
-  match
-    List.find_opt (fun c -> String.equal c.Verdict.id id) (Verdict.cases v)
-  with
-  | Some c -> c
-  | None -> failf "case %s not in the verdict" id
+let case_report v ~case =
+  require_match
+    (List.find_opt (fun c -> String.equal c.Verdict.id case))
+    (Verdict.cases v)
 
-let report v ~case ~metric =
-  match
-    List.find_opt
-      (fun r -> Metric.equal r.Verdict.metric metric)
-      (case_report v case).Verdict.reports
-  with
-  | Some r -> r
-  | None -> failf "case %s has no report for %s" case (Metric.id metric)
+let report v ~case metric =
+  require_match
+    (List.find_opt (fun r -> Metric.equal r.Verdict.metric metric))
+    (case_report v ~case).Verdict.reports
+
+let trial_k v ~case = Run.Trial.k (case_report v ~case).Verdict.trial
 
 let reason_name = function
-  | Verdict.Wide_interval -> "wide_interval"
-  | Verdict.Non_positive -> "non_positive"
-  | Baseline_unstable -> "baseline_unstable"
+  | Verdict.Wide_interval -> "wide interval"
+  | Non_positive -> "non-positive"
+  | Baseline_unstable -> "baseline unstable"
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
-  | Exactness_lost -> "exactness_lost"
-  | Batch_drifted -> "batch_drifted"
-  | Candidate_unstable -> "candidate_unstable"
-  | Candidate_drifted -> "candidate_drifted"
+  | Exactness_lost -> "exactness lost"
+  | Batch_drifted -> "batch drifted"
+  | Candidate_unstable -> "candidate unstable"
+  | Candidate_drifted -> "candidate drifted"
 
-let rel_name = function
+(* A relation's name, so that a mismatch prints both. *)
+let relation v ~case metric =
+  match (report v ~case metric).Verdict.verdict with
   | Verdict.Proposed -> "proposed"
-  | Judged (Improved (Confirmed _)) -> "improved-confirmed"
-  | Judged (Improved (Exact_change _)) -> "improved-exact"
-  | Judged (Regressed (Confirmed _)) -> "regressed-confirmed"
-  | Judged (Regressed (Exact_change _)) -> "regressed-exact"
-  | Judged (Equivalent None) -> "equivalent-exact"
-  | Judged (Equivalent (Some _)) -> "equivalent"
-  | Judged (Changed_within_budget _) -> "changed_within_budget"
-  | Judged (Within_budget _) -> "within_budget"
-  | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
+  | Judged (Improved (Confirmed _)) -> "improved, confirmed"
+  | Judged (Improved (Exact_change _)) -> "improved, exact"
+  | Judged (Regressed (Confirmed _)) -> "regressed, confirmed"
+  | Judged (Regressed (Exact_change _)) -> "regressed, exact"
+  | Judged (Equivalent _) -> "equivalent"
+  | Judged (Changed_within_budget _) -> "changed within budget"
+  | Judged (Within_budget _) -> "within budget"
+  | Judged (Inconclusive { reason; _ }) -> "inconclusive, " ^ reason_name reason
 
-let overall_name = function
-  | `Pass -> "pass"
-  | `Fail -> "fail"
-  | `Inconclusive -> "inconclusive"
+let pp_load ppf = function
+  | Env.Quiet -> Format.pp_print_string ppf "quiet"
+  | Env.Loaded { load; cores } ->
+      Format.fprintf ppf "loaded %g on %d" load cores
 
-let check_rel ?msg v ~case ~metric expected =
-  equal ?msg string expected (rel_name (report v ~case ~metric).Verdict.verdict)
+let host_load =
+  Testable.make ~pp:pp_load ~equal:(fun a b ->
+      match (a, b) with
+      | Env.Quiet, Env.Quiet -> true
+      | Env.Loaded a, Env.Loaded b ->
+          Float.equal a.load b.load && a.cores = b.cores
+      | Env.Quiet, Env.Loaded _ | Env.Loaded _, Env.Quiet -> false)
 
-let check_overall ?msg v expected =
-  equal ?msg string (overall_name expected) (overall_name (Verdict.overall v))
+(* Errors *)
 
-let check_error pred fn =
-  raises_match (function Check.Error e -> pred e | _ -> false) fn
-
-let contains ~sub s =
-  let n = String.length s and m = String.length sub in
-  let rec go i = i + m <= n && (String.sub s i m = sub || go (i + 1)) in
-  m = 0 || go 0
-
-(* The loop: plant, confirm, decide *)
-
-let planted_regression_confirms () =
-  let w = world () in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    Env.Quiet
-  in
-  (* Baseline 1 ms/call at k = 8; candidate 2 ms/call: +100% against the 5%
-     default budget queues a provisional regression, and the confirmation
-     (same speed) reproduces it. *)
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
-  in
-  check_rel ~msg:"relation" v ~case:"a" ~metric:m_wall "regressed-confirmed";
-  check_overall ~msg:"overall" v `Fail;
-  equal ~msg:"exit code" int 1 (Verdict.exit_code v);
-  equal ~msg:"suite name plumbs to the verdict" string "digest"
-    (Verdict.suite v);
-  equal ~msg:"load sampled at start and before the queue" int 2 !load_samples;
-  is_true ~msg:"the verdict records the quiet re-sample"
-    (Verdict.load v = Env.Quiet)
-
-let planted_improvement_pools_2n () =
-  let w = world () in
-  (* Baseline 4 ms/call; candidate 1 ms/call: -75% confirms as improved and
-     the decided relation carries both passes pooled at the frozen k. *)
-  let baseline = baseline_of [ wall_row "a" (ties 4.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  (match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
-  | Verdict.Judged
-      (Verdict.Improved (Verdict.Confirmed { first; confirmation; pooled; k }))
-    ->
-      equal ~msg:"pooled carries both passes" int (2 * default_n)
-        (Array.length pooled);
-      is_true ~msg:"pooled samples are the measured per-call value"
-        (Array.for_all (fun s -> Float.abs (s -. 1.0e-3) < 1e-12) pooled);
-      equal ~msg:"k preserved through the confirmation" int 8 k;
-      is_true ~msg:"first pass shows ~ -75%" (first.Verdict.estimate < -0.5);
-      is_true ~msg:"confirmation shows ~ -75%"
-        (confirmation.Verdict.estimate < -0.5)
-  | mv -> failf "expected a confirmed improvement, got %s" (rel_name mv));
-  check_overall ~msg:"an improvement passes" v `Pass;
-  equal ~msg:"exit code" int 0 (Verdict.exit_code v)
-
-let no_section_is_all_new () =
-  let w = world () in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  (match Verdict.comparison v with
-  | Verdict.No_baseline -> ()
-  | Verdict.Stale _ -> fail "expected No_baseline, got Stale"
-  | Verdict.Compared -> fail "expected No_baseline, got Compared");
-  (match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
-  | Verdict.Proposed -> ()
-  | mv -> failf "expected Proposed, got %s" (rel_name mv));
-  check_overall ~msg:"NEW passes" v `Pass;
-  equal ~msg:"exit code" int 0 (Verdict.exit_code v)
-
-(* The gate: both sampling points *)
-
-let loaded_gate_at_start_degrades () =
-  let w = world () in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    loaded ()
-  in
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
-  in
-  check_rel ~msg:"the sampled regression degrades" v ~case:"a" ~metric:m_wall
-    "inconclusive:environment";
-  check_overall ~msg:"a budgeted inconclusive metric" v `Inconclusive;
-  equal ~msg:"exit 0 without --strict" int 0 (Verdict.exit_code v);
-  equal ~msg:"nothing queued under load: the gate is not re-sampled" int 1
-    !load_samples;
-  is_true ~msg:"the verdict records the start gate" (Verdict.load v = loaded ())
-
-let loaded_resample_degrades_the_queue () =
-  let w = world () in
-  let load_samples = ref 0 in
-  let calls_at_resample = ref (-1) in
-  let load () =
-    incr load_samples;
-    if !load_samples = 1 then Env.Quiet
-    else begin
-      calls_at_resample := w.calls;
-      loaded ()
-    end
-  in
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
-  in
-  check_rel ~msg:"the pending regression degrades" v ~case:"a" ~metric:m_wall
-    "inconclusive:environment";
-  check_overall ~msg:"overall" v `Inconclusive;
-  equal ~msg:"load re-sampled before the queue" int 2 !load_samples;
-  equal ~msg:"the queue is not measured under load" int !calls_at_resample
-    w.calls;
-  is_true ~msg:"the verdict records the loaded re-sample"
-    (Verdict.load v = loaded ())
-
-(* Progress ticks
-
-   [on_progress] is the CLI status line's seam: one tick per case, before it
-   is measured, phase-tagged per sweep. *)
-
-let tick_str (p : Check.progress) =
-  Printf.sprintf "%s %d/%d %s"
-    (match p.Check.phase with
-    | `Measuring -> "measuring"
-    | `Confirming -> "confirming")
-    p.Check.index p.Check.total p.Check.case
-
-let progress_ticks_both_sweeps () =
-  let w = world () in
-  let ticks = ref [] in
-  (* "a" plants a confirmed regression (queued); "b" stays equivalent: the
-     first sweep ticks both cases in order, the confirmation sweep only the
-     queued one. *)
-  let baseline =
-    baseline_of [ wall_row "a" (ties 1.0e-3); wall_row "b" (ties 1.0e-3) ]
-  in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet
-      ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
-      ~config:base ~baseline "digest"
-      [
-        Bench.bench "a" (stepper w (constant_ns (2 * ms_ns)));
-        Bench.bench "b" (stepper w (constant_ns ms_ns));
-      ]
-  in
-  check_rel ~msg:"the plant confirmed" v ~case:"a" ~metric:m_wall
-    "regressed-confirmed";
-  equal ~msg:"one tick per case per sweep, before measuring" (list string)
-    [ "measuring 1/2 a"; "measuring 2/2 b"; "confirming 1/1 a" ]
-    (List.rev !ticks)
-
-let progress_skips_the_unmeasured_loaded_queue () =
-  let w = world () in
-  let ticks = ref [] in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    if !load_samples = 1 then Env.Quiet else loaded ()
-  in
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load
-      ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
-      ~config:base ~baseline "digest"
-      [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
-  in
-  check_rel ~msg:"the pending regression degraded" v ~case:"a" ~metric:m_wall
-    "inconclusive:environment";
-  equal ~msg:"a loaded re-sample measures nothing, so it ticks nothing"
-    (list string) [ "measuring 1/1 a" ] (List.rev !ticks)
-
-let measure_ticks_each_case () =
-  let w = world () in
-  let ticks = ref [] in
-  let r =
-    Check.measure ~instruments:(scripted w)
-      ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
-      ~config:base
-      [
-        Bench.bench "a" (stepper w (constant_ns ms_ns));
-        Bench.bench "b" (stepper w (constant_ns ms_ns));
-      ]
-  in
-  equal ~msg:"both cases measured" (list string) [ "a"; "b" ] (Run.case_ids r);
-  equal ~msg:"measuring ticks only — no confirmation sweep" (list string)
-    [ "measuring 1/2 a"; "measuring 2/2 b" ]
-    (List.rev !ticks)
-
-(* Frozen batch sizes *)
-
-(* A loaded host slows the case to 6.5 ms a call, and it allocates 20
-   words a call against the row's 6. The row's k observes a batch past the
-   25 ms window, and the samples recalibrate to k = 1. *)
-let exact_under_recalibration ~row_k =
-  let w = world () in
-  let words = ref 0. in
-  let instruments =
-    {
-      (scripted w) with
-      Measure.gc =
-        (fun () ->
-          {
-            Metric.minor_words = !words;
-            promoted_words = 0.;
-            major_words = 0.;
-            minor_collections = 0;
-            major_collections = 0;
-          });
-    }
-  in
-  let baseline =
-    baseline_of
-      [
-        Baseline.exact_row ~id:"a" ~metric:"alloc_words" 6;
-        wall_row ~k:row_k "a" (ties 1.0e-3);
-      ]
-  in
-  let config = Config.(base |> metrics [ m_wall; Metric.alloc_words ]) in
-  let v =
-    Check.run_with ~instruments ~load:loaded ~config
-      ~budgets:[ Budget.no_more_alloc_than 0. ]
-      ~baseline "digest"
-      [
-        Bench.bench "a" (fun () ->
-            stepper w (constant_ns 6_500_000) ();
-            words := !words +. 20.);
-      ]
-  in
-  equal ~msg:"the samples recalibrated" int 1
-    (Run.Trial.k (case_report v "a").Verdict.trial);
-  check_rel ~msg:"time" v ~case:"a" ~metric:m_wall "inconclusive:environment";
-  v
-
-(* At a row k of 16, 16 times the new k, the probe still runs at k = 16, so
-   the counts compare like for like: the case regresses on its count. *)
-let exact_regression_under_a_recalibrated_k () =
-  let v = exact_under_recalibration ~row_k:16 in
-  check_rel ~msg:"alloc" v ~case:"a" ~metric:Metric.alloc_words
-    "regressed-exact";
-  check_overall v `Fail
-
-(* At 17 the probe runs at the new k, and the changed count drifts. *)
-let exact_drift_past_the_probe_bound () =
-  let v = exact_under_recalibration ~row_k:17 in
-  check_rel ~msg:"alloc" v ~case:"a" ~metric:Metric.alloc_words
-    "inconclusive:batch_drifted";
-  check_overall v `Inconclusive
-
-let sweep_freezes_the_rows_k () =
-  let w = world () in
-  (* Free calibration at 1 ms/call gives k = 8; the row's k = 4 observes a
-     4 ms batch inside the [0.2x, 5x] reuse window, so a recorded k of 4
-     proves the sweep passed the row's k to [Measure]. *)
-  let baseline = baseline_of [ wall_row ~k:4 "a" (ties 1.0e-3) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  equal ~msg:"trial measured at the row's k" int 4
-    (Run.Trial.k (case_report v "a").Verdict.trial);
-  check_rel ~msg:"equal evidence is equivalent" v ~case:"a" ~metric:m_wall
-    "equivalent"
-
-let a_stale_section_freezes_nothing () =
-  let w = world () in
-  (* A section recorded under another compiler is never compared, so its
-     k = 4 (a 4 ms batch, inside the reuse window) must not freeze the
-     sweep: the trial calibrates freely to k = 8 at 1 ms/call. *)
-  let stale =
-    Baseline.set_section
-      (Baseline.empty ~suite:"digest")
-      { (test_identity ()) with Baseline.ocaml = "4.14.0 64-bit release" }
-      [ wall_row ~k:4 "a" (ties 1.0e-3) ]
-  in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-      ~baseline:stale "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  is_true ~msg:"premise: the section is stale"
-    (match Verdict.comparison v with Verdict.Stale _ -> true | _ -> false);
-  equal ~msg:"k calibrated freely" int 8
-    (Run.Trial.k (case_report v "a").Verdict.trial)
-
-let freeze_reads_the_first_sampled_row () =
-  let w = world () in
-  (* Two sampled rows for one case disagreeing on k (a per-row ratchet
-     advance at a recalibrated confirmation k can produce this): the freeze
-     reads the first in canonical (id, metric) order — cpu_time sorts before
-     wall_time — and k = 2 (a 2 ms observed batch, inside the window) proves
-     it; the wall row's k = 8 or free calibration would both record 8. *)
-  let config = Config.(base |> metrics [ Metric.wall_time; Metric.cpu_time ]) in
-  let rows =
-    [
-      Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:2
-        ~samples:(ties 1.0e-3);
-      wall_row ~k:8 "a" (ties 1.0e-3);
-    ]
-  in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config
-      ~baseline:(baseline_of rows) "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  equal ~msg:"k frozen from the first sampled row (cpu_time)" int 2
-    (Run.Trial.k (case_report v "a").Verdict.trial)
-
-let freeze_skips_exact_rows () =
-  let w = world () in
-  (* An exact row sorts first for the case (alloc_words < wall_time
-     canonically) but records no k: the freeze must skip it and read the
-     sampled wall row's k = 4. An implementation stopping at the case's
-     first row would freeze nothing and calibrate freely to 8. *)
-  let rows =
-    [
-      Baseline.exact_row ~id:"a" ~metric:"alloc_words" 7;
-      wall_row ~k:4 "a" (ties 1.0e-3);
-    ]
-  in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-      ~baseline:(baseline_of rows) "digest"
-      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
-  in
-  equal ~msg:"k frozen from the sampled row, not the exact row" int 4
-    (Run.Trial.k (case_report v "a").Verdict.trial)
-
-let confirmation_runs_at_the_provisional_k () =
-  let w = world () in
-  (* The provisional trial recalibrates away from the row's k (k = 1 observes
-     0.3 ms, below the window), landing at k = 32. Between the sweeps the
-     case slows to 0.75 ms/call — a speed at which k = 32 still sits inside
-     the reuse window (24 ms <= 25 ms) while both the row's k = 1 and free
-     calibration would land at k = 8. A confirmed k of 32 therefore proves
-     the confirmation was frozen at the provisional trial's k. The [load]
-     seam is the observable between-sweeps hook: its second sample runs after
-     judgment, before the confirmation queue. *)
-  let slow = ref false in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    if !load_samples >= 2 then slow := true;
-    Env.Quiet
-  in
-  let step _call = if !slow then 750_000 else 300_000 in
-  let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w step) ]
-  in
-  match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
-  | Verdict.Judged (Verdict.Regressed (Verdict.Confirmed { k; pooled; _ })) ->
-      equal ~msg:"confirmation frozen at the provisional trial's k" int 32 k;
-      equal ~msg:"pooled carries both passes" int (2 * default_n)
-        (Array.length pooled)
-  | mv -> failf "expected a confirmed regression, got %s" (rel_name mv)
-
-let a_recalibrated_confirmation_is_unconfirmed () =
-  let w = world () in
-  (* As above, the provisional trial lands at k = 32 (0.3 ms/call). Between
-     the sweeps the case slows to 1 ms/call: k = 32 now observes a 32 ms
-     batch, past the 25 ms window, so the confirmation recalibrates to
-     k = 8. Its samples still show the regression, but samples at two batch
-     sizes are never pooled: the relation is unconfirmed. *)
-  let slow = ref false in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    if !load_samples >= 2 then slow := true;
-    Env.Quiet
-  in
-  let step _call = if !slow then ms_ns else 300_000 in
-  let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
-  let v =
-    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-      "digest"
-      [ Bench.bench "a" (stepper w step) ]
-  in
-  equal ~msg:"premise: the provisional trial ran at k = 32" int 32
-    (Run.Trial.k (case_report v "a").Verdict.trial);
-  check_rel v ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
-
-(* Selection *)
-
-let an_escaped_error_prints_its_text () =
+let an_uncaught_error_prints_its_text () =
   equal string "Thumper.Check.Error: no case matches the selection"
     (Printexc.to_string (Check.Error Check.Empty_selection))
 
-let empty_selection_is_an_error () =
-  let w = world () in
-  let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
-  let is_empty = function Check.Empty_selection -> true | _ -> false in
-  check_error is_empty (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-        ~filter:(`Or []) "digest"
-        [ bench () ]);
-  check_error is_empty (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
-        []);
-  check_error is_empty (fun () ->
-      Check.measure ~instruments:(scripted w) ~config:base ~filter:(`Or [])
-        [ bench () ])
-
-let duplicate_ids_are_invalid_suite () =
-  let w = world () in
-  let suite () =
-    [
-      Bench.bench "a" (stepper w (constant_ns ms_ns));
-      Bench.bench "a" (stepper w (constant_ns ms_ns));
-      Bench.bench "b" (stepper w (constant_ns ms_ns));
-    ]
-  in
-  let is_dup = function
-    | Check.Invalid_suite (Bench.Duplicate_id "a") -> true
-    | _ -> false
-  in
-  check_error is_dup (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
-        (suite ()));
-  (* Detected on the whole suite before filtering: a narrowed selection never
-     masks a broken suite. *)
-  check_error is_dup (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-        ~filter:(`Id "b") "digest" (suite ()))
-
-let uncollected_budgets_are_invalid_suite () =
-  (* [base] collects wall_time only. Refused before the lease, so nothing is
-     measured. *)
-  let w = world () in
-  let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
-  check_error
-    (function
-      | Check.Invalid_suite
-          (Bench.Uncollected_budget { scope = ""; metric = "alloc_words" }) ->
-          true
-      | _ -> false)
-    (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-        ~budgets:[ Budget.no_more_alloc_than 0.01 ]
-        "digest"
-        [ bench () ]);
-  check_error
-    (function
-      | Check.Invalid_suite
-          (Bench.Uncollected_budget { scope = "a"; metric = "cpu_time" }) ->
-          true
-      | _ -> false)
-    (fun () ->
-      Check.measure ~instruments:(scripted w) ~config:base
-        [
-          Bench.bench
-            ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
-            "a"
-            (stepper w (constant_ns ms_ns));
-        ]);
-  equal ~msg:"no case was measured" int 0 w.calls
-
-let only_the_suite_owner_prunes () =
-  (* [benches] need not be the whole suite: a library check keeps every row
-     it did not judge. Only a caller holding the whole suite passes
-     [~prune:true], and then only a selection of every case prunes. *)
-  let w = world () in
-  let baseline =
-    baseline_of [ wall_row "a" (ties 1.0e-3); wall_row "dead" (ties 1.0e-3) ]
-  in
-  let bench_a () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
-  let bench_b () = Bench.bench "b" (stepper w (constant_ns ms_ns)) in
-  let has_prune_notice v =
-    List.exists (fun s -> contains ~sub:"dead" s) (Verdict.warnings v)
-  in
-  let keeps_dead v =
-    match Verdict.corrected v with
-    | None -> true
-    | Some f -> contains ~sub:"dead\t" (Baseline.to_string f)
-  in
-  let v_library =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      "digest"
-      [ bench_a () ]
-  in
-  equal ~msg:"a library check prunes nothing" (list string) []
-    (Verdict.warnings v_library);
-  is_true ~msg:"its corrected file keeps the unjudged row"
-    (keeps_dead v_library);
-  let v_full =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      ~prune:true "digest"
-      [ bench_a () ]
-  in
-  is_true ~msg:"the suite's owner notices the dead row"
-    (has_prune_notice v_full);
-  is_true ~msg:"and prunes it" (not (keeps_dead v_full));
-  (* A filter matching every case is still a full selection. *)
-  let v_all =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      ~prune:true ~filter:(`Id "") "digest"
-      [ bench_a () ]
-  in
-  is_true ~msg:"an all-matching filter is a full selection"
-    (has_prune_notice v_all);
-  let v_partial =
-    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
-      ~prune:true ~filter:(`Id "a") "digest"
-      [ bench_a (); bench_b () ]
-  in
-  equal ~msg:"a narrowed selection never prunes" (list string) []
-    (Verdict.warnings v_partial);
-  equal ~msg:"only the selected case is judged" (list string) [ "a" ]
-    (List.map (fun c -> c.Verdict.id) (Verdict.cases v_partial))
-
-(* Operational failures *)
-
-let lease_failure_surfaces_as_error () =
-  (* An unusable lock file is the deterministic in-process lease failure: a
-     held lock cannot be planted from this process ([Env.Lock.with_lock] is
-     reentrant regardless of directory), so [Timeout] needs a second process
-     — the CLI cram suite's territory. Here the lock path is a directory:
-     opening it can never succeed. *)
+(* A directory where the lock file should be cannot be opened as one. *)
+let an_unusable_lock_is_a_lock_error () =
+  state_env ();
   let dir = temp_dir () in
   Unix.mkdir
     (Filename.concat dir (Printf.sprintf "thumper-%d.lock" (Unix.geteuid ())))
     0o700;
-  let previous = Sys.getenv "THUMPER_LOCK_DIR" in
-  Unix.putenv "THUMPER_LOCK_DIR" dir;
-  Fun.protect
-    ~finally:(fun () -> Unix.putenv "THUMPER_LOCK_DIR" previous)
-    (fun () ->
-      let w = world () in
-      let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
-      let is_unusable = function
-        | Check.Lock (Env.Lock.Unusable _) -> true
-        | _ -> false
-      in
-      check_error is_unusable (fun () ->
-          Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-            "digest"
-            [ bench () ]);
-      check_error is_unusable (fun () ->
-          Check.measure ~instruments:(scripted w) ~config:base [ bench () ]))
-
-let wrong_suite_raises_before_measuring () =
-  (* Wrong-ruler preflight: a baseline whose header names another suite is a
-     programmer error, raised before any measurement. [w.calls = 0] is the
-     observable. (A foreign machine's evidence is no longer even expressible:
-     [run] derives this machine's section from the file by key.) *)
+  setenv "THUMPER_LOCK_DIR" (Some dir);
   let w = world () in
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  raises
-    (Invalid_argument
-       "Thumper.Check.run: baseline is for suite 'digest', not 'other'; pass \
-        this suite's file, or update its '# suite:' header if the suite was \
-        renamed") (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-        ~baseline "other"
-        [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
-  equal ~msg:"no case was measured" int 0 w.calls
-
-let invalid_names_raise_before_measuring () =
-  (* The name heads the fresh baseline a first run proposes: an empty or
-     multi-line one is refused on entry, before the lease and the sweep. *)
-  let w = world () in
-  List.iter
-    (fun name ->
-      raises
-        (Invalid_argument
-           "Thumper.Check.run: suite name must be non-empty and single-line \
-            (it heads fresh baselines)") (fun () ->
-          Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base name
-            [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]))
-    [ ""; "two\nlines" ];
-  equal ~msg:"no case was measured" int 0 w.calls
-
-let duplicate_budgets_raise_before_measuring () =
-  (* [Verdict.judge] no longer repeats the check: without this preflight a
-     duplicate budget would reach judgment unnoticed after a full sweep. *)
-  let w = world () in
-  raises
-    (Invalid_argument
-       "Thumper.Check.run: two budgets for metric wall_time in one ~budgets \
-        list") (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
-        ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
-        "digest"
-        [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
-  equal ~msg:"no case was measured" int 0 w.calls
-
-let a_failing_case_aborts_the_run () =
-  let w = world () in
-  let suite =
-    [
-      Bench.bench "boom" (fun () -> failwith "kaboom");
-      Bench.bench "ok" (stepper w (constant_ns ms_ns));
-    ]
+  let unusable = function
+    | Check.Error (Check.Lock (Env.Lock.Unusable _)) -> true
+    | _ -> false
   in
-  check_error
-    (function
-      | Check.Measurement (Measure.Case_raised { case = "boom"; exn }) ->
-          contains ~sub:"kaboom" exn
-      | _ -> false)
-    (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
-        suite)
+  raises_match unusable (fun () ->
+      Check.run_with ~instruments:(scripted w) ~load:quiet
+        ~config:scripted_config "digest"
+        [ bench w "a" ms_ns ]);
+  raises_match unusable (fun () ->
+      Check.measure ~instruments:(scripted w) ~config:scripted_config
+        [ bench w "a" ms_ns ])
 
-let a_failing_confirmation_aborts_the_run () =
-  (* The .mli singles this sweep out: [Verdict.decide] reads an absent
-     confirmation as [Inconclusive Unconfirmed] — exit 0 — "and that
-     totality rule exists for pure offline re-judging, not for laundering a
-     dead worker into a pass." A case that measures cleanly, queues a
-     confirmation, and dies in sweep two must be the same operational error
-     as dying in sweep one. The gate's second sample is the between-sweeps
-     hook that arms the failure. *)
+let a_raise_in_the_first_sweep_is_a_measurement_error () =
+  let w = world () in
+  raises
+    (Check.Error
+       (Check.Measurement
+          (Measure.Case_raised { case = "boom"; exn = "Failure(\"boom\")" })))
+    (fun () ->
+      check w
+        [ Bench.bench "boom" (fun () -> failwith "boom"); bench w "ok" ms_ns ])
+
+(* The case regresses at 2 ms a call against 1 ms, and raises once the second
+   load sample, between the sweeps, has armed it. *)
+let a_raise_in_the_confirmation_is_a_measurement_error () =
   let w = world () in
   let armed = ref false in
-  let load_samples = ref 0 in
-  let load () =
-    incr load_samples;
-    if !load_samples >= 2 then armed := true;
-    Env.Quiet
+  let samples, load =
+    counted (fun n ->
+        if n = 2 then armed := true;
+        Env.Quiet)
   in
-  let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
+  let step = stepper w (fun _ -> 2 * ms_ns) in
   let case =
-    let step = stepper w (constant_ns (2 * ms_ns)) in
-    Bench.bench "a" (fun () ->
-        if !armed then failwith "confirmation kaboom" else step ())
+    Bench.bench "a" (fun () -> if !armed then failwith "boom" else step ())
   in
-  check_error
-    (function
-      | Check.Measurement (Measure.Case_raised { case = "a"; exn }) ->
-          contains ~sub:"confirmation kaboom" exn
-      | _ -> false)
+  raises
+    (Check.Error
+       (Check.Measurement
+          (Measure.Case_raised { case = "a"; exn = "Failure(\"boom\")" })))
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
-        "digest" [ case ]);
-  equal ~msg:"the failure came from the second sweep" int 2 !load_samples
+      check ~load ~baseline:(baseline_of [ wall_row "a" 1e-3 ]) w [ case ]);
+  equal ~msg:"load samples" int 2 !samples
 
-(* Measuring (the numbers path) *)
+let errors =
+  group "Errors"
+    [
+      test "an uncaught Error prints its text" an_uncaught_error_prints_its_text;
+      test "an unusable lock file is a Lock error"
+        an_unusable_lock_is_a_lock_error;
+      test "a raise in the first sweep is a Measurement error"
+        a_raise_in_the_first_sweep_is_a_measurement_error;
+      test "a raise in the confirmation sweep is a Measurement error"
+        a_raise_in_the_confirmation_is_a_measurement_error;
+    ]
+
+(* Progress *)
+
+let tick (p : Check.progress) =
+  Printf.sprintf "%s %d/%d %s"
+    (match p.phase with
+    | `Measuring -> "measuring"
+    | `Confirming -> "confirming")
+    p.index p.total p.case
+
+let ticks () =
+  let ticks = ref [] in
+  (ticks, fun p -> ticks := tick p :: !ticks)
+
+(* "a" regresses at 2 ms a call against 1 ms and is confirmed; "b" is not. *)
+let both_sweeps_tick () =
+  let w = world () in
+  let ticked, on_progress = ticks () in
+  let baseline = baseline_of [ wall_row "a" 1e-3; wall_row "b" 1e-3 ] in
+  ignore
+    (check ~on_progress ~baseline w
+       [ bench w "a" (2 * ms_ns); bench w "b" ms_ns ]);
+  equal (list string)
+    [ "measuring 1/2 a"; "measuring 2/2 b"; "confirming 1/1 a" ]
+    (List.rev !ticked)
+
+let a_loaded_resample_ticks_no_confirmation () =
+  let w = world () in
+  let ticked, on_progress = ticks () in
+  let _, load = counted (fun n -> if n = 1 then Env.Quiet else loaded ()) in
+  let baseline = baseline_of [ wall_row "a" 1e-3 ] in
+  ignore (check ~load ~on_progress ~baseline w [ bench w "a" (2 * ms_ns) ]);
+  equal (list string) [ "measuring 1/1 a" ] (List.rev !ticked)
+
+let measure_ticks_each_case () =
+  state_env ();
+  let w = world () in
+  let ticked, on_progress = ticks () in
+  ignore
+    (Check.measure ~instruments:(scripted w) ~on_progress
+       ~config:scripted_config
+       [ bench w "a" ms_ns; bench w "b" ms_ns ]);
+  equal (list string)
+    [ "measuring 1/2 a"; "measuring 2/2 b" ]
+    (List.rev !ticked)
+
+let progress =
+  group "Progress"
+    [
+      test "each sweep ticks once per case, before measuring it"
+        both_sweeps_tick;
+      test "a loaded re-sample ticks no confirmation"
+        a_loaded_resample_ticks_no_confirmation;
+      test "measure ticks each case" measure_ticks_each_case;
+    ]
+
+(* Selecting *)
+
+let ids_and_scope (cases, scope) =
+  ( List.map Bench.id cases,
+    match scope with `Full -> "full" | `Partial -> "partial" )
+
+let select ?filter ?(budgets = []) benches =
+  Check.select ?filter ~metrics:[ Metric.wall_time ] ~budgets benches
+
+let two = [ Bench.bench "a" ignore; Bench.bench "b" ignore ]
+
+let selections =
+  [
+    ("no filter selects every case", None, ([ "a"; "b" ], "full"));
+    ( "a filter matching every case is full",
+      Some (`Id ""),
+      ([ "a"; "b" ], "full") );
+    ("a narrowing filter is partial", Some (`Id "a"), ([ "a" ], "partial"));
+  ]
+
+let refusals =
+  [
+    ( "a filter selecting nothing",
+      (fun () -> select ~filter:(`Or []) two),
+      Check.Error Check.Empty_selection );
+    ("an empty suite", (fun () -> select []), Check.Error Check.Empty_selection);
+    ( "two cases with one id, whatever the filter",
+      (fun () -> select ~filter:(`Id "b") (Bench.bench "a" ignore :: two)),
+      Check.Error (Check.Invalid_suite (Bench.Duplicate_id "a")) );
+    ( "a run budget on a metric the run does not collect",
+      (fun () -> select ~budgets:[ Budget.no_more_alloc_than 0.01 ] two),
+      Check.Error
+        (Check.Invalid_suite
+           (Bench.Uncollected_budget { scope = ""; metric = "alloc_words" })) );
+    ( "a case budget on a metric the case does not collect",
+      (fun () ->
+        select
+          [
+            Bench.bench
+              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              "a" ignore;
+          ]),
+      Check.Error
+        (Check.Invalid_suite
+           (Bench.Uncollected_budget { scope = "a"; metric = "cpu_time" })) );
+  ]
+
+let selecting =
+  group "Selecting"
+    [
+      cases "select"
+        ~name:(fun (name, _, _) -> name)
+        selections
+        (fun (_, filter, expected) ->
+          equal
+            (pair (list string) string)
+            expected
+            (ids_and_scope (select ?filter two)));
+      cases "select refuses"
+        ~name:(fun (name, _, _) -> name)
+        refusals
+        (fun (_, selection, e) -> raises e selection);
+    ]
+
+(* Checking *)
+
+(* 2 ms a call against 1 ms queues a regression, and the confirmation sweep
+   measures it again. *)
+let a_regression_is_confirmed_by_a_second_sweep () =
+  let w = world () in
+  let samples, load = counted (fun _ -> Env.Quiet) in
+  let baseline = baseline_of [ wall_row "a" 1e-3 ] in
+  let v = check ~load ~baseline w [ bench w "a" (2 * ms_ns) ] in
+  equal string "regressed, confirmed" (relation v ~case:"a" Metric.wall_time);
+  equal ~msg:"load samples" int 2 !samples;
+  equal ~msg:"the verdict's load" host_load Env.Quiet (Verdict.load v)
+
+let the_verdict_carries_the_suite_name () =
+  let w = world () in
+  let v = check ~name:"digest" w [ bench w "a" ms_ns ] in
+  equal string "digest" (Verdict.suite v)
+
+let confirmed_improvement (r : Verdict.metric_report) =
+  match r.verdict with
+  | Verdict.Judged (Verdict.Improved (Verdict.Confirmed { pooled; k; _ })) ->
+      Some (pooled, k)
+  | _ -> None
+
+(* The baseline row holds 4 ms per call at a batch of 8 and the case takes
+   1 ms: the first sweep queues an improvement, the confirmation sweep
+   measures the case again at the same batch size, and the decided relation
+   pools both sweeps' samples. *)
+let an_improvement_is_confirmed_at_the_frozen_batch_size () =
+  let w = world () in
+  let baseline = baseline_of [ wall_row ~k:8 "a" 4.0e-3 ] in
+  let v = check ~baseline w [ bench w "a" ms_ns ] in
+  let pooled, k =
+    require_match confirmed_improvement (report v ~case:"a" Metric.wall_time)
+  in
+  equal int 8 k;
+  equal
+    (array (float 1e-12))
+    (Array.make (2 * Config.default.Config.n) 1.0e-3)
+    pooled
+
+let without_a_section_every_metric_is_proposed () =
+  let w = world () in
+  let v = check w [ bench w "a" ms_ns ] in
+  require_match
+    (function
+      | Verdict.No_baseline -> Some ()
+      | Verdict.Stale _ | Verdict.Compared -> None)
+    (Verdict.comparison v);
+  equal string "proposed" (relation v ~case:"a" Metric.wall_time)
+
+let a_load_at_the_start_is_sampled_once () =
+  let w = world () in
+  let samples, load = counted (fun _ -> loaded ()) in
+  let baseline = baseline_of [ wall_row "a" 1e-3 ] in
+  let v = check ~load ~baseline w [ bench w "a" (2 * ms_ns) ] in
+  equal string "inconclusive, environment"
+    (relation v ~case:"a" Metric.wall_time);
+  equal ~msg:"load samples" int 1 !samples;
+  equal ~msg:"the verdict's load" host_load (loaded ()) (Verdict.load v)
+
+let a_loaded_resample_leaves_the_queue_unmeasured () =
+  let w = world () in
+  let calls_then = ref (-1) in
+  let samples, load =
+    counted (fun n ->
+        if n = 1 then Env.Quiet
+        else (
+          calls_then := w.calls;
+          loaded ()))
+  in
+  let baseline = baseline_of [ wall_row "a" 1e-3 ] in
+  let v = check ~load ~baseline w [ bench w "a" (2 * ms_ns) ] in
+  equal string "inconclusive, environment"
+    (relation v ~case:"a" Metric.wall_time);
+  equal ~msg:"load samples" int 2 !samples;
+  equal ~msg:"calls after the re-sample" int !calls_then w.calls;
+  equal ~msg:"the verdict's load" host_load (loaded ()) (Verdict.load v)
+
+(* At 1 ms a call free calibration gives k = 8, and a frozen k is kept while
+   its batch lasts 1 ms to 25 ms, so a trial at another k in that range was
+   frozen at it. *)
+let the_sweep_freezes_the_row_k () =
+  let w = world () in
+  let v =
+    check
+      ~baseline:(baseline_of [ wall_row ~k:4 "a" 1e-3 ])
+      w
+      [ bench w "a" ms_ns ]
+  in
+  equal int 4 (trial_k v ~case:"a")
+
+let a_stale_section_freezes_nothing () =
+  let w = world () in
+  let stale =
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
+      { (identity ()) with Baseline.ocaml = "4.14.0 64-bit release" }
+      [ wall_row ~k:4 "a" 1e-3 ]
+  in
+  let v = check ~baseline:stale w [ bench w "a" ms_ns ] in
+  require_match
+    (function
+      | Verdict.Stale _ -> Some ()
+      | Verdict.No_baseline | Verdict.Compared -> None)
+    (Verdict.comparison v);
+  equal int 8 (trial_k v ~case:"a")
+
+(* Rows sort by id then metric, so cpu_time's row is the case's first. *)
+let the_freeze_reads_the_first_sampled_row () =
+  let w = world () in
+  let config =
+    Config.(scripted_config |> metrics [ Metric.wall_time; Metric.cpu_time ])
+  in
+  let rows =
+    [
+      Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:2
+        ~samples:(Array.make 5 1e-3);
+      wall_row ~k:8 "a" 1e-3;
+    ]
+  in
+  let v = check ~config ~baseline:(baseline_of rows) w [ bench w "a" ms_ns ] in
+  equal int 2 (trial_k v ~case:"a")
+
+(* alloc_words' exact row sorts first and has no batch size. *)
+let the_freeze_skips_exact_rows () =
+  let w = world () in
+  let rows =
+    [
+      Baseline.exact_row ~id:"a" ~metric:"alloc_words" 7; wall_row ~k:4 "a" 1e-3;
+    ]
+  in
+  let v = check ~baseline:(baseline_of rows) w [ bench w "a" ms_ns ] in
+  equal int 4 (trial_k v ~case:"a")
+
+(* The first trial recalibrates from the row's k = 1 (0.3 ms, under the
+   window) to k = 32. The second load sample, between the sweeps, slows the
+   case to [slow] ns a call: at 0.75 ms k = 32 lasts 24 ms and is kept, where
+   the row's k or a free calibration would give 8; at 1 ms it lasts 32 ms and
+   the confirmation recalibrates. *)
+let slowed_between_the_sweeps w slow =
+  let slowed = ref false in
+  let _, load =
+    counted (fun n ->
+        if n = 2 then slowed := true;
+        Env.Quiet)
+  in
+  let step _ = if !slowed then slow else 300_000 in
+  check ~load
+    ~baseline:(baseline_of [ wall_row ~k:1 "a" 1e-4 ])
+    w
+    [ Bench.bench "a" (stepper w step) ]
+
+let confirmed_regression (r : Verdict.metric_report) =
+  match r.verdict with
+  | Verdict.Judged (Verdict.Regressed (Verdict.Confirmed { pooled; k; _ })) ->
+      Some (Array.length pooled, k)
+  | _ -> None
+
+let the_confirmation_runs_at_the_first_trial_k () =
+  let w = world () in
+  let v = slowed_between_the_sweeps w 750_000 in
+  equal (pair int int)
+    (2 * Config.default.Config.n, 32)
+    (require_match confirmed_regression (report v ~case:"a" Metric.wall_time))
+
+let a_recalibrated_confirmation_is_unconfirmed () =
+  let w = world () in
+  let v = slowed_between_the_sweeps w ms_ns in
+  equal ~msg:"the first trial's k" int 32 (trial_k v ~case:"a");
+  equal string "inconclusive, unconfirmed"
+    (relation v ~case:"a" Metric.wall_time)
+
+(* On a loaded host the case takes 6.5 ms a call and 20 words against the
+   row's 6: the row's batch lasts past 25 ms, and the timing recalibrates to
+   k = 1. *)
+let exact_count_under_a_recalibration ~row_k =
+  let w = world () in
+  let rows =
+    [
+      Baseline.exact_row ~id:"a" ~metric:"alloc_words" 6;
+      wall_row ~k:row_k "a" 1e-3;
+    ]
+  in
+  let case =
+    Bench.bench "a" (fun () ->
+        stepper w (fun _ -> 6_500_000) ();
+        w.words <- w.words +. 20.)
+  in
+  let config =
+    Config.(scripted_config |> metrics [ Metric.wall_time; Metric.alloc_words ])
+  in
+  let v =
+    check ~load:loaded ~config
+      ~budgets:[ Budget.no_more_alloc_than 0. ]
+      ~baseline:(baseline_of rows) w [ case ]
+  in
+  equal ~msg:"the timing's k" int 1 (trial_k v ~case:"a");
+  relation v ~case:"a" Metric.alloc_words
+
+let exact_rows =
+  [
+    ("a row k 16 times the timing's compares its count", 16, "regressed, exact");
+    ( "a row k over 16 times the timing's drifts",
+      17,
+      "inconclusive, batch drifted" );
+  ]
+
+(* "b" is new, so the corrected file exists; "dead" is a row of a case the
+   suite no longer has. *)
+let pruned ?prune ?filter () =
+  let w = world () in
+  let baseline = baseline_of [ wall_row "a" 1e-3; wall_row "dead" 1e-3 ] in
+  check ?prune ?filter ~baseline w [ bench w "a" ms_ns; bench w "b" ms_ns ]
+
+let without_prune_absent_rows_stay () =
+  let v = pruned () in
+  equal (list string) [ "a"; "b"; "dead" ] (corrected_ids v);
+  equal (list string) [] (Verdict.warnings v)
+
+let with_prune_a_full_selection_prunes () =
+  let v = pruned ~prune:true () in
+  equal (list string) [ "a"; "b" ] (corrected_ids v);
+  contains ~sub:"dead" (String.concat "\n" (Verdict.warnings v))
+
+let with_prune_a_partial_selection_keeps () =
+  let v = pruned ~prune:true ~filter:(`Id "b") () in
+  equal (list string) [ "a"; "b"; "dead" ] (corrected_ids v);
+  equal (list string) [ "b" ]
+    (List.map (fun c -> c.Verdict.id) (Verdict.cases v))
+
+(* Each refusal comes before the lock and before any case runs. *)
+let refused_before_measuring =
+  let a w = [ bench w "a" ms_ns ] in
+  [
+    ( "a baseline for another suite",
+      (fun w -> check ~name:"other" ~baseline:(baseline_of []) w (a w)),
+      Invalid_argument
+        "Thumper.Check.run: baseline is for suite 'digest', not 'other'; pass \
+         this suite's file, or update its '# suite:' header if the suite was \
+         renamed" );
+    ( "an empty suite name",
+      (fun w -> check ~name:"" w (a w)),
+      Invalid_argument
+        "Thumper.Check.run: suite name must be non-empty and single-line (it \
+         heads fresh baselines)" );
+    ( "a suite name of two lines",
+      (fun w -> check ~name:"two\nlines" w (a w)),
+      Invalid_argument
+        "Thumper.Check.run: suite name must be non-empty and single-line (it \
+         heads fresh baselines)" );
+    ( "two budgets for one metric",
+      (fun w ->
+        check
+          ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
+          w (a w)),
+      Invalid_argument
+        "Thumper.Check.run: two budgets for metric wall_time in one ~budgets \
+         list" );
+    ( "a suite with two cases of one id",
+      (fun w -> check ~filter:(`Id "b") w ((bench w "b" ms_ns :: a w) @ a w)),
+      Check.Error (Check.Invalid_suite (Bench.Duplicate_id "a")) );
+    ( "an empty selection",
+      (fun w -> check ~filter:(`Or []) w (a w)),
+      Check.Error Check.Empty_selection );
+    ( "a run budget on a metric the run does not collect",
+      (fun w -> check ~budgets:[ Budget.no_more_alloc_than 0.01 ] w (a w)),
+      Check.Error
+        (Check.Invalid_suite
+           (Bench.Uncollected_budget { scope = ""; metric = "alloc_words" })) );
+  ]
+
+(* The default seams take a short batch floor, which nothing they assert
+   depends on, so that each case costs milliseconds. *)
+let default_seams_config =
+  Config.(
+    quick |> warmup 0. |> batch_floor 1e-4 |> metrics [ Metric.wall_time ])
+
+(* The default seams: the real clock, a forked worker, the real load and the
+   lock. "noop" has no row, so it is proposed whatever the host's load, and
+   the corrected file keeps the absent case's row. *)
+let run_on_its_default_seams () =
+  state_env ();
+  let baseline = baseline_of [ wall_row "dead" 1e-3 ] in
+  let v =
+    Check.run ~config:default_seams_config ~baseline "digest"
+      [ Bench.bench "noop" ignore ]
+  in
+  equal string "proposed" (relation v ~case:"noop" Metric.wall_time);
+  equal (list string) [ "dead"; "noop" ] (corrected_ids v)
+
+let checking =
+  group "Checking"
+    [
+      test "a regression is confirmed by a second sweep and decided"
+        a_regression_is_confirmed_by_a_second_sweep;
+      test "the verdict carries the suite's name"
+        the_verdict_carries_the_suite_name;
+      test "an improvement is confirmed at the frozen batch size"
+        an_improvement_is_confirmed_at_the_frozen_batch_size;
+      test "without a section every metric is proposed"
+        without_a_section_every_metric_is_proposed;
+      test "a load at the start is sampled once and judges the run"
+        a_load_at_the_start_is_sampled_once;
+      test "a loaded re-sample leaves the queue unmeasured"
+        a_loaded_resample_leaves_the_queue_unmeasured;
+      test "the sweep freezes the row's batch size" the_sweep_freezes_the_row_k;
+      test "a stale section freezes nothing" a_stale_section_freezes_nothing;
+      test "the freeze reads the case's first sampled row"
+        the_freeze_reads_the_first_sampled_row;
+      test "the freeze skips exact rows" the_freeze_skips_exact_rows;
+      test "the confirmation runs at the first trial's batch size"
+        the_confirmation_runs_at_the_first_trial_k;
+      test "a recalibrated confirmation is unconfirmed"
+        a_recalibrated_confirmation_is_unconfirmed;
+      cases "an exact count under a recalibrated timing"
+        ~name:(fun (name, _, _) -> name)
+        exact_rows
+        (fun (_, row_k, expected) ->
+          equal string expected (exact_count_under_a_recalibration ~row_k));
+      test "without prune the rows of absent cases stay"
+        without_prune_absent_rows_stay;
+      test "with prune a full selection prunes absent cases"
+        with_prune_a_full_selection_prunes;
+      test "with prune a partial selection prunes nothing"
+        with_prune_a_partial_selection_keeps;
+      cases "refused before measuring"
+        ~name:(fun (name, _, _) -> name)
+        refused_before_measuring
+        (fun (_, run, e) ->
+          let w = world () in
+          raises e (fun () -> run w);
+          equal ~msg:"calls" int 0 w.calls);
+      slow "run on its default seams proposes a new case and keeps absent rows"
+        run_on_its_default_seams;
+    ]
+
+(* Measuring *)
 
 let measure_returns_the_selected_evidence () =
+  state_env ();
   let w = world () in
-  let suite =
-    [
-      Bench.bench "a" (stepper w (constant_ns ms_ns));
-      Bench.bench "b" (stepper w (constant_ns (2 * ms_ns)));
-    ]
+  let suite = [ bench w "a" ms_ns; bench w "b" (2 * ms_ns) ] in
+  let measure ?filter () =
+    Check.measure ~instruments:(scripted w) ~config:scripted_config ?filter
+      suite
   in
-  let r = Check.measure ~instruments:(scripted w) ~config:base suite in
-  equal ~msg:"both cases, in authoring order" (list string) [ "a"; "b" ]
-    (Run.case_ids r);
-  (match Run.samples r ~case:"a" Metric.wall_time with
-  | Some s ->
-      equal ~msg:"n samples" int default_n (Array.length s);
-      is_true ~msg:"per-call value ~ 1 ms"
-        (Array.for_all (fun x -> Float.abs (x -. 1.0e-3) < 1e-12) s)
-  | None -> fail "wall_time samples missing");
-  let filtered =
-    Check.measure ~instruments:(scripted w) ~config:base ~filter:(`Id "b") suite
+  let r = measure () in
+  equal (list string) [ "a"; "b" ] (Run.case_ids r);
+  equal
+    (option (array (float 1e-12)))
+    (Some (Array.make Config.default.Config.n 1e-3))
+    (Run.samples r ~case:"a" Metric.wall_time);
+  equal (list string) [ "b" ] (Run.case_ids (measure ~filter:(`Id "b") ()))
+
+let measure_refusals =
+  [
+    ("an empty selection", `Or [], [], Check.Error Check.Empty_selection);
+    ( "a case budget on a metric the case does not collect",
+      `Id "",
+      [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+      Check.Error
+        (Check.Invalid_suite
+           (Bench.Uncollected_budget { scope = "a"; metric = "cpu_time" })) );
+  ]
+
+let measure_on_its_default_seams () =
+  state_env ();
+  let r =
+    Check.measure ~config:default_seams_config [ Bench.bench "noop" ignore ]
   in
-  equal ~msg:"the filter narrows the evidence" (list string) [ "b" ]
-    (Run.case_ids filtered)
+  equal (option int) (Some Config.quick.Config.n)
+    (Option.map Array.length (Run.samples r ~case:"noop" Metric.wall_time))
 
-(* Live seams (smoke)
-
-   The only tests on the default seams: real clock, real lease (under the
-   scratch THUMPER_LOCK_DIR), in-process. [Check.run] is exercised without a
-   section, whose NEW verdict is deterministic under any real gate reading. *)
-
-let live_config =
-  Config.(quick |> fork false |> warmup 0. |> metrics [ Metric.wall_time ])
-
-let live_measure_smoke () =
-  let r = Check.measure ~config:live_config [ Bench.bench "noop" ignore ] in
-  match Run.samples r ~case:"noop" Metric.wall_time with
-  | Some s ->
-      equal ~msg:"quick n" int Config.quick.Config.n (Array.length s);
-      is_true ~msg:"samples non-negative" (Array.for_all (fun x -> x >= 0.) s)
-  | None -> fail "wall_time samples missing"
-
-let live_run_smoke () =
-  let v = Check.run ~config:live_config "smoke" [ Bench.bench "noop" ignore ] in
-  (match (report v ~case:"noop" ~metric:m_wall).Verdict.verdict with
-  | Verdict.Proposed -> ()
-  | mv -> failf "expected Proposed, got %s" (rel_name mv));
-  equal ~msg:"suite name" string "smoke" (Verdict.suite v);
-  check_overall ~msg:"NEW passes" v `Pass
-
-(* Suite *)
-
-let () =
-  run "check"
+let measuring =
+  group "Measuring"
     [
-      group "the loop"
-        [
-          test "a planted regression confirms and fails the run"
-            planted_regression_confirms;
-          test "a planted improvement pools both passes (2n)"
-            planted_improvement_pools_2n;
-          test "no section: every metric is NEW" no_section_is_all_new;
-        ];
-      group "the gate"
-        [
-          test "loaded at start degrades sampled comparisons"
-            loaded_gate_at_start_degrades;
-          test "loaded at the re-sample degrades the pending queue unmeasured"
-            loaded_resample_degrades_the_queue;
-        ];
-      group "progress"
-        [
-          test "one tick per case per sweep, phase-tagged"
-            progress_ticks_both_sweeps;
-          test "a loaded re-sample ticks no confirmation"
-            progress_skips_the_unmeasured_loaded_queue;
-          test "measure ticks each case" measure_ticks_each_case;
-        ];
-      group "frozen k"
-        [
-          test "an exact regression under a recalibrated k is regressed"
-            exact_regression_under_a_recalibrated_k;
-          test "an exact count past the probe's bound drifts"
-            exact_drift_past_the_probe_bound;
-          test "the sweep freezes the baseline row's k" sweep_freezes_the_rows_k;
-          test "a stale section freezes nothing" a_stale_section_freezes_nothing;
-          test "the freeze reads the first sampled row"
-            freeze_reads_the_first_sampled_row;
-          test "the freeze skips exact rows" freeze_skips_exact_rows;
-          test "the confirmation runs at the provisional trial's k"
-            confirmation_runs_at_the_provisional_k;
-          test "a recalibrated confirmation is unconfirmed"
-            a_recalibrated_confirmation_is_unconfirmed;
-        ];
-      group "selection"
-        [
-          test "an empty selection is an error" empty_selection_is_an_error;
-          test "an escaped error prints its text"
-            an_escaped_error_prints_its_text;
-          test "duplicate ids are an invalid suite"
-            duplicate_ids_are_invalid_suite;
-          test "a budget on an uncollected metric is an invalid suite"
-            uncollected_budgets_are_invalid_suite;
-          test "only the suite's owner prunes" only_the_suite_owner_prunes;
-        ];
-      group "operational failures"
-        [
-          test "an unusable lease surfaces as Error"
-            lease_failure_surfaces_as_error;
-          test "a wrong-suite baseline raises before measuring"
-            wrong_suite_raises_before_measuring;
-          test "an invalid suite name raises before measuring"
-            invalid_names_raise_before_measuring;
-          test "duplicate budgets raise before measuring"
-            duplicate_budgets_raise_before_measuring;
-          test "a failing case aborts the run" a_failing_case_aborts_the_run;
-          test "a failing confirmation aborts the run"
-            a_failing_confirmation_aborts_the_run;
-        ];
-      group "measure"
-        [
-          test "measure returns the selected evidence"
-            measure_returns_the_selected_evidence;
-        ];
-      group "live seams"
-        [
-          test "measure on the real clock" live_measure_smoke;
-          test "run without a section is NEW on any host" live_run_smoke;
-        ];
+      test "measure returns the selected cases' trials in order"
+        measure_returns_the_selected_evidence;
+      cases "measure refuses before measuring"
+        ~name:(fun (name, _, _, _) -> name)
+        measure_refusals
+        (fun (_, filter, budgets, e) ->
+          state_env ();
+          let w = world () in
+          raises e (fun () ->
+              Check.measure ~instruments:(scripted w) ~config:scripted_config
+                ~filter
+                [ Bench.bench ~budgets "a" (stepper w (fun _ -> ms_ns)) ]);
+          equal ~msg:"calls" int 0 w.calls);
+      slow "measure on its default seams samples every case"
+        measure_on_its_default_seams;
     ]
-  |> exit
+
+let () = exit (run "check" [ errors; progress; selecting; checking; measuring ])
