@@ -114,6 +114,9 @@ let inconclusive ?shift reason = Inconclusive { reason; shift }
 let log_all a = Array.map log a
 let all_positive a = Array.for_all (fun x -> x > 0.) a
 
+(* [expm1] is increasing, so comparing the mapped bounds with a budget [r] and
+   a band [e] decides the same relation as comparing the log-space bounds with
+   [log1p r] and [log1p (-e)]: the table reads budgets as exact fractions. *)
 let fractional_of_stats (s : Stats.shift) =
   {
     estimate = expm1 s.Stats.estimate;
@@ -131,7 +134,10 @@ let is_loaded = function Env.Loaded _ -> true | Env.Quiet -> false
 
 (* One reading for both sides, from the sorted vector alone: a stored
    baseline row and a trial are unstable by the same test. A negative
-   sample is never unstable here; it is [Non_positive] evidence. *)
+   sample is never unstable here; it is [Non_positive] evidence. A baseline
+   row gets no drift test: drift is read from the samples in collection order,
+   which a stored row no longer has, and it was tested when the row's trial
+   was measured, though a drifted trial can still be recorded. *)
 let unstable samples =
   Array.length samples >= 3
   && samples.(0) >= 0.
