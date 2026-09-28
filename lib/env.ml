@@ -286,36 +286,34 @@ module Lock = struct
      per-holder deadline expires; the lock region starts at offset 0, so seek
      back before every attempt (reading the stamp moves the offset). *)
   let acquire ~path ~wait_s ~on_wait fd =
-    let deadline = ref (Os.monotonic_s () +. wait_s) in
-    let last_stamp = ref None in
-    let rec attempt () =
+    let rec attempt ~deadline ~last_stamp =
       ignore (Unix.lseek fd 0 Unix.SEEK_SET);
       match Unix.lockf fd Unix.F_TLOCK 0 with
       | () -> Ok ()
       | exception Unix.Unix_error (Unix.EINTR, _, _) ->
-          if Os.monotonic_s () >= !deadline then
-            Error (Timeout { path; wait_s })
-          else attempt ()
+          if Os.monotonic_s () >= deadline then Error (Timeout { path; wait_s })
+          else attempt ~deadline ~last_stamp
       | exception Unix.Unix_error ((Unix.EACCES | Unix.EAGAIN), _, _) ->
           let stamp = read_stamp fd in
           let owner_changed =
-            match !last_stamp with
+            match last_stamp with
             | None -> false
             | Some previous -> not (String.equal previous stamp)
           in
-          if owner_changed then deadline := Os.monotonic_s () +. wait_s;
-          last_stamp := Some stamp;
+          let deadline =
+            if owner_changed then Os.monotonic_s () +. wait_s else deadline
+          in
           (match on_wait with
           | Some notify -> notify ~owner_changed
           | None -> ());
           let now = Os.monotonic_s () in
-          if now >= !deadline then Error (Timeout { path; wait_s })
+          if now >= deadline then Error (Timeout { path; wait_s })
           else begin
-            sleep_until (now +. Float.min poll_s (!deadline -. now));
-            attempt ()
+            sleep_until (now +. Float.min poll_s (deadline -. now));
+            attempt ~deadline ~last_stamp:(Some stamp)
           end
     in
-    attempt ()
+    attempt ~deadline:(Os.monotonic_s () +. wait_s) ~last_stamp:None
 
   (* Open the lock file without ever creating through a symbolic link: OCaml's
      Unix binding exposes no O_NOFOLLOW, so the file is only ever created
