@@ -272,6 +272,15 @@ let over_cap budget c =
   | Some (Budget.Absolute_max cap) -> float_of_int c > cap
   | Some (Budget.Relative _) | None -> false
 
+let strong_estimate = function
+  | Confirmed { first; _ } -> Some first.estimate
+  | Exact_change { baseline; candidate } ->
+      if baseline = 0 then None
+      else
+        Some
+          ((float_of_int candidate -. float_of_int baseline)
+          /. float_of_int baseline)
+
 (* First-pass judgment of one exact (integer) comparison. *)
 let judge_exact ~budget ~case_k ~trial_k ~b ~c =
   let k_moved = match case_k with Some kb -> kb <> trial_k | None -> false in
@@ -281,38 +290,22 @@ let judge_exact ~budget ~case_k ~trial_k ~b ~c =
   else if k_moved && b <> c then
     (* Amortized allocators can be k-phase-dependent. *)
     inconclusive Batch_drifted
+  else if c = b then Equivalent None
+  else if c < b then Improved strong
   else
-    let better = c < b in
-    (* Degradation as a fraction of the baseline; [None] when b = 0 (a change
-       from zero has no relative size and exceeds any relative budget). *)
-    let degradation =
-      if b = 0 then None
-      else Some ((float_of_int c -. float_of_int b) /. float_of_int b)
-    in
-    let budgeted_increase () =
-      (* The [None] arm is live only via [Absolute_max] at b = 0 under the
-         cap: growth from nothing has no relative size, rendered +inf% in a
-         terminal cell and null in JSON. *)
-      let point = match degradation with Some d -> d | None -> infinity in
+    (* [None] for growth from zero, which has no relative size: it exceeds
+       any relative budget, and under a cap it is the point [infinity]. *)
+    let growth = strong_estimate strong in
+    let within =
+      let point = Option.value growth ~default:infinity in
       Within_budget { estimate = point; lower = point; upper = point }
     in
     match Option.map Budget.contract budget with
-    | Some (Budget.Absolute_max _) ->
-        (* Under the cap: the change is reported, never gated. *)
-        if c = b then Equivalent None
-        else if better then Improved strong
-        else budgeted_increase ()
-    | (Some (Budget.Relative _) | None) as contract ->
-        let r =
-          match contract with
-          | Some (Budget.Relative { max_regression; _ }) -> max_regression
-          | _ -> snd default_params
-        in
-        if c = b then Equivalent None
-        else if better then Improved strong
-        else
-          let over = match degradation with Some d -> d > r | None -> true in
-          if over then Regressed strong else budgeted_increase ()
+    | Some (Budget.Absolute_max _) -> within
+    | Some (Budget.Relative _) | None ->
+        let r = snd (relative_params budget) in
+        let over = match growth with Some g -> g > r | None -> true in
+        if over then Regressed strong else within
 
 (* Judging *)
 
@@ -680,15 +673,6 @@ let wire_relation = function
   | Equivalent _ -> "equivalent"
   | Within_budget _ -> "changed_within_budget"
   | Inconclusive _ -> "inconclusive"
-
-let strong_estimate = function
-  | Confirmed { first; _ } -> Some first.estimate
-  | Exact_change { baseline; candidate } ->
-      if baseline = 0 then None
-      else
-        Some
-          ((float_of_int candidate -. float_of_int baseline)
-          /. float_of_int baseline)
 
 (* The reported deltas: the first-pass shift for confirmed strongs, the
    relation's shift otherwise (an inconclusive row's first-pass shift when its
