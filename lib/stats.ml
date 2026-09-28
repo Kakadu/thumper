@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type interval = { lower : float; upper : float }
 type shift = { estimate : float; interval : interval }
 
@@ -208,37 +210,34 @@ let mw_tails x y =
 (* Argument validation. Loud [Invalid_argument]s: a bad vector here is a bug
    in the caller (measurement guarantees n >= 3 and finite samples). *)
 
-let check_sorted fn ~min_n v =
+let check_length fn ~min_n v =
   let n = Array.length v in
   if n < min_n then
-    invalid_arg
-      (Printf.sprintf "Stats.%s: %d samples, need at least %d" fn n min_n);
+    invalid_arg (strf "Stats.%s: %d samples, need at least %d" fn n min_n)
+
+let err_unsorted fn =
+  invalid_arg (strf "Stats.%s: vector not sorted ascending (or NaN)" fn)
+
+let check_sorted fn ~min_n v =
+  check_length fn ~min_n v;
   (* The pair loop below sees a NaN anywhere when n >= 2; a singleton NaN
      needs its own check. *)
-  if Float.is_nan v.(0) then
-    invalid_arg
-      (Printf.sprintf "Stats.%s: vector not sorted ascending (or NaN)" fn);
-  for i = 0 to n - 2 do
-    if not (v.(i) <= v.(i + 1)) then
-      invalid_arg
-        (Printf.sprintf "Stats.%s: vector not sorted ascending (or NaN)" fn)
+  if Float.is_nan v.(0) then err_unsorted fn;
+  for i = 0 to Array.length v - 2 do
+    if not (v.(i) <= v.(i + 1)) then err_unsorted fn
   done
 
 let check_finite fn ~min_n v =
-  let n = Array.length v in
-  if n < min_n then
-    invalid_arg
-      (Printf.sprintf "Stats.%s: %d samples, need at least %d" fn n min_n);
+  check_length fn ~min_n v;
   Array.iter
     (fun x ->
       if not (Float.is_finite x) then
-        invalid_arg (Printf.sprintf "Stats.%s: non-finite sample" fn))
+        invalid_arg (strf "Stats.%s: non-finite sample" fn))
     v
 
 let check_alpha fn ~max_ alpha =
   if not (alpha > 0. && alpha < max_) then
-    invalid_arg
-      (Printf.sprintf "Stats.%s: alpha %g not in ]0;%g[" fn alpha max_)
+    invalid_arg (strf "Stats.%s: alpha %g not in ]0;%g[" fn alpha max_)
 
 (* Median of an already-sorted vector: central sample, or the midpoint of the
    two central samples (same midpoint rule as the baseline file's stored
