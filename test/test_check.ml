@@ -484,6 +484,31 @@ let confirmation_runs_at_the_provisional_k () =
         (Array.length pooled)
   | mv -> failf "expected a confirmed regression, got %s" (rel_name mv)
 
+let a_recalibrated_confirmation_is_unconfirmed () =
+  let w = world () in
+  (* As above, the provisional trial lands at k = 32 (0.3 ms/call). Between
+     the sweeps the case slows to 1 ms/call: k = 32 now observes a 32 ms
+     batch, past the 25 ms window, so the confirmation recalibrates to
+     k = 8. Its samples still show the regression, but samples at two batch
+     sizes are never pooled: the relation is unconfirmed. *)
+  let slow = ref false in
+  let gate_samples = ref 0 in
+  let gate () =
+    incr gate_samples;
+    if !gate_samples >= 2 then slow := true;
+    Env.Quiet
+  in
+  let step _call = if !slow then ms_ns else 300_000 in
+  let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
+  let v =
+    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+      "digest"
+      [ Bench.bench "a" (stepper w step) ]
+  in
+  equal ~msg:"premise: the provisional trial ran at k = 32" int 32
+    (Run.Trial.k (case_report v "a").Verdict.trial);
+  check_rel v ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
+
 (* Selection *)
 
 let an_escaped_error_prints_its_text () =
@@ -805,6 +830,8 @@ let () =
           test "the freeze skips exact rows" freeze_skips_exact_rows;
           test "the confirmation runs at the provisional trial's k"
             confirmation_runs_at_the_provisional_k;
+          test "a recalibrated confirmation is unconfirmed"
+            a_recalibrated_confirmation_is_unconfirmed;
         ];
       group "selection"
         [

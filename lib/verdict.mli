@@ -54,8 +54,8 @@ type reason =
       (** The confirmation pass did not reproduce the provisional strong
           relation — in both directions: an unconfirmed improvement is not
           [Equivalent] and never ratchets. Also a missing or drifted
-          confirmation trial, or an unstable one within [2e]; never retried
-          in-run. *)
+          confirmation trial, one measured at another batch size than the first
+          pass, or an unstable one within [2e]; never retried in-run. *)
   | Exactness_lost
       (** A mixed exact/sampled comparison (either side), or a zero-tolerance
           relative budget on a downgraded exact-capable metric — never a rank
@@ -222,9 +222,10 @@ val decide :
     Otherwise [Inconclusive Unconfirmed] — in both directions. A case id absent
     from [confirmations], or whose confirmation evidence for the metric is
     missing, exact, drifted, or unstable with a shift within [2e] (as on the
-    first pass), is [Inconclusive Unconfirmed]; never retried in-run. A [Loaded]
-    [gate] (re-sampled before the confirmation queue) degrades every pending
-    relation to [Inconclusive Environment] instead.
+    first pass), or whose trial recalibrated to another k than the first pass's
+    (two batch sizes are never pooled), is [Inconclusive Unconfirmed]; never
+    retried in-run. A [Loaded] [gate] (re-sampled before the confirmation queue)
+    degrades every pending relation to [Inconclusive Environment] instead.
 
     Raises [Invalid_argument] if [confirmations] repeats a case id or names one
     that {!confirmations} did not request. *)

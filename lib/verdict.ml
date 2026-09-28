@@ -76,6 +76,7 @@ type pending = {
   p_first : shift;
   p_first_sorted : float array;
       (* first-pass candidate samples; never mutated *)
+  p_first_k : int; (* their batch size, which the confirmation must match *)
   p_baseline_log : float array;
   p_e : float;
   p_r : float;
@@ -255,6 +256,7 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
                   p_dir = dir;
                   p_first = sh;
                   p_first_sorted = cand.Run.sorted;
+                  p_first_k = trial_k;
                   p_baseline_log = baseline_log;
                   p_e = e;
                   p_r = r;
@@ -483,9 +485,12 @@ let resolve_pending ~gate ~conf metric pd =
     match conf with
     | None -> inconclusive ~shift:first Unconfirmed
     | Some trial -> (
+        (* A confirmation that recalibrated measured at another batch size:
+           two batch sizes are never pooled into one row. *)
         match Run.Trial.measurement trial metric with
         | Some (Run.Samples s)
-          when (not s.Run.drifted) && all_positive s.Run.sorted -> (
+          when (not s.Run.drifted) && all_positive s.Run.sorted
+               && Run.Trial.k trial = pd.p_first_k -> (
             let confirmation =
               fractional_of_stats
                 (Stats.shift ~alpha_per_side:alpha_confirmation

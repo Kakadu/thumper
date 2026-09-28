@@ -170,13 +170,13 @@ val find_row : section -> id:string -> metric:string -> row option
 (** [find_row s ~id ~metric] is the row keyed (id, metric), if any. *)
 
 val case_frozen_k : section -> id:string -> int option
-(** [case_frozen_k s ~id] is the batch size of [id]'s first sampled row in
-    the section's canonical (id, metric) order, and [None] when the case has
-    no sampled row. This is the single reading of the frozen-k rule:
-    [Measure] freezes this k and [Verdict] compares against it, so the two
-    sides agree by construction. A case's rows need not share one k — a
-    ratchet can advance a single row at a recalibrated confirmation k — which
-    is why the rule names the {e first} sampled row, not {e the} k. *)
+(** [case_frozen_k s ~id] is the batch size of [id]'s first sampled row in the
+    section's canonical (id, metric) order, and [None] when the case has no
+    sampled row. This is the single reading of the frozen-k rule: [Measure]
+    freezes this k and [Verdict] compares against it, so the two sides agree by
+    construction. A case's rows need not share one k — a ratchet can advance a
+    single row at a recalibrated k — which is why the rule names the {e first}
+    sampled row, not {e the} k. *)
 
 (** {1:rows Row observers} *)
 
