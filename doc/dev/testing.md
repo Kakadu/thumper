@@ -355,9 +355,9 @@ started, budgets, fixtures, tags, protocol, programmatic);
 `02-getting-started` carries the rule the manual teaches: the `@bench`
 alias, `(locks %{project_root}/bench)`, `(deps (glob_files *.thumper))` and
 a bare `run`. Nothing in `examples/` measures under
-runtest, since the `@bench` alias is manual. `doc/manual/snippets/`
-compiles every OCaml snippet in the manual and runs none of them; a
-snippet that rots breaks the build.
+runtest, since the `@bench` alias is manual. Every OCaml and dune snippet
+in the manual and the README is a run of lines of an example's file, and
+`dune build` compiles the examples.
 `test_thumper` holds the facade's two examples verbatim: the module
 doc's compiles, and `Check.run`'s, the check of `07-programmatic`, runs
 against a synthetic baseline and changes no file.
