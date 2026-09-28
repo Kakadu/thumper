@@ -104,6 +104,8 @@ let facts =
        Option.value detected ~default:""
      in
      let hostname = Unix.gethostname () in
+     (* A Mac's host name follows the network it joins (DHCP), which would give
+        one Mac a section per network; its hardware UUID does not move. *)
      let host = Option.value (Thumper_clock.host_uuid ()) ~default:hostname in
      { hostname; host; os; arch; cpu_model })
 
@@ -119,6 +121,10 @@ let machine_key () =
              (Baseline.quote key))
       else key
   | None ->
+      (* The machine itself is in the key, not only its CPU model: splitting
+         one machine in two costs a new section, which the report shows,
+         while merging two machines of one model (different cooling) would
+         compare their timings silently. *)
       let { host; os; cpu_model; _ } = Lazy.force facts in
       hash (String.concat ":" [ host; os; cpu_model ])
 
@@ -171,6 +177,9 @@ let load_threshold = 0.5
 
 type load = Quiet | Loaded of { load : float; cores : int }
 
+(* An unreadable load average is [Quiet]: refusing to measure on a host that
+   reports no load would trade a verdict that judgment already degrades for no
+   verdict at all. *)
 let classify ~load ~cores =
   if cores < 1 then
     invalid_arg
@@ -391,6 +400,9 @@ module Lock = struct
             (try Unix.close fd with Unix.Unix_error _ -> ());
             error)
 
+  (* The lock file is never unlinked: removing it on release lets a waiter
+     lock the old inode while a newcomer creates and locks a new file, and two
+     processes then both hold "the" lock. *)
   let release fd =
     (try
        ignore (Unix.lseek fd 0 Unix.SEEK_SET);

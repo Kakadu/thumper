@@ -3,137 +3,110 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Host identity, the environment gate, and the measurement lease.
+(** Facts about the host: the machine key and header lines of a baseline
+    section, the load sample, and the measurement lock.
 
-    The OS edge for everything about the {e machine}: the key of the baseline
-    section this host owns ({!machine_key}), the header lines that describe it
-    ({!host_description}, {!ocaml_identity}), whether the host is quiet enough
-    to measure ({!load}, {!wait_quiet}), and the per-user lease that serializes
-    measurement ({!Lock}). Knows nothing about baselines or verdicts: [Baseline]
-    renders the identity strings into section headers, and [Check] samples the
-    gate and holds the lease around measurement. *)
+    {!machine_key} names this machine's section, and {!host_description} and
+    {!ocaml_identity} fill its header; {!val-load} samples the host's load, and
+    {!Lock.with_lock} runs a measurement under the measurement lock. The module
+    depends on {!Baseline} only for the identifier charset and
+    {!Baseline.quote}; it knows nothing of the file or of verdicts. *)
 
-(** {1:identity Identity} *)
+(** {1:identity Identifying the machine} *)
 
 val hash : string -> string
-(** [hash s] is the 16-character lowercase hexadecimal rendering ([%016x]) of
-    the FNV-1a 64-bit hash of [s]'s bytes: the hash starts at the offset basis
-    [0xcbf29ce484222325]; each byte in turn is XORed into the hash, which is
-    then multiplied by the prime [0x100000001b3], modulo 2{^ 64}.
+(** [hash s] is the FNV-1a 64-bit hash of the bytes of [s], written as 16
+    lowercase hexadecimal digits. The hash starts at [0xcbf29ce484222325]; for
+    each byte it is XORed with the byte, then multiplied by [0x100000001b3]
+    modulo 2{^ 64}. For example [hash "a"] is ["af63dc4c8601ec8c"].
 
-    This paragraph is the normative machine-key recipe: fixed width,
-    fully specified, no dependency. It is deliberately {e not} the pre-rewrite
-    djb2 fingerprint — bit-compatibility was struck together with old-file
-    recognition. *)
+    This recipe and {!machine_key}'s inputs define every computed machine key. A
+    change to either gives the machines it concerns new keys, and their next run
+    finds no section and proposes every row. *)
 
 val machine_key : unit -> string
-(** [machine_key ()] is the key of this machine's baseline section: the
-    [THUMPER_MACHINE] environment variable when set, else
-    [hash (host ^ ":" ^ os ^ ":" ^ cpu_model)] where
+(** [machine_key ()] is the key of this machine's baseline section: the value of
+    [THUMPER_MACHINE] when the variable is set, else
+    [hash (host ^ ":" ^ os ^ ":" ^ cpu)], where:
+    - [host] is the hardware UUID on macOS, in uppercase canonical form, and the
+      host name ([Unix.gethostname]) elsewhere or when the UUID cannot be read;
+    - [os] is the output of [uname -s] in lowercase ([darwin], [linux]), or
+      ["unknown"] when [uname] fails or prints nothing;
+    - [cpu] is the CPU model string, trimmed, with its bytes as detected: the
+      output of [sysctl -n machdep.cpu.brand_string] on Darwin (tried again as
+      [/usr/sbin/sysctl]), the first non-empty ["model name"] of [/proc/cpuinfo]
+      on every other system, and [""] when neither gives one.
 
-    - [host] is, on macOS, the hardware UUID as [gethostuuid(2)] returns it, in
-      uppercase canonical form ([Thumper_clock.host_uuid]); elsewhere, and on
-      macOS if that call fails, it is [Unix.gethostname ()];
-    - [os] is the lowercased uname sysname (["darwin"], ["linux"]; ["unknown"]
-      if [uname -s] cannot run);
-    - [cpu_model] is the platform CPU string, trimmed of surrounding whitespace:
-      [sysctl -n machdep.cpu.brand_string] on Darwin, the first [/proc/cpuinfo]
-      ["model name"] value on Linux, and the empty string when undetectable.
+    The host facts are read once per process; [THUMPER_MACHINE] is read on every
+    call, and its value is the key as given.
 
-    The machine's identity stays in the key deliberately: over-splitting costs a
-    harmless, loud NEW section; under-splitting (two same-model machines,
-    different cooling) silently compares wrong. macOS hashes its hardware UUID
-    because its hostname follows the network (DHCP), which would give one Mac a
-    section per network. Human legibility comes from {!host_description}, not
-    the key.
-
-    A [THUMPER_MACHINE] override is used verbatim — for interchangeable CI
-    fleets — and must be non-empty over [[A-Za-z0-9._-]], the charset that keeps
-    the baseline header grammar escape-free. The hash inputs are read
-    from the host once per process; the override is consulted on every call.
-
-    Raises [Invalid_argument] naming the variable if [THUMPER_MACHINE] is set
-    but empty or contains a character outside [[A-Za-z0-9._-]]. *)
+    Raises [Invalid_argument] if [THUMPER_MACHINE] is set to a value that is not
+    a {!Baseline.valid_segment}; the message names the variable and shows the
+    value through {!Baseline.quote}. *)
 
 val cpu_model : unit -> string
-(** [cpu_model ()] is the platform CPU string of {!machine_key}'s recipe,
-    rendered for humans: ["unknown"] when undetectable, and control characters
-    rendered as spaces, so the string is a single line without tabs. It is the
-    [cpu-model] component of {!host_description}. *)
+(** [cpu_model ()] is the CPU model string of {!machine_key}'s recipe for
+    display: ["unknown"] when none was detected, and every byte below [0x20]
+    replaced by a space, so it is one line without tabs. *)
 
 val host_description : unit -> string
-(** [host_description ()] is the human-legible [# host:] header body:
-    [hostname · cpu-model · arch · os], e.g.
-    ["mbp-tmattio · Apple M1 Max · arm64 · macos"]. [arch] is the uname machine
-    name; [os] renders Darwin as ["macos"] and is otherwise the lowercased uname
-    sysname. Components that cannot be detected render as ["unknown"].
-    Informational only — never parsed, never part of {!machine_key}. The string
-    is a single line without tabs by construction: control characters in a
-    detected value render as spaces, so the baseline's [# host:] header line
-    cannot be broken by a hostile CPU-model string. *)
+(** [host_description ()] is the body of a section's [# host:] line: the host
+    name, {!cpu_model}, the architecture and the operating system, joined by
+    [" · "] (U+00B7). The host name is [Unix.gethostname ()] on every system;
+    the architecture is the output of [uname -m]; the operating system is
+    ["macos"] on Darwin and otherwise {!machine_key}'s [os]. The architecture
+    and the operating system are ["unknown"] when undetected. Every byte below
+    [0x20] is replaced by a space, so the value cannot break the file's line
+    grammar. The value is only displayed, and no module compares it. *)
 
 val ocaml_identity : unit -> string
-(** [ocaml_identity ()] is the [# ocaml:] header body, compared verbatim against
-    a section's recorded line for staleness:
-    [version · word-size · profile], e.g. ["5.5.0 · 64-bit · release"].
-    [version] is [Sys.ocaml_version]; [word-size] is [Sys.word_size] rendered
-    ["64-bit"]/["32-bit"]; [profile] describes how the program is executed:
+(** [ocaml_identity ()] is the body of a section's [# ocaml:] line,
+    [version · word size · profile], for example ["5.5.1 · 64-bit · release"].
+    [version] is [Sys.ocaml_version] and the word size is [64-bit] or [32-bit].
+    A section whose recorded [# ocaml:] line differs from this value in any byte
+    is stale ({!Verdict.type-staleness}).
 
-    - ["release"] — native code on the standard runtime, the common case;
-    - ["debug"] / ["instrumented"] — native code on the [d] / [i] runtime
-      variant ([Sys.runtime_variant]), whose costs are not comparable to release
-      timings;
-    - ["bytecode"] — the bytecode backend (suffixed [+debug]/[+instrumented] on
-      a non-standard runtime variant).
+    The profile is the runtime variant for native code: ["release"], ["debug"]
+    or ["instrumented"] for the standard, [d] and [i] runtimes, and any other
+    variant's name as it is. Bytecode reads ["bytecode"] on the standard runtime
+    and ["bytecode+"] followed by the variant otherwise; a [Sys.Other] backend
+    reads the same way with its own name in place of ["bytecode"]. Compiler
+    options that a program cannot observe at run time, flambda among them, are
+    not recorded, so a compiler of the same version built with another such
+    option reuses the section. *)
 
-    Configure-time code-generation variants with no runtime detection — flambda
-    above all — are deliberately {e not} recorded: OCaml exposes no reliable way
-    to observe them from a running program, and guessing would make staleness
-    flaky. Switching an opam switch to a flambda compiler of the same version
-    therefore reuses the section; re-baseline manually when doing so. *)
+(** {1:load Sampling the load}
 
-(** {1:gate The environment gate}
-
-    The gate refuses to trust timings taken on a busy host: while it
-    fails, sampled-metric relations degrade to [inconclusive (environment)] and
-    [bless] refuses. It reads the host-wide 1-minute load average, so it is
-    {e container-blind}: inside a quota-starved container
-    the numbers are the host's, and such runners should prefer scheduling plus
-    [--strict] over [--wait-quiet]. *)
+    A load sample reads the host-wide 1-minute load average, so inside a
+    container it is the whole host's load, whatever the container's CPU quota. A
+    host that reports no load average samples {!Quiet}, so it measures and
+    records as a quiet host does. *)
 
 val cores : unit -> int
-(** [cores ()] is the number of cores available to the program
-    ([Domain.recommended_domain_count]); at least [1]. *)
+(** [cores ()] is [Domain.recommended_domain_count ()], at least [1]. *)
 
 val load_average : unit -> float option
-(** [load_average ()] is the host-wide 1-minute load average
-    ([Thumper_clock.load_average]), and [None] if the operating system cannot
-    report it. *)
+(** [load_average ()] is the host's 1-minute load average, or [None] when the
+    operating system does not report one. It is [getloadavg(3)] on Darwin and
+    other POSIX systems, and [None] on Windows. *)
 
-(** The type for load states, as decided by {!classify}. An unreadable load
-    average is [Quiet] — the gate degrades open, never blocks: refusing to
-    measure on hosts whose OS cannot report load would trade a noisy verdict
-    (already degraded to inconclusive downstream) for no verdict at all. *)
+(** The type for load samples, as {!classify} decides them. *)
 type load =
-  | Quiet  (** The host shows no evidence of load; timings can be trusted. *)
+  | Quiet  (** The load per core is below [0.5], or no load was read. *)
   | Loaded of { load : float; cores : int }
-      (** The 1-minute load average ÷ cores is at least 1/2 (raven's hand rule
-          adopted as the default threshold), carrying the readings for
-          rendering. *)
+      (** The 1-minute load average [load] divided by [cores] is at least [0.5].
+      *)
 
 val classify : load:float option -> cores:int -> load
-(** [classify ~load ~cores] is the pure gate predicate over one pair of
-    readings: [Loaded] iff [load] is [Some l] with [l /. cores >= 0.5], else
-    [Quiet]. {!load} is this predicate applied to the live readings; tests drive
-    the arithmetic through [classify] directly.
+(** [classify ~load ~cores] is [Loaded { load = l; cores }] if [load] is
+    [Some l] and [l /. float cores >= 0.5], and [Quiet] otherwise, a NaN load
+    included.
 
-    Raises [Invalid_argument] if [cores < 1] (a programmer error — {!cores}
-    never reports less). *)
+    Raises [Invalid_argument] if [cores < 1]. *)
 
 val load : unit -> load
-(** [load ()] is [classify ~load:(load_average ()) ~cores:(cores ())]: the
-    gate's outcome for the host right now. [Check] samples it at run start and
-    again before the confirmation queue. *)
+(** [load ()] is [classify ~load:(load_average ()) ~cores:(cores ())], the
+    host's load now. *)
 
 val wait_quiet :
   timeout_s:float ->
@@ -141,48 +114,47 @@ val wait_quiet :
   ?load:(unit -> load) ->
   unit ->
   (unit, [ `Timeout ]) result
-(** [wait_quiet ~timeout_s ()] polls the gate until it reports [Quiet] ([Ok ()])
-    or [timeout_s] seconds have elapsed ([Error `Timeout]) — the [--wait-quiet]
-    behavior. The gate is sampled at least once, so [timeout_s = 0.] is a single
-    non-blocking check; [infinity] waits without bound.
-
-    [poll_s] is the seconds slept between samples. It defaults to [1.]: the
-    1-minute load average is recomputed by the kernel on a multi-second cadence,
-    so sub-second polling is wasted work, while a 1 s cadence keeps the wait's
-    overshoot negligible against the minutes-long decay the gate is waiting out.
-
-    [load] (default {!load}) is the deterministic test seam, scripting the
-    polled predicate exactly as [Measure.instruments] scripts the clock.
+(** [wait_quiet ~timeout_s ?poll_s ?load ()] samples [load] until it is [Quiet]
+    and is then [Ok ()], or is [Error `Timeout] once [timeout_s] seconds have
+    passed on the monotonic clock. It samples at least once, so [timeout_s = 0.]
+    is one sample and [infinity] waits without bound. It sleeps [poll_s] seconds
+    between samples, [1.] by default, and cuts the last sleep short so the last
+    sample falls at the deadline. [load] defaults to {!val-load}. It prints
+    nothing.
 
     Raises [Invalid_argument] if [timeout_s] is negative or NaN, or if [poll_s]
     is not positive and finite. *)
 
-(** {1:lease The measurement lease}
+(** {1:lock Holding the measurement lock}
 
-    All measurement — check, bless, [Thumper.measure] — runs under this lease
-   ; [Check] acquires it at its entry points. It serializes
-    {e one user's} thumper processes on {e one machine} — the actual raven/CI
-    topology — not the whole host: two users measuring on one box do not
-    serialize. Multi-user shared runners must point
-    [THUMPER_LOCK_DIR] at a shared sticky (1777) directory, or keep an external
-    lock (dune [(locks)] covers one workspace). *)
+    Every measurement runs under the measurement lock. {!Check.run_with} and
+    {!Check.measure} hold it for their sweeps, and the command line takes it
+    first, around them, to report its wait, so their acquisition is then nested.
 
+    The lock is per user. Its file is [thumper-<euid>.lock], so it serializes
+    the processes of one user that name the same directory, and two users on one
+    host never wait for each other. A worker forked under the lock inherits the
+    lock file's descriptor but not the lock, which belongs to the process that
+    took it. A worker that exits or closes the descriptor therefore leaves the
+    parent's lock held. *)
+
+(** The measurement lock. *)
 module Lock : sig
-  (** The type for lease failures. Both cases are environmental — misuse of the
-      API itself raises [Invalid_argument] instead ({!with_lock}). *)
+  (** The type for lock failures. Misuse of {!with_lock} raises
+      [Invalid_argument] instead. *)
   type error =
     | Timeout of { path : string; wait_s : float }
-        (** No holder released within its {!with_lock}[ ~wait_s] bound. A
-            measurement that could not be serialized is worse than none: the CLI
-            maps this to exit 2. *)
+        (** The holder of the lock file [path] kept the lock through [wait_s]
+            seconds of waiting on it. *)
     | Unusable of string
-        (** The lock file cannot be trusted or operated on: wrong owner, mode
-            broader than [0600], not one stable regular file (a symlinked path,
-            a fifo, a swap during acquisition), or a failing open or lock
-            syscall. The message names the path and the defect. *)
+        (** The lock file cannot be used, because it is not one regular file (a
+            symbolic link, a directory, or a file replaced during acquisition),
+            it is not owned by the effective user, its mode grants group or
+            other permissions, or a system call on it failed. The message names
+            the path and the defect. *)
 
   val pp_error : Format.formatter -> error -> unit
-  (** [pp_error ppf e] formats [e] for users, in the CLI's error style. *)
+  (** [pp_error ppf e] formats [e] for users, naming the lock file. *)
 
   val with_lock :
     ?dir:string ->
@@ -190,44 +162,36 @@ module Lock : sig
     ?on_wait:(owner_changed:bool -> unit) ->
     (unit -> 'a) ->
     ('a, error) result
-  (** [with_lock f] runs [f ()] holding the per-user measurement lease and is
-      [Ok (f ())]; the lease is released when [f] returns {e and} when it raises
-      (the exception propagates). The lease is [lockf] ([fcntl]) on
-      [<dir>/thumper-<euid>.lock], created [0600] and refused unless it is a
-      regular file, owned by the effective user, with no group/other permission
-      bits. A symlinked path is refused, and never created through: the file is
-      only ever created under [O_EXCL], which fails on a symbolic link even when
-      it dangles — in a shared lock directory, creating through a planted
-      symlink would create an attacker-chosen file — and a path swapped during
-      acquisition is detected and refused. The file persists between runs —
-      unlinking a lock file is the classic two-holders race.
+  (** [with_lock ?dir ?wait_s ?on_wait f] is [Ok (f ())], [f] running while this
+      process holds the measurement lock, or [Error e] when the lock cannot be
+      taken, and then [f] does not run. The lock is released when [f] returns
+      and when it raises, and the exception propagates.
+      - [dir] is the lock file's directory. It defaults to [THUMPER_LOCK_DIR]
+        when the variable is set and not empty, else to
+        [Filename.get_temp_dir_name ()]. A relative [dir] resolves against the
+        working directory.
+      - [wait_s] bounds the wait on one holder and defaults to [600.]. Each
+        acquisition writes a holder stamp into the file, and a waiter that reads
+        a new stamp restarts its deadline. A wait that reaches its deadline is
+        [Error (Timeout _)].
+      - [on_wait] is called after each failed attempt, every 50 ms while the
+        lock is held elsewhere, the attempt at the deadline included.
+        [owner_changed] is [true] iff the stamp differs from the previous
+        attempt's, so it is [false] on the first call. It is never called when
+        the lock is free.
 
-      [dir] defaults to [THUMPER_LOCK_DIR] when set and non-empty, else the
-      system temporary directory ([TMPDIR], falling back to [/tmp]). The value
-      is used as given: a relative path resolves against the working directory,
-      so processes that must serialize against each other have to name the same
-      directory.
+      The lock is [lockf] on the whole file [<dir>/thumper-<euid>.lock]. The
+      file is created with mode [0600] under [O_EXCL], so never through a
+      symbolic link, and it is never removed. An existing file is used only if
+      it is one regular file, owned by the effective user, without group or
+      other permissions, and still the same file once locked; otherwise the
+      result is [Error (Unusable _)].
 
-      [wait_s] (default 600) bounds {e one holder}, not the queue: the
-      deadline restarts whenever the lease changes owner, which waiters
-      observe through the holder stamp written into the file on each
-      acquisition. Expiry is [Error (Timeout _)].
+      A nested call, made while this process holds the lock, runs [f] at once
+      whatever its arguments and never calls [on_wait]. The flag that detects
+      the nesting is not synchronized, so [with_lock] must not run in two
+      domains at once.
 
-      [on_wait] is called after each failed acquisition attempt (every 50 ms
-      while blocked) and drives the CLI's waiting line; [owner_changed] is
-      [true] exactly when the holder stamp changed since the previous attempt.
-      It is never called when the lease is free.
-
-      Nested calls in the {e same process} are reentrant: an inner [with_lock]
-      (regardless of [dir]) runs [f] directly under the already held lease. This
-      is forced by [fcntl] semantics — a second OS-level acquisition by the same
-      process would silently succeed, and closing its descriptor would drop the
-      process's lock — so the API makes that footgun unrepresentable. The
-      in-process guard is not domain-safe; measurement is single-domain.
-
-      Worker forks inherit the file descriptor but {e not} the lock ([fcntl]
-      locks are per-process, and a child closing its inherited descriptor does
-      not release the parent's lock) — cram-tested in the CLI suite.
-
-      Raises [Invalid_argument] if [wait_s] is negative or NaN. *)
+      Raises [Invalid_argument] if [wait_s] is negative or NaN, a nested call
+      included. *)
 end
