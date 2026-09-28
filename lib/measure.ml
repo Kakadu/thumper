@@ -233,21 +233,17 @@ let gc_param_warnings (before : Gc.control) (after : Gc.control) =
   in
   List.filter_map Fun.id
     [
-      changed "minor_heap_size" (fun (c : Gc.control) -> c.minor_heap_size);
-      changed "major_heap_increment" (fun (c : Gc.control) ->
-          c.major_heap_increment);
-      changed "space_overhead" (fun (c : Gc.control) -> c.space_overhead);
-      changed "verbose" (fun (c : Gc.control) -> c.verbose);
-      changed "max_overhead" (fun (c : Gc.control) -> c.max_overhead);
-      changed "stack_limit" (fun (c : Gc.control) -> c.stack_limit);
-      changed "allocation_policy" (fun (c : Gc.control) -> c.allocation_policy);
-      changed "window_size" (fun (c : Gc.control) -> c.window_size);
-      changed "custom_major_ratio" (fun (c : Gc.control) ->
-          c.custom_major_ratio);
-      changed "custom_minor_ratio" (fun (c : Gc.control) ->
-          c.custom_minor_ratio);
-      changed "custom_minor_max_size" (fun (c : Gc.control) ->
-          c.custom_minor_max_size);
+      changed "minor_heap_size" (fun c -> c.Gc.minor_heap_size);
+      changed "major_heap_increment" (fun c -> c.Gc.major_heap_increment);
+      changed "space_overhead" (fun c -> c.Gc.space_overhead);
+      changed "verbose" (fun c -> c.Gc.verbose);
+      changed "max_overhead" (fun c -> c.Gc.max_overhead);
+      changed "stack_limit" (fun c -> c.Gc.stack_limit);
+      changed "allocation_policy" (fun c -> c.Gc.allocation_policy);
+      changed "window_size" (fun c -> c.Gc.window_size);
+      changed "custom_major_ratio" (fun c -> c.Gc.custom_major_ratio);
+      changed "custom_minor_ratio" (fun c -> c.Gc.custom_minor_ratio);
+      changed "custom_minor_max_size" (fun c -> c.Gc.custom_minor_max_size);
     ]
 
 (* The readings of the measured phases, before any derivation. *)
@@ -271,11 +267,10 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
   let now = instruments.now_ns in
   let start_ns = now () in
   let deadline_at =
-    let d = deadline in
     (* 2^61 ns (73 years) keeps the addition inside a 63-bit int; anything
        larger is operationally uncapped. *)
-    if Float.is_finite d && d *. 1e9 < 0x1p61 then
-      Some (start_ns + int_of_float (d *. 1e9))
+    if Float.is_finite deadline && deadline *. 1e9 < 0x1p61 then
+      Some (start_ns + int_of_float (deadline *. 1e9))
     else None
   in
   let check_deadline () =
@@ -465,9 +460,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
             (* The counters are floats holding whole numbers, exact below
                2^53, so these differences are exact. *)
             let diff = d2k -. dk in
-            let quotient = Float.floor (diff /. kf) in
-            let residue = diff -. (kf *. quotient) in
-            let a = quotient in
+            let a = Float.floor (diff /. kf) in
+            let residue = diff -. (kf *. a) in
             let h = dk -. (kf *. a) and h2 = d2k -. (2. *. kf *. a) in
             (* Monotone counters can still give a consistent negative slope
                (a 2k batch allocating less in total than the k batch, as an
