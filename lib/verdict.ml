@@ -57,8 +57,8 @@ type case_report = {
 type staleness = Ocaml_mismatch of { section : string; current : string }
 type comparison = No_baseline | Stale of staleness | Compared
 
-(* Constants. The band cap and default budget live in [Budget]; the
-   drift level (α = 0.01) is measurement-time and lives with the flags. *)
+(* Constants. The band cap and the default budget are [Budget]'s; the
+   drift level is [Measure]'s, read when the trial is measured. *)
 
 (* Initial rank-test level, 0.005 per side. *)
 let alpha_initial = 0.005
@@ -75,7 +75,10 @@ let default_params =
   ( min Budget.band_cap (Budget.default_max_regression /. 2.),
     Budget.default_max_regression )
 
-(* Internal representation *)
+(* Internal representation. Judging takes two passes: [judge] settles each
+   metric or leaves it [Pending] with what its confirmation is compared
+   against; [confirmations] lists the cases with a [Pending] metric; [decide]
+   resolves each [Pending] into a relation, so a [t] holds none. *)
 
 type pending = {
   p_dir : [ `Improved | `Regressed ];
@@ -101,7 +104,7 @@ type pcase = {
 type core = {
   cr_identity : Baseline.identity;
   cr_suite : string;
-  cr_file : Baseline.t; (* the baseline judged against; the ratchet's input *)
+  cr_file : Baseline.t; (* the baseline judged against; [corrected]'s input *)
   cr_selection : [ `Full | `Partial ];
   cr_comparison : comparison;
   cr_warnings : string list;
@@ -112,8 +115,6 @@ type t = { core : core; v_load : Env.load; v_cases : case_report list }
 
 (* Small helpers *)
 
-(* An inconclusive relation keeps the first-pass shift iff the rank test ran:
-   the estimate and interval are reported whatever the relation. *)
 let inconclusive ?shift reason = Inconclusive { reason; shift }
 let log_all a = Array.map log a
 let all_positive a = Array.for_all (fun x -> x > 0.) a
@@ -175,8 +176,8 @@ let relative_params budget =
   | Some (Budget.Relative { max_regression; band }) -> (band, max_regression)
   | Some (Budget.Absolute_max _) | None -> default_params
 
-(* A zero-tolerance relative budget on a downgraded exact-capable
-   metric is never a rank test at r = 0. *)
+(* A counter metric measured as samples, not exact, under a relative budget
+   of [0]: no rank test judges it. *)
 let zero_tolerance_downgrade metric budget =
   Metric.is_counter metric
   &&
@@ -211,9 +212,8 @@ let table ~e ~r sh =
 let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
   let e, r = relative_params budget in
   if
-    (* A zero sample breaks the log-space comparison, and no amount of
-       re-measurement prices it: its own reason, with an honest remedy. A
-       quiet host would not fix it either, so it is tested before the load. *)
+    (* A non-positive sample breaks the logarithmic comparison, and a quiet
+       host would not fix it, so it is tested before the load. *)
     (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
   then Settled (Judged (inconclusive Non_positive))
   else if is_loaded load then Settled (Judged (inconclusive Environment))
@@ -238,12 +238,10 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
          large shift is a verdict, not a calibration event. *)
       Settled (Judged (inconclusive ~shift:sh Batch_drifted))
     else
-      (* Instability undermines a demonstrated direction within 2e: there,
-         unstable trials support equivalent or inconclusive only. A shift
-         beyond 2e is judged as on a stable row — the batch-drift test above;
-         one outlier barely moves a rank interval, and at the derived band
-         (where r >= 2e) a strong regression must not hide behind a heavy
-         tail. *)
+      (* Instability undermines a direction only within 2e, the batch-drift
+         threshold: one outlier barely moves a rank interval, and at the
+         derived band (r >= 2e) a strong regression must not hide behind a
+         heavy tail. *)
       let unless_unstable state =
         if not (bias_comparable ~e sh) then state
         else if unstable baseline then
@@ -268,9 +266,7 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
                  p_r = r;
                })
 
-(* Whether a proven-exact count exceeds its budget's absolute cap. The cap
-   is on the measured value itself, so it is judged on this run's count
-   alone, whatever the baseline holds or lacks. *)
+(* The cap is on the measured value itself, baseline-independent. *)
 let over_cap budget c =
   match Option.map Budget.contract budget with
   | Some (Budget.Absolute_max cap) -> float_of_int c > cap
@@ -365,11 +361,9 @@ let absent_ids s ~case_ids =
          if List.mem id case_ids then None else Some id)
        (Baseline.rows s))
 
-(* A stale section is replaced wholesale from the selected cases alone, by
-   check's candidate and by bless alike: under a partial selection the
-   unselected cases' rows are dropped, and the acceptance prompt is the only
-   later tell. Both say so, in these words (a silent partial re-record reads
-   as data loss after the fact). *)
+(* A stale section is replaced whole, so under a partial selection the
+   corrected file loses the unselected cases' rows; [bless] prints the same
+   notice. *)
 let stale_partial_notice ~selection ~comparison ~section ~case_ids =
   match (selection, comparison, section) with
   | `Partial, Stale _, Some s ->
@@ -497,8 +491,9 @@ let resolve_pending ~load ~conf metric pd =
                  && bias_comparable ~e:pd.p_e confirmation
             then inconclusive ~shift:first Unconfirmed
             else
-              (* Pool both passes for the ratchet; [Array.append] is a fresh
-                 array, so neither trial's evidence is sorted in place. *)
+              (* Pool both trials, which an improved row advances to;
+                 [Array.append] is a fresh array, so neither trial's evidence
+                 is sorted in place. *)
               let pooled = Array.append pd.p_first_sorted s.Run.sorted in
               let () = Array.sort Float.compare pooled in
               let strong =
@@ -574,10 +569,8 @@ let exact_evidence case_report metric =
   | Some (Run.Exact _) -> true
   | Some (Run.Samples _) | None -> false
 
-(* Whether a report fails its case: a regression beyond a relative budget,
-   or a proven-exact count over an absolute cap — on any run, with or
-   without a baseline row. A statistical estimate crossing an absolute line
-   is not an earned verdict, so a sampled count never gates a cap. *)
+(* A statistical estimate crossing an absolute line is not an earned
+   verdict, so only an exact count fails a cap. *)
 let report_fails case_report report =
   match Option.map Budget.contract report.budget with
   | Some (Budget.Relative _) -> (
@@ -633,11 +626,8 @@ let exit_code ?(strict = false) t =
       in
       if strict && (non_compared || has_proposed t) then 1 else 0
 
-(* JSON (v1 field names and escaping) *)
+(* JSON *)
 
-(* v1 string escaping: backslash forms for the two JSON metacharacters
-   and the three named C0 controls, [\u00XX] for the rest of C0; everything
-   else — UTF-8 sequences included — passes through byte-verbatim. *)
 let json_string buf s =
   Buffer.add_char buf '"';
   String.iter
@@ -654,8 +644,7 @@ let json_string buf s =
     s;
   Buffer.add_char buf '"'
 
-(* Floats print [%.17g] (v1) — enough digits to round-trip a double. An
-   absent or non-finite value is [null]: JSON has no spelling for NaN or the
+(* [%.17g] round-trips a double; JSON has no spelling for NaN or the
    infinities. *)
 let json_float buf f =
   match f with
@@ -750,8 +739,6 @@ let json_metric buf case_report report =
   json_float buf upper;
   Buffer.add_char buf '}'
 
-(* The per-case ratio a report contributes to the geomean, v1's guard: only
-   finite, strictly positive ratios participate. *)
 let ratio_of_verdict v =
   (* Only the point delta matters; the [exact] flag shapes bounds only. *)
   match deltas_of_verdict ~exact:false v with
@@ -760,9 +747,7 @@ let ratio_of_verdict v =
       if Float.is_finite ratio && ratio > 0.0 then Some ratio else None
   | None, _, _ -> None
 
-(* Summary metrics in first-appearance order across the cases' reports —
-   v1's ordering, inherited by the frozen schema. A run measures a handful
-   of metrics; the quadratic dedup is nothing. *)
+(* A run measures a handful of metrics; the quadratic dedup is nothing. *)
 let summary_metrics t =
   let add order r =
     if List.exists (Metric.equal r.metric) order then order
@@ -840,7 +825,7 @@ let to_json t =
   Buffer.add_string buf "]}";
   Buffer.contents buf
 
-(* The write path: the single-rule ratchet *)
+(* Write paths *)
 
 let row_of_measurement ~id ~k metric measurement =
   match measurement with
@@ -866,8 +851,7 @@ let corrected t =
   let result =
     match t.core.cr_comparison with
     | No_baseline | Stale _ ->
-        (* Missing or stale section: propose it wholesale from this run's
-           evidence. *)
+        (* A missing or stale section is replaced by this run's evidence. *)
         let rows =
           List.concat_map (fun c -> rows_of_trial c.id c.trial) t.v_cases
         in
