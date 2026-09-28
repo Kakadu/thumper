@@ -235,7 +235,7 @@ val render_check : render -> Verdict.t -> string
     — a pass run is header, table, summary. Four blocks separated by single
     blank lines, empty blocks omitted:
 
-    - {b Header.} [thumper: <suite> — <N> cases vs <baseline> [<machine>]]
+    - {b Header.} [thumper: <suite> — <N> cases vs <baseline> for machine <key>]
       (suite bold, the rest faint); the no-baseline form names the machine key
       and CPU model, the stale form the recorded and current compiler
       identities. When the verdict was decided under a loaded gate

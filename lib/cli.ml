@@ -821,8 +821,8 @@ let render_check r v =
       match comparison with
       | Verdict.Compared ->
           header_line ~color ~suite
-            (Printf.sprintf " — %d case%s vs %s [%s]" n_cases (plural n_cases)
-               r.baseline_path ident.Baseline.machine)
+            (Printf.sprintf " — %d case%s vs %s for machine %s" n_cases
+               (plural n_cases) r.baseline_path ident.Baseline.machine)
       | Verdict.No_baseline ->
           header_line ~color ~suite
             (Printf.sprintf " — no baseline for machine %s (%s)"

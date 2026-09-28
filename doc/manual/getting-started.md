@@ -97,7 +97,7 @@ where every case is within budget prints the full report and exits 0:
 
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
+thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
 
   equivalent    1.40 us  ±0.8%  54 w  sha256/string-64
   equivalent    1.10 us  ±0.7%   0 w  fib/10
@@ -117,7 +117,7 @@ verdict stands only if both measurements agree.
 
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
+thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
 
   REGRESSED     1.84 us  ±1.1%  54 w  sha256/string-64
       +31.4% [+30.0, +32.9]  budget +5%; equivalent (alloc exact)
@@ -142,7 +142,7 @@ cases, and the diff you commit is the record of the improvement:
 
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
+thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
 
   improved      1.19 us  ±0.8%  54 w  sha256/string-64
       -15.0% [-15.7, -14.3]
@@ -200,7 +200,7 @@ speed:
 
 ```
 $ dune exec bench/bench_digest.exe -- --quick -f string-64
-thumper: digest — 1 case vs bench/digest.thumper [9f3a1c2e8b4d6a07]
+thumper: digest — 1 case vs bench/digest.thumper for machine 9f3a1c2e8b4d6a07
 
   equivalent  1.40 us  ±0.9%  54 w  sha256/string-64
 

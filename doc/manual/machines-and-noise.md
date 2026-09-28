@@ -75,7 +75,7 @@ still checked**: counting doesn't care about load.
 
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
+thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
 warning: load 7.9 on 10 cores — timing verdicts degraded
 
   inconclusive    1.40 us  ±1.0%  54 w  sha256/string-64

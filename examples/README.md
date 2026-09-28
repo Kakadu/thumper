@@ -140,7 +140,7 @@ thumper: budgets — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
   accept:  mv /tmp/budgets.thumper.corrected /tmp/budgets.thumper
 $ mv /tmp/budgets.thumper.corrected /tmp/budgets.thumper
 $ dune exec examples/03-budgets/bench_budgets.exe -- check --baseline /tmp/budgets.thumper
-thumper: budgets — 3 cases vs /tmp/budgets.thumper [ca352e279bc47cb1]
+thumper: budgets — 3 cases vs /tmp/budgets.thumper for machine ca352e279bc47cb1
 
   equivalent  12.88 us  ±0.8%  2,048 w  codec/hex-encode
   equivalent   8.12 us  ±0.8%  1,024 w  codec/hex-decode
@@ -168,7 +168,7 @@ the same check tells you exactly what the load cost it — this one raced a
 parallel build:
 
 ```
-thumper: budgets — 3 cases vs /tmp/budgets.thumper [ca352e279bc47cb1]
+thumper: budgets — 3 cases vs /tmp/budgets.thumper for machine ca352e279bc47cb1
 warning: load 7.6 on 10 cores — timing verdicts degraded
 
   inconclusive  12.91 us  ±1.1%  2,048 w  codec/hex-encode

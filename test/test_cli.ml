@@ -723,7 +723,7 @@ let mixed_run_renders_all_four_blocks () =
   expect (Cli.render_check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 3 cases vs digest.thumper [testkey]
+thumper: digest — 3 cases vs digest.thumper for machine testkey
 
   REGRESSED   2.00 us  ±0.0%     54 w  alpha
       +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
@@ -746,7 +746,7 @@ let pass_run_renders_header_table_summary () =
   expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   equivalent  1.00 us  ±0.0%  54 w  alpha
 
@@ -774,7 +774,7 @@ let a_proposed_metric_reads_as_proposed () =
   expect (Cli.render_check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   equivalent  1.00 us  ±0.0%  54 w  alpha
       proposed alloc
@@ -806,7 +806,7 @@ let loaded_run_warns_under_the_header () =
   expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 warning: load 7.9 on 8 cores — timing verdicts degraded
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
@@ -835,7 +835,7 @@ let improvement_only_renders_the_ratchet_prompt () =
   expect (Cli.render_check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   improved  1.00 us  ±0.0%  54 w  alpha
       -50.0% [-50.0, -50.0]
@@ -855,7 +855,7 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
   expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
       unconfirmed; equivalent (alloc exact)
@@ -870,7 +870,7 @@ let exact_alloc_failure_names_the_alloc_side () =
   expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   REGRESSED  1.00 us  ±0.0%  71 w  alpha
       alloc 54 w → 71 w (exact)
@@ -958,7 +958,7 @@ let measurement_warnings_render_after_the_table () =
   expect (Cli.render_check (ctx ()) v)
   @@ __POS_OF__
        {|
-thumper: digest — 1 case vs digest.thumper [testkey]
+thumper: digest — 1 case vs digest.thumper for machine testkey
 
   equivalent  1.00 us  ±0.0%  54 w  alpha
   warning: alpha: possibly folded: wrap the input in black_box
