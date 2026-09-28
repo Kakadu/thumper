@@ -7,6 +7,8 @@
    sorted, finite and at least 3 long: broken evidence is a bug, never data,
    so every check here raises [Invalid_argument]. *)
 
+let strf = Printf.sprintf
+
 type sampled = { sorted : float array; drifted : bool }
 
 (* The checks run on the copy, so a caller changing its own array later
@@ -18,8 +20,7 @@ type sampled = { sorted : float array; drifted : bool }
 let sampled ~sorted ~drifted =
   let sorted = Array.copy sorted in
   let n = Array.length sorted in
-  if n < 3 then
-    invalid_arg (Printf.sprintf "Run.sampled: %d samples, need at least 3" n);
+  if n < 3 then invalid_arg (strf "Run.sampled: %d samples, need at least 3" n);
   Array.iter
     (fun x ->
       if not (Float.is_finite x) then
@@ -48,12 +49,11 @@ module Trial = struct
   }
 
   let make ~k ?(warnings = []) measurements =
-    if k < 1 then invalid_arg (Printf.sprintf "Run.Trial.make: k %d < 1" k);
+    if k < 1 then invalid_arg (strf "Run.Trial.make: k %d < 1" k);
     (match
        first_duplicate (List.map (fun (m, _) -> Metric.id m) measurements)
      with
-    | Some id ->
-        invalid_arg (Printf.sprintf "Run.Trial.make: duplicate metric %s" id)
+    | Some id -> invalid_arg (strf "Run.Trial.make: duplicate metric %s" id)
     | None -> ());
     (* Only a counter metric's probe can prove a count exact. *)
     List.iter
@@ -61,7 +61,7 @@ module Trial = struct
         match v with
         | Exact _ when not (Metric.is_counter m) ->
             invalid_arg
-              (Printf.sprintf
+              (strf
                  "Run.Trial.make: exact evidence for %s, which no probe can \
                   prove exact"
                  (Metric.id m))
@@ -85,28 +85,27 @@ type t = (string * Trial.t) list
 
 let create trials =
   match first_duplicate (List.map fst trials) with
-  | Some id -> invalid_arg (Printf.sprintf "Run.create: duplicate case %s" id)
+  | Some id -> invalid_arg (strf "Run.create: duplicate case %s" id)
   | None -> trials
 
 let trials t = t
 let trial t id = List.assoc_opt id t
 let case_ids t = List.map fst t
 
-let samples t ~case metric =
+let measurement t ~case metric =
   match trial t case with
   | None -> None
-  | Some tr -> (
-      match Trial.measurement tr metric with
-      | Some (Samples s) -> Some (Array.copy s.sorted)
-      | Some (Exact _) | None -> None)
+  | Some tr -> Trial.measurement tr metric
+
+let samples t ~case metric =
+  match measurement t ~case metric with
+  | Some (Samples s) -> Some (Array.copy s.sorted)
+  | Some (Exact _) | None -> None
 
 let exact t ~case metric =
-  match trial t case with
-  | None -> None
-  | Some tr -> (
-      match Trial.measurement tr metric with
-      | Some (Exact n) -> Some n
-      | Some (Samples _) | None -> None)
+  match measurement t ~case metric with
+  | Some (Exact n) -> Some n
+  | Some (Samples _) | None -> None
 
 let warnings t ~case =
   match trial t case with None -> [] | Some tr -> Trial.warnings tr
