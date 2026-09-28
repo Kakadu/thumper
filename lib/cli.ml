@@ -1392,12 +1392,12 @@ let help_text exe =
   let name = Filename.basename exe in
   String.concat "\n"
     [
-      Printf.sprintf "%s — thumper benchmark suite (thumper %s)" name version;
+      Printf.sprintf "%s: thumper benchmark suite (thumper %s)" name version;
       "";
       Printf.sprintf "usage: %s [check|bless|list] [OPTS] [PATTERN...]" name;
       "";
       "subcommands:";
-      "  check      measure, compare against the baseline, ratchet (default)";
+      "  check      measure, compare against the baseline (default)";
       "  bless      propose a re-record of the selected cases for this machine";
       "  list       print the selected case ids; no measurement";
       "";
@@ -1405,10 +1405,10 @@ let help_text exe =
       "  -f PAT             select cases whose id contains PAT (repeatable,";
       "                     OR'd); bare PATTERN arguments mean the same";
       "  --tag T            select cases tagged T (repeatable, AND'd)";
-      "  --quick            quick protocol (fewer timed batches)";
-      "  --precise          precise protocol (more timed batches)";
+      "  --quick            quick protocol (fewer samples)";
+      "  --precise          precise protocol (more samples)";
       "  --baseline PATH    baseline file (default: <suite>.thumper next to";
-      "                     the benchmark's source; a rule action's cwd)";
+      "                     the benchmark's source)";
       "  --json PATH        check: write the verdict document to PATH";
       "  --strict           check: inconclusive, proposed, and stale exit 1";
       "  --wait-quiet SECS  wait up to SECS for a quiet host before measuring";
@@ -1418,7 +1418,8 @@ let help_text exe =
       "  -V, --version      print the version";
       "";
       "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock";
-      "directory), NO_COLOR; INSIDE_DUNE selects the dune hints.";
+      "directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);";
+      "INSIDE_DUNE selects the dune hints and, in a rule action, colour.";
       "";
     ]
 
