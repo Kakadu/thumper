@@ -74,7 +74,7 @@ forking. See [`testing.md`](testing.md).
 **The narrow waist** is the two serialized formats, the `.thumper`
 file and the JSON document, both specified in the manual
 ([baseline-format](../manual/baseline-format.md),
-[checking](../manual/checking.md#the-json-verdict)). External tools
+[json](../manual/json.md)). External tools
 build on those, never on internals.
 
 ## The laws
