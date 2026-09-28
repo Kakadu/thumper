@@ -74,6 +74,22 @@ let split_eq args =
   in
   go args
 
+(* The options read so far, the lists reversed. The two presets stay apart
+   until the end: giving both is a usage error, and a misplaced one is named
+   as given. *)
+type reading = {
+  patterns : string list;
+  tags : string list;
+  quick : bool;
+  precise : bool;
+  baseline : string option;
+  json : string option;
+  strict : bool;
+  wait_quiet : float option;
+  force : bool;
+  color : color;
+}
+
 let parse argv =
   let args = match Array.to_list argv with [] -> [] | _ :: rest -> rest in
   (* The first argument names the subcommand; any later occurrence of a
@@ -86,146 +102,121 @@ let parse argv =
         | None -> (None, args))
     | [] -> (None, args)
   in
-  let args = split_eq args in
-  let patterns = ref [] in
-  let tags = ref [] in
-  let quick = ref false in
-  let precise = ref false in
-  let baseline = ref None in
-  let json = ref None in
-  let strict = ref false in
-  let wait_quiet = ref None in
-  let force = ref false in
-  let color = ref `Auto in
-  let result = ref None in
-  let error = ref None in
-  (* Every error branch is terminal: the first defect wins. *)
-  let fail msg = error := Some msg in
-  let missing flag = fail (strf "option '%s' requires an argument" flag) in
-  let rec go = function
-    | [] -> ()
-    | ("-h" | "--help") :: _ -> result := Some Help
-    | ("-V" | "--version") :: _ -> result := Some Version
-    | "--" :: rest -> List.iter (fun p -> patterns := p :: !patterns) rest
-    | "-f" :: v :: rest ->
-        patterns := v :: !patterns;
-        go rest
+  let subcommand = Option.value explicit ~default:`Check in
+  let finish (r : reading) =
+    (* The scoping matrix: a flag accepted where it does nothing would
+       misdescribe the run, so it is a usage error naming both sides. *)
+    let measuring = [ `Check; `Bless ] in
+    let misplaced =
+      List.find_opt
+        (fun (_, allowed, given) -> given && not (List.mem subcommand allowed))
+        [
+          ("--quick", measuring, r.quick);
+          ("--precise", measuring, r.precise);
+          ("--baseline", measuring, Option.is_some r.baseline);
+          ("--json", [ `Check ], Option.is_some r.json);
+          ("--strict", [ `Check ], r.strict);
+          ("--wait-quiet", measuring, Option.is_some r.wait_quiet);
+          ("--force", [ `Bless ], r.force);
+        ]
+    in
+    match misplaced with
+    | Some (flag, allowed, _) ->
+        Usage_error
+          (strf "option '%s' applies to %s, not %s" flag
+             (String.concat " and " (List.map subcommand_word allowed))
+             (subcommand_word subcommand))
+    | None when r.quick && r.precise ->
+        Usage_error "--quick and --precise are mutually exclusive"
+    | None ->
+        let preset =
+          if r.quick then `Quick else if r.precise then `Precise else `Default
+        in
+        Run
+          {
+            subcommand;
+            patterns = List.rev r.patterns;
+            tags = List.rev r.tags;
+            preset;
+            baseline = r.baseline;
+            json = r.json;
+            strict = r.strict;
+            wait_quiet = r.wait_quiet;
+            force = r.force;
+            color = r.color;
+          }
+  in
+  let missing flag =
+    Usage_error (strf "option '%s' requires an argument" flag)
+  in
+  (* The first help, version or defect ends the reading. *)
+  let rec read (r : reading) = function
+    | [] -> finish r
+    | ("-h" | "--help") :: _ -> Help
+    | ("-V" | "--version") :: _ -> Version
+    | "--" :: rest ->
+        finish { r with patterns = List.rev_append rest r.patterns }
+    | "-f" :: v :: rest -> read { r with patterns = v :: r.patterns } rest
     | [ "-f" ] -> missing "-f"
-    | "--tag" :: v :: rest ->
-        tags := v :: !tags;
-        go rest
+    | "--tag" :: v :: rest -> read { r with tags = v :: r.tags } rest
     | [ "--tag" ] -> missing "--tag"
-    | "--quick" :: rest ->
-        quick := true;
-        go rest
-    | "--precise" :: rest ->
-        precise := true;
-        go rest
-    | "--baseline" :: v :: rest ->
-        baseline := Some v;
-        go rest
+    | "--quick" :: rest -> read { r with quick = true } rest
+    | "--precise" :: rest -> read { r with precise = true } rest
+    | "--baseline" :: v :: rest -> read { r with baseline = Some v } rest
     | [ "--baseline" ] -> missing "--baseline"
     | "--json" :: "-" :: _ ->
         (* No stdout document: the report owns stdout, and a file named [-]
            is never what was meant. *)
-        fail "option '--json' requires a file path, got '-'"
-    | "--json" :: v :: rest ->
-        json := Some v;
-        go rest
+        Usage_error "option '--json' requires a file path, got '-'"
+    | "--json" :: v :: rest -> read { r with json = Some v } rest
     | [ "--json" ] -> missing "--json"
-    | "--strict" :: rest ->
-        strict := true;
-        go rest
+    | "--strict" :: rest -> read { r with strict = true } rest
     | "--wait-quiet" :: v :: rest -> (
         match float_of_string_opt v with
         | Some s when Float.is_finite s && s >= 0. ->
-            wait_quiet := Some s;
-            go rest
+            read { r with wait_quiet = Some s } rest
         | Some _ | None ->
-            fail
+            Usage_error
               (strf
                  "option '--wait-quiet' requires a non-negative number of \
                   seconds, got '%s'"
                  v))
     | [ "--wait-quiet" ] -> missing "--wait-quiet"
-    | "--force" :: rest ->
-        force := true;
-        go rest
+    | "--force" :: rest -> read { r with force = true } rest
     | "--color" :: v :: rest -> (
         match v with
-        | "auto" ->
-            color := `Auto;
-            go rest
-        | "always" ->
-            color := `Always;
-            go rest
-        | "never" ->
-            color := `Never;
-            go rest
+        | "auto" -> read { r with color = `Auto } rest
+        | "always" -> read { r with color = `Always } rest
+        | "never" -> read { r with color = `Never } rest
         | _ ->
-            fail
+            Usage_error
               (strf "option '--color' takes auto, always, or never, got '%s'" v)
         )
     | [ "--color" ] -> missing "--color"
     | a :: _ when String.length a > 1 && a.[0] = '-' -> (
         match String.index_opt a '=' with
         | Some i when List.mem (String.sub a 0 i) long_flags ->
-            fail (strf "option '%s' takes no argument" (String.sub a 0 i))
-        | Some _ | None -> fail (strf "unknown option '%s'" a))
+            Usage_error
+              (strf "option '%s' takes no argument" (String.sub a 0 i))
+        | Some _ | None -> Usage_error (strf "unknown option '%s'" a))
     | a :: rest ->
         (* A bare argument is a pattern, as after [-f]. *)
-        patterns := a :: !patterns;
-        go rest
+        read { r with patterns = a :: r.patterns } rest
   in
-  go args;
-  let subcommand = Option.value explicit ~default:`Check in
-  (* The scoping matrix: a flag accepted where it does nothing would
-     misdescribe the run, so it is a usage error naming both sides. *)
-  let scoped flag allowed present =
-    match !error with
-    | Some _ -> ()
-    | None ->
-        if present && not (List.mem subcommand allowed) then
-          let where =
-            String.concat " and " (List.map subcommand_word allowed)
-          in
-          fail
-            (strf "option '%s' applies to %s, not %s" flag where
-               (subcommand_word subcommand))
-  in
-  let measuring = [ `Check; `Bless ] in
-  scoped "--quick" measuring !quick;
-  scoped "--precise" measuring !precise;
-  scoped "--baseline" measuring (!baseline <> None);
-  scoped "--json" [ `Check ] (!json <> None);
-  scoped "--strict" [ `Check ] !strict;
-  scoped "--wait-quiet" measuring (!wait_quiet <> None);
-  scoped "--force" [ `Bless ] !force;
-  match (!result, !error) with
-  | Some r, _ -> r
-  | None, Some msg -> Usage_error msg
-  | None, None ->
-      if !quick && !precise then
-        Usage_error "--quick and --precise are mutually exclusive"
-      else
-        let preset =
-          if !quick then `Quick else if !precise then `Precise else `Default
-        in
-        let o : options =
-          {
-            subcommand;
-            patterns = List.rev !patterns;
-            tags = List.rev !tags;
-            preset;
-            baseline = !baseline;
-            json = !json;
-            strict = !strict;
-            wait_quiet = !wait_quiet;
-            force = !force;
-            color = !color;
-          }
-        in
-        Run o
+  read
+    {
+      patterns = [];
+      tags = [];
+      quick = false;
+      precise = false;
+      baseline = None;
+      json = None;
+      strict = false;
+      wait_quiet = None;
+      force = false;
+      color = `Auto;
+    }
+    (split_eq args)
 
 let filter_of ~patterns ~tags =
   let ids = List.map (fun p -> `Id p) patterns in
