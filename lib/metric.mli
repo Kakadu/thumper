@@ -3,153 +3,138 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Metric identity and measurement sources.
+(** Metrics: the per-call quantities thumper measures.
 
-    A metric names a per-call quantity and classifies {e how} it is read — the
-    {!source}. [Measure] drives the source around timed batches; [Verdict]
-    compares the resulting numbers; this module knows nothing about either.
-    Whether a counter metric is {e exact} is proven per run by the k/2k probe in
-    [Measure], never assumed here: {!is_counter} states capability only.
+    A metric has an identity ({!id}), a {!type:kind} the report renders it by,
+    and a {!type:source} [Measure] reads it from. The set is closed: the eight
+    {{!builtins}built-ins} are every metric, and {!type:t} has no public
+    constructor. A new metric is a new value in [metric.ml]; a new source also
+    needs [Measure] to read it, since [Measure] matches on {!type:source}
+    exhaustively. Whether a counter metric's evidence is exact is proven per
+    trial by [Measure]'s probe, never assumed here.
 
-    There are no [cycles] or [instructions] metrics: a metric that cannot be
-    measured on this platform is absent, not NaN. There is no custom-metric
-    extension point either — the metric set is exactly the
-    {{!builtins}built-ins}; a hardware-counter package gets a purpose-designed
-    extension point when a real consumer exists. *)
+    [Thumper.Metric] re-exports {!type:t}, {!id}, {!name}, {!units}, {!equal},
+    {!compare}, {!pp} and the built-ins with their user contract, and nothing
+    else of this module. *)
 
-(** {1:types Types} *)
+(** {1:sources Kinds and sources} *)
 
 type kind = [ `Time | `Allocation | `Other ]
-(** The type for rendering classification: [`Time] metrics are second-valued and
-    unit-scaled for display, [`Allocation] metrics are word counts, [`Other]
-    metrics render raw with their {!units}. Never consulted by judgment —
-    budgets bind to individual metrics, not kinds. *)
-
-(** {1:sources Sources}
-
-    How a quantity is read. The measurement seam pattern matches on {!source} to
-    drive each metric; adding a case here means teaching [Measure] to drive it.
-*)
+(** The type for how the report renders a metric's values. [`Time] values are
+    seconds, [`Allocation] values are words, and [`Other] values are in their
+    metric's {!units}. Only the report reads it, to choose columns, units and
+    suffixes; judgment never does. *)
 
 type gc_snapshot = {
   minor_words : float;
-      (** Cumulative words allocated in the minor heap ([Gc.counters]
-          semantics). *)
+      (** Words allocated in the minor heap so far ([Gc.counters]). *)
   promoted_words : float;
-      (** Cumulative words promoted from the minor to the major heap. Counted in
-          both [minor_words] and [major_words]. *)
+      (** Words promoted from the minor to the major heap so far, which
+          [minor_words] and [major_words] both count. *)
   major_words : float;
-      (** Cumulative words allocated in the major heap, {e including}
-          promotions. *)
-  minor_collections : int;  (** Number of minor collections so far. *)
-  major_collections : int;  (** Number of completed major collection cycles. *)
+      (** Words allocated in the major heap so far, promotions included. *)
+  minor_collections : int;  (** Minor collections so far. *)
+  major_collections : int;  (** Major collection cycles completed so far. *)
 }
-(** The type for snapshots of the runtime's cumulative allocation counters — the
-    currency the measurement seam traffics in. Word counts are integral doubles:
-    exact below 2{^ 53}, which is what lets the k/2k probe prove exact per-call
-    integers from their differences. *)
+(** The type for one reading of the runtime's cumulative counters. The word
+    counts are floats holding whole numbers, exact below 2{^ 53}. *)
 
-(** The type for measurement sources. *)
+(** The type for how [Measure] reads a metric. *)
 type source =
-  | Wall_clock
-      (** The timed batch interval itself, read on the monotonic-raw clock. *)
-  | Cpu_clock  (** Process CPU time around the batch ([Unix.times]). *)
+  | Wall_clock  (** The measurement clock, read around each batch. *)
+  | Cpu_clock
+      (** Process CPU time, user plus system ([Unix.times]), read around each
+          batch. *)
   | Gc_counter of (gc_snapshot -> float)
-      (** A projection of the allocation counters. The batch value is
-          [project after -. project before]; projections are linear in the
-          counters, so projecting and differencing commute. The exact-capable
-          class. *)
+      (** [Gc_counter p] reads the projection [p] of a {!gc_snapshot}, and a
+          batch's value is [p after -. p before]. [p] must be linear in the
+          counters, so that projecting and differencing commute. It must not
+          decrease when they grow, and a decrease across the probe batches fails
+          {!Measure.case}, which states how. *)
 
 (** {1:metrics Metrics} *)
 
 type t
-(** The type for metrics. Identity is {!id}: two metrics with the same id are
-    the same metric to {!equal}, {!compare}, and every baseline row. There are
-    no public constructors — the metric set is exactly the
-    {{!builtins}built-ins}. *)
+(** The type for metrics. Identity is {!id} alone: {!equal}, {!compare}, the
+    baseline's rows and the JSON document read nothing else. *)
 
 (** {2:accessors Accessors} *)
 
 val id : t -> string
-(** [id m] is [m]'s identity. Ids are wire format — they appear verbatim in
-    [.thumper] baseline rows and JSON reports — and are frozen: the
-    {{!builtins}built-in} spellings never change. *)
-
-val name : t -> string
-(** [name m] is [m]'s human-readable label, for report rendering. Not wire
+(** [id m] is [m]'s identity, the spelling baseline rows and the JSON document
+    store. A built-in's id never changes: changing one changes the baseline
     format. *)
 
+val name : t -> string
+(** [name m] is [m]'s label in words, such as ["wall time"] for {!wall_time}. No
+    report prints it. *)
+
 val units : t -> string
-(** [units m] is the unit of [m]'s values (e.g. ["s"], ["words"]), for report
-    rendering. Per-call values are in this unit. *)
+(** [units m] is the unit of [m]'s per-call values: ["s"], ["words"] or
+    ["count"]. *)
 
 val kind : t -> kind
-(** [kind m] is [m]'s rendering classification. *)
+(** [kind m] is how the report renders [m]'s values. *)
 
 val source : t -> source
-(** [source m] is how [m]'s quantity is read. *)
+(** [source m] is how [Measure] reads [m]. *)
 
 val is_counter : t -> bool
-(** [is_counter m] is [true] iff {!source} is [Gc_counter _]: integral counters
-    the k/2k probe can prove an exact per-call integer for this run .
-    Capability, not proof — a failed probe downgrades the metric to sampled
-    treatment for the run. *)
+(** [is_counter m] is [true] iff [source m] is a {!Gc_counter}, and only a
+    counter metric's evidence can be exact. A failed probe leaves a counter
+    metric sampled for that trial. *)
 
-(** {2:predicates Predicates and comparisons} *)
+(** {2:predicates Comparisons and formatting} *)
 
 val equal : t -> t -> bool
-(** [equal a b] is [String.equal (id a) (id b)]. Names, units, and sources do
-    not participate in identity. *)
+(** [equal a b] is [String.equal (id a) (id b)]. *)
 
 val compare : t -> t -> int
-(** [compare a b] orders metrics by {!id} ([String.compare]); the baseline row
-    order. Compatible with {!equal}. *)
-
-(** {2:fmt Formatting} *)
+(** [compare a b] is [String.compare (id a) (id b)]. A baseline section orders
+    one case's rows by the same comparison. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf m] formats [m]'s {!id} for diagnostics. *)
+(** [pp ppf m] formats [id m]. *)
 
 (** {1:builtins Built-in metrics}
 
-    All built-ins are [`Lower_is_better]. Defaults: {!wall_time} (sampled) and
-    {!alloc_words} (exact when proven); the rest are opt-in via the config's
-    metric list. *)
+    Judgment reads every metric as lower-is-better: an increase is a regression.
+    A metric for which higher is better needs a direction in [Verdict] first. *)
 
 val wall_time : t
-(** [wall_time] is monotonic wall-clock time per call, in seconds. Id
-    ["wall_time"], kind [`Time], source [Wall_clock]. The default primary
-    metric. *)
+(** [wall_time] is the time per call on {!Wall_clock}, in seconds. Its id is
+    ["wall_time"] and its kind [`Time]. *)
 
 val alloc_words : t
-(** [alloc_words] is total OCaml words allocated per call: minor + major −
-    promoted (promoted words are counted by both the minor and major counters;
-    subtracting removes the double count). Id ["alloc_words"], kind
-    [`Allocation]. Exact when proven. *)
+(** [alloc_words] is [minor_words +. major_words -. promoted_words] per call, in
+    words. Its id is ["alloc_words"], its kind [`Allocation], and it is a
+    counter metric. *)
 
 val cpu_time : t
-(** [cpu_time] is process CPU time per call, in seconds. Id ["cpu_time"], kind
-    [`Time], source [Cpu_clock]. Opt-in and demoted: under multithreaded
-    backends it sums across threads, so it is noisy and core-count dependent. *)
+(** [cpu_time] is the process CPU time per call on {!Cpu_clock}, in seconds. Its
+    id is ["cpu_time"] and its kind [`Time]. *)
 
 val minor_alloc_words : t
-(** [minor_alloc_words] is words allocated in the minor heap per call. Id
-    ["minor_alloc_words"], kind [`Allocation]. *)
+(** [minor_alloc_words] is the [minor_words] counter per call, in words. Its id
+    is ["minor_alloc_words"], its kind [`Allocation], and it is a counter
+    metric. *)
 
 val major_alloc_words : t
-(** [major_alloc_words] is words allocated in the major heap per call,
-    {e including} words promoted from the minor heap (the raw counter; subtract
-    {!promoted_words} for direct major allocations). Id ["major_alloc_words"],
-    kind [`Allocation]. *)
+(** [major_alloc_words] is the [major_words] counter per call, promotions
+    included, in words. Its id is ["major_alloc_words"], its kind [`Allocation],
+    and it is a counter metric. *)
 
 val promoted_words : t
-(** [promoted_words] is words promoted from the minor to the major heap per
-    call. Id ["promoted_words"], kind [`Allocation]. *)
+(** [promoted_words] is the [promoted_words] counter per call, in words. Its id
+    is ["promoted_words"], its kind [`Allocation], and it is a counter metric.
+*)
 
 val minor_collections : t
-(** [minor_collections] is minor collections per call. Id ["minor_collections"],
-    kind [`Other], units ["count"]. *)
+(** [minor_collections] is the [minor_collections] counter per call, in units
+    ["count"]. Its id is ["minor_collections"], its kind [`Other], and it is a
+    counter metric. *)
 
 val major_collections : t
-(** [major_collections] is completed major collection cycles per call. Id
-    ["major_collections"], kind [`Other], units ["count"]. *)
+(** [major_collections] is the [major_collections] counter per call, in units
+    ["count"]. Its id is ["major_collections"], its kind [`Other], and it is a
+    counter metric. *)
