@@ -5,6 +5,7 @@ the accept prompt. The baseline itself is never written. Exit 0.
 
   $ export THUMPER_MACHINE=testkey
   $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
+  $ CONTEXT="$INSIDE_DUNE"
   $ unset INSIDE_DUNE
   $ unset GITHUB_ACTIONS
   $ FIX=./fixture/bench_fixture.exe
@@ -49,11 +50,11 @@ The candidate is one complete section for this machine.
 The dune-promote hint needs both INSIDE_DUNE and a cwd inside the build
 tree (a rule action, where diff? stages a promotion — dune exec sets
 INSIDE_DUNE but stages nothing and gets the mv hint); cram runs inside
-_build, so setting the variable here satisfies both. Wording only — never
-behavior.
+the build tree, so restoring dune's value here satisfies both. Wording
+only — never behavior.
 
   $ rm fixture.thumper.corrected
-  $ INSIDE_DUNE=1 $FIX bless --quick --wait-quiet 5 --force --color never > out2.log 2>&1
+  $ INSIDE_DUNE="$CONTEXT" $FIX bless --quick --wait-quiet 5 --force --color never > out2.log 2>&1
   $ test -f fixture.thumper.corrected && echo candidate
   candidate
   $ grep -q 'accept:  dune promote' out2.log && echo dune-hint

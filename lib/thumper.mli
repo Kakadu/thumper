@@ -474,12 +474,17 @@ val run :
 
     [--baseline PATH], else the [baseline] argument, names the baseline as
     typed. Otherwise [<name>.thumper] resolves in the first of:
-    + the working directory, when it lies inside a [_build] directory, as in a
+    + the working directory, when it lies inside dune's build directory, as in a
       dune rule action;
-    + the benchmark's source directory, when the executable runs from a [_build]
-      directory and that source directory exists; [dune exec bench/bench_x.exe]
-      from the project root then names the same file as the dune rule;
+    + the benchmark's source directory, when the executable runs from dune's
+      build directory and that source directory exists;
+      [dune exec bench/bench_x.exe] then names the same file as the dune rule,
+      whatever the build directory is called;
     + the working directory.
+
+    Under dune the build and source directories are the ones its environment
+    names ([INSIDE_DUNE] and [DUNE_SOURCEROOT]). A run by hand, with neither
+    set, recognises a build directory named [_build].
 
     The report prints an explicit path as typed, less its [.] segments. It
     prints the default path as a bare file name in a dune rule action, relative
@@ -526,7 +531,10 @@ val run :
       lies inside dune's build directory: the [accept:] line reads
       [dune promote], there is no [rerun:] line, and [auto] colours. Under
       [dune exec], which sets [INSIDE_DUNE] but keeps the shell's working
-      directory, the run is not a rule action. *)
+      directory, the run is not a rule action.
+    - [INSIDE_DUNE] and [DUNE_SOURCEROOT] together, which name dune's build
+      context and workspace root for the default baseline path
+      ({{!files}files}). *)
 
 (** {1:selection Selecting cases} *)
 

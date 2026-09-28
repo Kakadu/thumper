@@ -6,6 +6,7 @@ build even when time passes; determinism owes nothing to load.
 
   $ export THUMPER_MACHINE=testkey
   $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
+  $ CONTEXT="$INSIDE_DUNE"
   $ unset INSIDE_DUNE
   $ unset GITHUB_ACTIONS
   $ FIX=./fixture/bench_fixture.exe
@@ -60,7 +61,7 @@ Under a dune rule action (INSIDE_DUNE set and the cwd in the build tree,
 as cram's is) there is no rerun line: its exe path is relative to the
 action's cwd and could not be pasted. The failing id stays in the table.
 
-  $ INSIDE_DUNE=1 THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out5.log 2>&1
+  $ INSIDE_DUNE="$CONTEXT" THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out5.log 2>&1
   [1]
   $ grep -c 'rerun:' out5.log
   0

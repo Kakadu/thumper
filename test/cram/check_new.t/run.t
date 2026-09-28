@@ -5,15 +5,16 @@ unreviewed evidence, and promotion is the review step.
 
   $ export THUMPER_MACHINE=testkey
   $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
+  $ CONTEXT="$INSIDE_DUNE"
   $ unset INSIDE_DUNE
   $ unset GITHUB_ACTIONS
   $ FIX=../fixture/bench_fixture.exe
 
-INSIDE_DUNE plus cram's cwd inside _build = a rule action's environment,
-so the accept hint is dune promote (dune exec would get the mv hint: it
-sets the variable but stages no promotion).
+INSIDE_DUNE plus cram's cwd inside the build tree = a rule action's
+environment, so the accept hint is dune promote (dune exec would get the
+mv hint: it sets the variable but stages no promotion).
 
-  $ INSIDE_DUNE=1 $FIX check --quick > out.log 2>&1
+  $ INSIDE_DUNE="$CONTEXT" $FIX check --quick > out.log 2>&1
   $ grep -q 'no baseline for machine testkey' out.log && echo new-banner
   new-banner
   $ grep -Ec '^  proposed .* busy/spin$' out.log

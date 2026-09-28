@@ -25,14 +25,17 @@ does nothing would misdescribe the run.
 
 `--baseline PATH` names the baseline file and always wins. The default —
 `<suite>.thumper` — resolves in three steps, in order: a process whose
-working directory lies inside a `_build` directory (a dune rule action)
-resolves it there — the same files the rule's `diff?` names, and a
-build action never writes to the source tree; an executable running
-from under `_build` resolves it next to the benchmark's *source* — the
-committable location, so `dune exec bench/bench_digest.exe` from the
-project root proposes `bench/digest.thumper`, exactly the file the dune
-rule would; an installed binary, with no source tree to find, resolves
-it in the working directory. A default that lands inside your working
+working directory lies inside dune's build directory (a dune rule
+action) resolves it there — the same files the rule's `diff?` names,
+and a build action never writes to the source tree; an executable
+running from dune's build directory resolves it next to the benchmark's
+*source* — the committable location, so `dune exec
+bench/bench_digest.exe` proposes `bench/digest.thumper`, exactly the
+file the dune rule would, whatever the build directory is called; an
+installed binary, with no source tree to find, resolves it in the
+working directory. Under dune, thumper reads both directories from
+dune's environment (`INSIDE_DUNE`, `DUNE_SOURCEROOT`); run by hand, it
+recognises a build directory named `_build`. A default that lands inside your working
 directory prints relative; every other path outside a rule action — an
 explicit `--baseline` included — prints absolute, so you always know
 which file a run used.

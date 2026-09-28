@@ -121,22 +121,30 @@ val status_line : Check.progress -> string
 
 val default_baseline_dir :
   dir_exists:(string -> bool) ->
+  inside_dune:string option ->
+  source_root:string option ->
   exe:string ->
   cwd:string ->
-  cwd_in_build:bool ->
   string
-(** [default_baseline_dir ~dir_exists ~exe ~cwd ~cwd_in_build] is the directory
-    of the default baseline, the first of:
-    + [cwd], when [cwd_in_build];
-    + the source directory of [exe], when [exe], made absolute against [cwd],
-      contains [/_build/] and [dir_exists] holds of that directory;
-    + [cwd].
+(** [default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd] is
+    the directory of the default baseline. [inside_dune] and [source_root] are
+    the values of [INSIDE_DUNE] and [DUNE_SOURCEROOT], [None] when unset, and
+    [exe] is made absolute against [cwd].
+    - When [inside_dune] is an absolute path [c], the build context's directory,
+      and [source_root] is [Some r], it is [cwd] when [cwd] lies under
+      [Filename.dirname c], as a rule action's does. Otherwise, when [exe], its
+      [.] and [..] segments resolved as text, lies under [c], it is [exe]'s
+      directory relative to [c] joined to [r], if [dir_exists] holds of it:
+      [/w/_b/default/bench/x.exe] maps to [/w/bench] under [c = /w/_b/default]
+      and [r = /w]. Else it is [cwd].
+    - When both are [None], it is [cwd] when [cwd] has a [_build] segment, and
+      otherwise the source directory of an [exe] containing [/_build/], if
+      [dir_exists] holds of it: the part of [exe] before its last [/_build/],
+      joined with what follows it less an optional [.sandbox/<hash>], the build
+      context and the file name. Else it is [cwd].
+    - Otherwise it is [cwd].
 
-    The source directory is the part of [exe] before its last [/_build/], joined
-    with what follows it less an optional [.sandbox/<hash>], the build context
-    and the file name: [/w/_build/default/bench/x.exe] maps to [/w/bench].
-    [_build] is the only build directory name recognised. [dir_exists] is the
-    only query of the file system. *)
+    [dir_exists] is the only query of the file system. *)
 
 val promotion_staged : inside_dune:string option -> cwd:string -> bool
 (** [promotion_staged ~inside_dune ~cwd] is whether the process is a dune rule
@@ -237,9 +245,9 @@ val main :
       a file.
     + It resolves the baseline path: [--baseline], else [baseline], else
       [<name>.thumper] in {!default_baseline_dir}'s directory. It passes that
-      function [Sys.executable_name], not [argv.(0)], and a [cwd_in_build] true
-      iff the working directory has a [_build] segment. The corrected file's
-      path is the baseline path followed by [.corrected].
+      function [INSIDE_DUNE], [DUNE_SOURCEROOT] and [Sys.executable_name], not
+      [argv.(0)]. The corrected file's path is the baseline path followed by
+      [.corrected].
     + It removes the corrected file and the [--json] file, whatever the
       subcommand; a file it cannot remove stops the run. It stops when the
       directory of the [--json] file, or under [bless] that of the corrected

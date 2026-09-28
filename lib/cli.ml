@@ -378,30 +378,36 @@ let under_dir dir path =
 let has_build_component path =
   String.split_on_char '/' path |> List.exists (fun c -> c = "_build")
 
-(* Where the default [<suite>.thumper] resolves when no [--baseline] was
-   given. Three branches, in order:
+(* The absolute [path] with its [.] and [..] segments resolved as text. *)
+let without_dot_dot_segments path =
+  let segs =
+    List.fold_left
+      (fun acc seg ->
+        match seg with
+        | "" | "." -> acc
+        | ".." -> ( match acc with [] -> [] | _ :: tl -> tl)
+        | seg -> seg :: acc)
+      []
+      (String.split_on_char '/' path)
+  in
+  "/" ^ String.concat "/" (List.rev segs)
 
-   - cwd inside a [_build] directory (rule actions, cram sandboxes): the
-     cwd — the rule's [diff?] names files there, and a build action must
-     never write to the source tree.
-   - the executable runs from under a [_build] directory: the benchmark's
-     source directory — the committable location, so [dune exec] from
-     anywhere proposes the same file the dune rule's [diff?] would. The
-     workspace root is the prefix before the last [/_build/]; after it come
-     an optional [.sandbox/<hash>], the build context (default or named),
-     and the source-relative executable path whose dirname rejoins the
-     root. Used iff that directory exists, else the cwd.
-   - anything else (an installed or copied binary knows no source tree):
-     the cwd.
+(* [segments_to_dir root rel] is [root] joined with the directory segments
+   of the relative file path [rel]: [bench/x.exe] names [root/bench]. *)
+let segments_to_dir root rel =
+  let rec drop_last = function
+    | [] | [ _ ] -> []
+    | seg :: tl -> seg :: drop_last tl
+  in
+  List.fold_left Filename.concat root (drop_last rel)
 
-   Pure — [dir_exists] is its only window on the world — so the mapping
-   unit-tests without processes. *)
-let default_baseline_dir ~dir_exists ~exe ~cwd ~cwd_in_build =
-  if cwd_in_build then cwd
+(* Without dune's environment, a hand run of an executable under [_build]:
+   the workspace root is the prefix before the last [/_build/]; after it
+   come an optional [.sandbox/<hash>], the build context and the
+   source-relative executable path. *)
+let build_layout_dir ~dir_exists ~exe ~cwd =
+  if has_build_component cwd then cwd
   else
-    let exe =
-      if Filename.is_relative exe then Filename.concat cwd exe else exe
-    in
     let marker = "/_build/" in
     let mlen = String.length marker in
     let n = String.length exe in
@@ -426,13 +432,34 @@ let default_baseline_dir ~dir_exists ~exe ~cwd ~cwd_in_build =
         in
         match segments with
         | _context :: (_ :: _ as rel) ->
-            let rec drop_last = function
-              | [] | [ _ ] -> []
-              | seg :: tl -> seg :: drop_last tl
-            in
-            let dir = List.fold_left Filename.concat root (drop_last rel) in
+            let dir = segments_to_dir root rel in
             if dir_exists dir then dir else cwd
         | _ -> cwd)
+
+(* Where the default [<suite>.thumper] resolves when no [--baseline] was
+   given. Under dune, [INSIDE_DUNE] is the build context's directory and
+   [DUNE_SOURCEROOT] the workspace root: a cwd under the build directory is
+   a rule action, which resolves in its cwd (the rule's [diff?] names files
+   there, and a build action never writes to the source tree); otherwise the
+   executable's path in the context maps into the source tree, the
+   committable location. Without either variable, a hand run recognises
+   dune's [_build]. Pure — [dir_exists] is its only window on the world. *)
+let default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd =
+  let exe = if Filename.is_relative exe then Filename.concat cwd exe else exe in
+  match (inside_dune, source_root) with
+  | None, None -> build_layout_dir ~dir_exists ~exe ~cwd
+  | Some context, Some root when not (Filename.is_relative context) ->
+      (* [dune exec --root ../..] runs [cwd/../../_build/...]: the prefix
+         test needs the path without its [.] and [..] segments. *)
+      let exe = without_dot_dot_segments exe in
+      if under_dir (Filename.dirname context) cwd then cwd
+      else if under_dir context exe then
+        let n = String.length context in
+        let rel = String.sub exe (n + 1) (String.length exe - n - 1) in
+        let dir = segments_to_dir root (String.split_on_char '/' rel) in
+        if dir_exists dir then dir else cwd
+      else cwd
+  | Some _, (Some _ | None) | None, Some _ -> cwd
 
 (* Rendering *)
 
@@ -1548,8 +1575,8 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
           | None, None ->
               (* The default resolves in [default_baseline_dir]'s directory
                  — the committable location next to the benchmark's source
-                 when the executable runs from [_build], the cwd inside a
-                 rule action ([diff?]'s contract) and for installed
+                 when the executable runs from a build context, the cwd inside
+                 a rule action ([diff?]'s contract) and for installed
                  binaries. A mapped source directory under the invoker's
                  cwd renders as the short relative path; everything else
                  keeps the explicit-path rendering above. *)
@@ -1559,8 +1586,9 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
                   | b -> b
                   | exception Sys_error _ -> false
                 in
-                default_baseline_dir ~dir_exists ~exe:Sys.executable_name ~cwd
-                  ~cwd_in_build:(has_build_component cwd)
+                default_baseline_dir ~dir_exists ~inside_dune
+                  ~source_root:(Sys.getenv_opt "DUNE_SOURCEROOT")
+                  ~exe:Sys.executable_name ~cwd
               in
               let file = name ^ ".thumper" in
               if String.equal dir cwd then

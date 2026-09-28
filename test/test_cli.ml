@@ -677,16 +677,69 @@ let rerun_hint_names_at_most_ten_cases () =
 
 (* The default baseline path
 
-   The pure mapping behind the default [<suite>.thumper] location: [dir_exists] is a set-membership test, so every
-   branch runs without processes or a filesystem. *)
+   The pure mapping behind the default [<suite>.thumper] location: [dir_exists]
+   is a set-membership test, so every branch runs without processes or a
+   filesystem. *)
 
-let map ?(dirs = []) ?(cwd = "/ws") ?(cwd_in_build = false) exe =
+let map ?(dirs = []) ?(cwd = "/ws") ?inside_dune ?source_root exe =
   Cli.default_baseline_dir
     ~dir_exists:(fun d -> List.mem d dirs)
-    ~exe ~cwd ~cwd_in_build
+    ~inside_dune ~source_root ~exe ~cwd
+
+let dune_map ?dirs ?cwd ?(context = "/ws/_build_sys/default") exe =
+  map ?dirs ?cwd ~inside_dune:context ~source_root:"/ws" exe
+
+let default_dir_follows_dunes_environment () =
+  (* Under dune ([INSIDE_DUNE] the context's directory, [DUNE_SOURCEROOT] the
+     workspace root), the executable's path in the context maps into the
+     source tree, whatever the build directory is called. *)
+  equal ~msg:"DUNE_BUILD_DIR=_build_sys dune exec" string "/ws/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] "/ws/_build_sys/default/bench/b.exe");
+  equal ~msg:"a named context" string "/ws/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] ~context:"/ws/_out/musl"
+       "/ws/_out/musl/bench/b.exe");
+  equal ~msg:"an exe at the workspace root" string "/ws"
+    (dune_map ~dirs:[ "/ws" ] "/ws/_build_sys/default/b.exe");
+  equal ~msg:"a relative exe resolves against the cwd" string "/ws/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] "_build_sys/default/bench/b.exe");
+  (* [cd test/cram && dune exec --root ../.. ./test/cram/x.exe]: the exe's
+     path runs through [..] segments. *)
+  equal ~msg:"an exe path through .. segments" string "/ws/test/cram/fixture"
+    (dune_map
+       ~dirs:[ "/ws/test/cram/fixture" ]
+       ~cwd:"/ws/test/cram"
+       "/ws/test/cram/../../_build_sys/default/test/cram/fixture/x.exe");
+  equal ~msg:"a relative exe path through .. segments" string "/ws/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] ~cwd:"/ws/test/cram"
+       "../../_build_sys/default/./bench/b.exe");
+  equal ~msg:"the invoker's cwd does not steer the mapping" string "/ws/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] ~cwd:"/somewhere/else"
+       "/ws/_build_sys/default/bench/b.exe");
+  (* A rule action runs inside the build directory, sandboxed or not, and
+     resolves in its cwd: the [diff?] contract. *)
+  equal ~msg:"a rule action" string "/ws/_build_sys/default/bench"
+    (dune_map ~dirs:[ "/ws/bench" ] ~cwd:"/ws/_build_sys/default/bench"
+       "/ws/_build_sys/default/bench/b.exe");
+  equal ~msg:"a sandboxed rule action" string
+    "/ws/_build_sys/.sandbox/0f/default/bench"
+    (dune_map ~dirs:[ "/ws/bench" ]
+       ~cwd:"/ws/_build_sys/.sandbox/0f/default/bench"
+       "/ws/_build_sys/.sandbox/0f/default/bench/b.exe");
+  equal ~msg:"an exe outside the context, as an installed one" string "/ws"
+    (dune_map ~dirs:[ "/ws/bin" ] "/ws/_build_sys/install/default/bin/b");
+  equal ~msg:"a missing source directory" string "/ws"
+    (dune_map "/ws/_build_sys/default/gen/b.exe");
+  (* One variable alone is no contract, and no layout is guessed. *)
+  equal ~msg:"INSIDE_DUNE alone" string "/ws"
+    (map ~dirs:[ "/ws/bench" ] ~inside_dune:"1" "/ws/_build/default/bench/b.exe");
+  equal ~msg:"DUNE_SOURCEROOT alone" string "/ws"
+    (map ~dirs:[ "/ws/bench" ] ~source_root:"/ws"
+       "/ws/_build/default/bench/b.exe")
+
+(* Without dune's environment, a run by hand recognises dune's [_build]. *)
 
 let default_dir_maps_exe_to_its_source_directory () =
-  equal ~msg:"dune exec from the workspace root" string "/ws/examples/01"
+  equal ~msg:"a hand run from the workspace root" string "/ws/examples/01"
     (map ~dirs:[ "/ws/examples/01" ] "/ws/_build/default/examples/01/b.exe");
   equal ~msg:"the invoker's cwd does not steer the mapping" string "/ws/bench"
     (map ~dirs:[ "/ws/bench" ] ~cwd:"/somewhere/else"
@@ -715,13 +768,11 @@ let default_dir_falls_back_to_the_cwd () =
     (map ~dirs:[ "/proj" ] "/proj/_build/b.exe")
 
 let default_dir_stays_in_a_build_cwd () =
-  (* Branch 1 keys on the cwd alone (no INSIDE_DUNE): rule actions and cram
-     sandboxes resolve in the cwd — the [diff?] contract, and a build action
-     must never write to the source tree — whatever the executable path
-     could map to. *)
+  (* A cwd inside [_build] resolves in the cwd, as a rule action does: a
+     build action must never write to the source tree. *)
   equal string "/ws/_build/default/bench"
-    (map ~cwd:"/ws/_build/default/bench" ~cwd_in_build:true
-       ~dirs:[ "/ws/bench" ] "/ws/_build/default/bench/b.exe")
+    (map ~cwd:"/ws/_build/default/bench" ~dirs:[ "/ws/bench" ]
+       "/ws/_build/default/bench/b.exe")
 
 (* Check rendering
 
@@ -1609,30 +1660,19 @@ let check_prunes_a_vanished_case () =
   in
   is_true ~msg:"the row is pruned" (not (contains corrected "dead\t"))
 
-(* The real fixture executable, invoked through its [_build] path from a
-   scratch cwd: the candidate must land next to the fixture's {e source}
-   directory (test/cram/fixture — the committable location), and an explicit
-   [--baseline] must bypass the mapping entirely. The single write into the
-   repo source tree is removed again before the test returns. *)
+(* The real fixture executable, invoked through its build path from a
+   scratch cwd, in the environment dune gave this test: the candidate must
+   land next to the fixture's {e source} directory (test/cram/fixture — the
+   committable location), whatever the build directory is called, and an
+   explicit [--baseline] must bypass the mapping entirely. The single write
+   into the repo source tree is removed again before the test returns. *)
 let default_path_lands_next_to_the_source () =
   let start_cwd = Sys.getcwd () in
   let exe = Filename.concat start_cwd "cram/fixture/bench_fixture.exe" in
-  let last_build_marker s =
-    let marker = "/_build/" in
-    let n = String.length s and m = String.length marker in
-    let rec go i best =
-      if i + m > n then best
-      else if String.equal (String.sub s i m) marker then go (i + 1) (Some i)
-      else go (i + 1) best
-    in
-    go 0 None
-  in
-  match last_build_marker start_cwd with
-  | None -> skip ~reason:"test cwd is not under _build" ()
-  | Some i ->
-      let src_dir =
-        Filename.concat (String.sub start_cwd 0 i) "test/cram/fixture"
-      in
+  match (Sys.getenv_opt "INSIDE_DUNE", Sys.getenv_opt "DUNE_SOURCEROOT") with
+  | None, _ | _, None -> skip ~reason:"not run by dune" ()
+  | Some context, Some root ->
+      let src_dir = Filename.concat root "test/cram/fixture" in
       is_true ~msg:"derived the fixture's real source directory"
         (Sys.file_exists (Filename.concat src_dir "bench_fixture.ml"));
       is_true ~msg:"no stray baseline in the fixture source directory"
@@ -1649,6 +1689,11 @@ let default_path_lands_next_to_the_source () =
       Fun.protect
         ~finally:(fun () ->
           if Sys.file_exists candidate then Sys.remove candidate;
+          (* Where the dotted run would propose without the mapping. *)
+          let stray =
+            Filename.concat root "test/cram/fixture.thumper.corrected"
+          in
+          if Sys.file_exists stray then Sys.remove stray;
           Unix.chdir start_cwd)
         (fun () ->
           Unix.chdir scratch;
@@ -1663,6 +1708,26 @@ let default_path_lands_next_to_the_source () =
           assert_contains ~msg:"the accept hint names the source-dir path" out
             ("accept:  mv " ^ candidate);
           Sys.remove candidate;
+          (* [cd test/cram && dune exec --root ../.. ./test/cram/...]: from
+             a source subdirectory, the executable path runs through [..]
+             segments, and maps the same way. *)
+          let context_rel =
+            let n = String.length root in
+            String.sub context (n + 1) (String.length context - n - 1)
+          in
+          Unix.chdir (Filename.concat root "test/cram");
+          let dotted =
+            String.concat "/"
+              [ ".."; ".."; context_rel; "test/cram/fixture/bench_fixture.exe" ]
+          in
+          equal ~msg:"a dotted exe path exits 0" int 0
+            (Sys.command
+               (Printf.sprintf "%s check --quick -f busy/spin > %s 2>/dev/null"
+                  (Filename.quote dotted) (Filename.quote log)));
+          is_true ~msg:"a dotted exe path lands next to the fixture source"
+            (Sys.file_exists candidate);
+          Sys.remove candidate;
+          Unix.chdir scratch;
           (* --baseline always wins over the mapping. *)
           let bl = Filename.concat scratch "explicit.thumper" in
           equal ~msg:"explicit --baseline exits 0" int 0
@@ -1753,7 +1818,9 @@ let () =
         ];
       group "baseline path"
         [
-          test "maps an exe under _build to its source directory"
+          test "follows dune's environment"
+            default_dir_follows_dunes_environment;
+          test "by hand, maps an exe under _build to its source directory"
             default_dir_maps_exe_to_its_source_directory;
           test "falls back to the cwd (installed exe, missing directory)"
             default_dir_falls_back_to_the_cwd;
