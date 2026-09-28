@@ -49,6 +49,11 @@ let corrupt ?at ?mentions s =
       failf "expected Corrupt, got %s"
         (Format.asprintf "%a" Baseline.pp_error e)
 
+let an_escaped_error_prints_its_text () =
+  equal string "Thumper.Baseline.Error: corrupt baseline (line 3): boom"
+    (Printexc.to_string
+       (Baseline.Error (Baseline.Corrupt { line = 3; reason = "boom" })))
+
 let invalid fn =
   raises_match (function Invalid_argument _ -> true | _ -> false) fn
 
@@ -1235,6 +1240,8 @@ let () =
             unreadable_is_io_never_absent;
           test "a permission-denied file is Io, never absent"
             permission_denied_read_is_io_never_absent;
+          test "an escaped error prints its text"
+            an_escaped_error_prints_its_text;
         ];
       group "row constructors"
         [

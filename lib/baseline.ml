@@ -41,6 +41,13 @@ let pp_error ppf = function
       Format.fprintf ppf "corrupt baseline (line %d): %s" line reason
   | Io msg -> Format.fprintf ppf "baseline i/o error: %s" msg
 
+(* An error that escapes a program prints as the facade names it, with its
+   text, not as the internal constructor. *)
+let () =
+  Printexc.register_printer (function
+    | Error e -> Some (Format.asprintf "Thumper.Baseline.Error: %a" pp_error e)
+    | _ -> None)
+
 (* Grammar constants *)
 
 let header_line = "# thumper baseline v1"

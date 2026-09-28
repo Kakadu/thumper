@@ -512,7 +512,8 @@ module Baseline : sig
             Never treated as an absent file — exit 2 at the CLI. *)
 
   exception Error of error
-  (** Raised by {!read_exn} and {!write}. *)
+  (** Raised by {!read_exn} and {!write}. Uncaught, it prints as
+      [Thumper.Baseline.Error: <text>], the text being {!pp_error}'s. *)
 
   val pp_error : Format.formatter -> error -> unit
   (** [pp_error ppf e] formats [e] for users, with its line number and remedy
@@ -650,7 +651,8 @@ module Check : sig
   (** [pp_error ppf e] formats [e] for users, with its remedy. *)
 
   exception Error of error
-  (** Raised by {!run} and by the top-level {!measure}. *)
+  (** Raised by {!run} and by the top-level {!measure}. Uncaught, it prints as
+      [Thumper.Check.Error: <text>], the text being {!pp_error}'s. *)
 
   val run :
     ?config:Config.t ->

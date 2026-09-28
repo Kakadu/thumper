@@ -15,10 +15,15 @@ let pp_error ppf = function
   | Lease e -> Env.Lease.pp_error ppf e
   | Measurement f -> Measure.pp_failure ppf f
   | Empty_selection ->
-      Format.pp_print_string ppf
-        "no benchmark matches the selection (a broken filter must not silently \
-         pass)"
+      Format.pp_print_string ppf "no case matches the selection"
   | Invalid_suite e -> Bench.pp_error ppf e
+
+(* An error that escapes a program prints as the facade names it, with its
+   text, not as the internal constructor. *)
+let () =
+  Printexc.register_printer (function
+    | Error e -> Some (Format.asprintf "Thumper.Check.Error: %a" pp_error e)
+    | _ -> None)
 
 let error e = raise (Error e)
 

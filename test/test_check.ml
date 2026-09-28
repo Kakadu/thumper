@@ -465,6 +465,10 @@ let confirmation_runs_at_the_provisional_k () =
 
 (* Selection *)
 
+let an_escaped_error_prints_its_text () =
+  equal string "Thumper.Check.Error: no case matches the selection"
+    (Printexc.to_string (Check.Error Check.Empty_selection))
+
 let empty_selection_is_an_error () =
   let w = world () in
   let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
@@ -783,6 +787,8 @@ let () =
       group "selection"
         [
           test "an empty selection is an error" empty_selection_is_an_error;
+          test "an escaped error prints its text"
+            an_escaped_error_prints_its_text;
           test "duplicate ids are an invalid suite"
             duplicate_ids_are_invalid_suite;
           test "a budget on an uncollected metric is an invalid suite"
