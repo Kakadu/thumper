@@ -287,9 +287,8 @@ val render_check : render -> Verdict.t -> string
       ([-f] over [r.rerun_patterns]). One command, wrapped with backslash
       continuations to stay within 80 columns (an item is never split); under a
       rule action there is no rerun line, and the failing ids stay in the table;
-      the acceptance prompt iff a candidate was written — [accept:  <cmd>] for
-      NEW/stale, [ratchet the baseline:  <cmd>] for improvements, [<cmd>] being
-      [r.accept]; the acceptance-state load message
+      [accept:  <cmd>] iff a corrected file was written, whatever it proposes,
+      [<cmd>] being [r.accept]; the acceptance-state load message
       ([warning: load L on C cores; prefer a quiet host before accepting],
       yellow) beside the prompt.
     - {b Summary} (compared runs):

@@ -878,8 +878,8 @@ let render_check r v =
         (Verdict.warnings v)
   in
   let table = table_lines ~color rows @ warnings in
-  (* Actions: the rerun for failures, the acceptance or ratchet prompt for a
-     written candidate, the acceptance-state load message beside it. *)
+  (* Actions: the rerun for failures, the accept line for a written
+     corrected file, the acceptance-state load message beside it. *)
   let actions =
     let failing = List.filter case_fails cases in
     let rerun =
@@ -895,9 +895,8 @@ let render_check r v =
             (r.rerun_flags @ selection)
     in
     let prompt =
-      if not r.wrote_corrected then []
-      else if acceptance then [ Printf.sprintf "  accept:  %s" r.accept ]
-      else [ Printf.sprintf "  ratchet the baseline:  %s" r.accept ]
+      if r.wrote_corrected then [ Printf.sprintf "  accept:  %s" r.accept ]
+      else []
     in
     let load =
       match (acceptance && r.wrote_corrected, gate) with

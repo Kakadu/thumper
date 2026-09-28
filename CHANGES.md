@@ -70,7 +70,7 @@ pipeline is new (design rationale distilled in `doc/dev/`):
   id, the rest of the verdict on an indented line — per-column time units,
   thousands-separated exact allocation integers, only `REGRESSED`
   capitalized and only when the metric gates),
-  actions (`rerun:`, `accept:`, `ratchet the baseline:`), summary. On a TTY
+  actions (`rerun:`, `accept:`), summary. On a TTY
   a transient stderr status line narrates measurement and is erased before
   the report. `--color auto|always|never` resolves per stream; an explicit
   `--color always` beats `NO_COLOR`. `--strict`, `--wait-quiet`,

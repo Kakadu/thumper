@@ -700,7 +700,7 @@ let default_dir_stays_in_a_build_cwd () =
 
 let mixed_run_renders_all_four_blocks () =
   (* One confirmed regression, one confirmed improvement, one equivalent:
-     the specimen shape — header, table, actions (rerun + ratchet),
+     the specimen shape — header, table, actions (rerun + accept),
      summary. *)
   let file =
     file_of
@@ -739,7 +739,7 @@ thumper: digest — 3 cases vs digest.thumper for machine testkey
   equivalent  1.00 us  ±0.0%  3,000 w  gamma
 
   rerun:   bench.exe -f alpha
-  ratchet the baseline:  dune promote
+  accept:  dune promote
 
   3 cases: 1 passed, 1 improved, 1 regressed.
 |}
@@ -786,7 +786,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
   equivalent  1.00 us  ±0.0%  54 w  alpha
       proposed alloc
 
-  ratchet the baseline:  dune promote
+  accept:  dune promote
 
   1 case: 1 passed.
 |}
@@ -837,7 +837,7 @@ let loaded_new_run_warns_beside_the_prompt () =
   is_true ~msg:"no header-side load warning"
     (not (contains out "timing verdicts degraded"))
 
-let improvement_only_renders_the_ratchet_prompt () =
+let improvement_only_renders_the_accept_line () =
   let v = improved_fixture () in
   expect (Cli.render_check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
@@ -847,7 +847,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
   improved  1.00 us  ±0.0%  54 w  alpha
       -50.0% [-50.0, -50.0]
 
-  ratchet the baseline:  dune promote
+  accept:  dune promote
 
   1 case: 0 passed, 1 improved.
 |}
@@ -1520,8 +1520,8 @@ let () =
             loaded_run_warns_under_the_header;
           test "loaded NEW run warns beside the prompt (one load message)"
             loaded_new_run_warns_beside_the_prompt;
-          test "improvement-only run renders the ratchet prompt"
-            improvement_only_renders_the_ratchet_prompt;
+          test "improvement-only run renders the accept line"
+            improvement_only_renders_the_accept_line;
           test "unconfirmed inconclusive names the reason in the cell"
             unconfirmed_inconclusive_names_the_reason_in_the_cell;
           test "exact alloc failure names the alloc side"

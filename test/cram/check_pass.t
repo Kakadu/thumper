@@ -50,7 +50,7 @@ identical.
   1
   $ grep -Ec ' [0-9.]+ [mun]?s .* busy/spin$' out.log
   1
-  $ grep -c 'accept:\|ratchet' out.log
+  $ grep -c 'accept:' out.log
   0
   [1]
   $ grep -c 'REGRESSED' out.log

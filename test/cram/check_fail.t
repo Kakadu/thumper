@@ -63,7 +63,7 @@ by construction, because regressed and inconclusive evidence is
 unrepresentable in a candidate. Quiet leg: exit 1, candidate present,
 exactly busy/half's wall_time row advanced, pooling both passes' samples
 (11 provisional + 11 confirmation under --quick), and the actions block
-holds both the rerun and the ratchet prompt. Loaded leg: exit 0, degraded,
+holds both the rerun and the accept line. Loaded leg: exit 0, degraded,
 no candidate.
 
   $ code=0; for i in 1 2 3; do
@@ -75,7 +75,7 @@ no candidate.
   >   changed=$(diff fixture.thumper fixture.thumper.corrected | grep '^[<>]' | sed 's/^[<>] //' | cut -f1,2 | tr '\t' ' ' | sort -u)
   >   pooled=$(awk -F'\t' '$1 == "busy/half" && $2 == "wall_time" { print $4 }' fixture.thumper.corrected)
   >   if [ "$changed" = "busy/half wall_time" ] && [ "$pooled" = "n=22" ] \
-  >      && grep -q 'rerun:.*-f busy/spin' out2.log && grep -q 'ratchet the baseline:' out2.log; then
+  >      && grep -q 'rerun:.*-f busy/spin' out2.log && grep -q 'accept:' out2.log; then
   >     echo mixed-run-ok
   >   else
   >     echo "unexpected candidate: $changed $pooled"

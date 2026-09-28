@@ -149,7 +149,7 @@ thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
   equivalent    1.10 us  ±0.7%   0 w  fib/10
   equivalent  135.42 us  ±0.9%   0 w  fib/20
 
-  ratchet the baseline:  dune promote
+  accept:  dune promote
 
   3 cases: 2 passed, 1 improved.
 File "bench/digest.thumper", line 1, characters 0-0:
@@ -183,7 +183,7 @@ output. Four blocks, blank-line separated, empty blocks omitted:
   line below (`unconfirmed`).
 - **Actions** — the `rerun:` command when something failed (not under
   a dune rule); the
-  `accept:` / `ratchet the baseline:` command when an update was
+  `accept:` command when an update was
   proposed.
 - **Summary** — `3 cases: 2 passed, 1 regressed.`
 
