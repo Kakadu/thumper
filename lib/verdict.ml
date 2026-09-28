@@ -154,7 +154,7 @@ let effective_budgets ~run_budgets ~collected case =
   let case_b = Option.value ~default:[] (Bench.budgets case) in
   let inherited =
     List.filter
-      (fun b -> budget_for case_b (Budget.metric b) = None)
+      (fun b -> Option.is_none (budget_for case_b (Budget.metric b)))
       run_budgets
   in
   let binding budgets =
@@ -178,7 +178,7 @@ let zero_tolerance_downgrade metric budget =
   &&
   match Option.map Budget.contract budget with
   | Some (Budget.Relative { max_regression = 0.; _ }) -> true
-  | _ -> false
+  | Some (Budget.Relative _ | Budget.Absolute_max _) | None -> false
 
 (* The relation table over the fractional bounds [l <= u]. Every metric is
    lower-is-better, so a positive bound is worse. The r = 0 chain keeps the
@@ -451,7 +451,7 @@ let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
 
 let has_pending pc =
   List.exists
-    (fun (_, st, _) -> match st with Pending _ -> true | _ -> false)
+    (fun (_, st, _) -> match st with Pending _ -> true | Settled _ -> false)
     pc.c_states
 
 let confirmations p =
@@ -577,7 +577,11 @@ let exact_evidence case_report metric =
 let report_fails case_report report =
   match Option.map Budget.contract report.budget with
   | Some (Budget.Relative _) -> (
-      match report.verdict with Judged (Regressed _) -> true | _ -> false)
+      match report.verdict with
+      | Judged (Regressed _) -> true
+      | Proposed
+      | Judged (Improved _ | Equivalent _ | Within_budget _ | Inconclusive _) ->
+          false)
   | Some (Budget.Absolute_max _) -> (
       match Run.Trial.measurement case_report.trial report.metric with
       | Some (Run.Exact c) -> over_cap report.budget c
@@ -585,13 +589,16 @@ let report_fails case_report report =
   | None -> false
 
 let report_inconclusive report =
-  match report.verdict with Judged (Inconclusive _) -> true | _ -> false
+  match report.verdict with
+  | Judged (Inconclusive _) -> true
+  | Judged (Improved _ | Regressed _ | Equivalent _ | Within_budget _) -> false
+  | Proposed -> false
 
 let case_overall case_report =
   if List.exists (report_fails case_report) case_report.reports then `Fail
   else if
     List.exists
-      (fun r -> r.budget <> None && report_inconclusive r)
+      (fun r -> Option.is_some r.budget && report_inconclusive r)
       case_report.reports
   then `Inconclusive
   else `Pass
@@ -713,14 +720,14 @@ let json_metric buf case_report report =
   | Judged (Inconclusive { reason; _ }) -> json_string buf (wire_reason reason)
   | Judged _ -> Buffer.add_string buf "null");
   (match report.verdict with
-  | Judged _ -> (
+  | Judged rel -> (
       match Run.Trial.measurement case_report.trial report.metric with
       | Some (Run.Exact _) -> Buffer.add_string buf ",\"exact\":true"
       | Some (Run.Samples s) ->
           let confirmed =
-            match report.verdict with
-            | Judged (Improved _ | Regressed _) -> true
-            | _ -> false
+            match rel with
+            | Improved _ | Regressed _ -> true
+            | Equivalent _ | Within_budget _ | Inconclusive _ -> false
           in
           Buffer.add_string buf
             (Printf.sprintf ",\"confirmed\":%b,\"n\":%d" confirmed
@@ -763,6 +770,13 @@ let summary_metrics t =
        (fun order c -> List.fold_left add order c.reports)
        [] t.v_cases)
 
+let counted_as r =
+  match r.verdict with
+  | Judged (Improved _) -> `Improved
+  | Judged (Regressed _) -> `Regressed
+  | Judged (Equivalent _ | Within_budget _) -> `Equivalent
+  | Proposed | Judged (Inconclusive _) -> `Inconclusive
+
 let json_summary buf t =
   Buffer.add_char buf '{';
   List.iteri
@@ -774,27 +788,8 @@ let json_summary buf t =
             List.filter (fun r -> Metric.equal r.metric metric) c.reports)
           t.v_cases
       in
-      let count pred = List.length (List.filter pred reports) in
-      let n_improved =
-        count (fun r ->
-            match r.verdict with Judged (Improved _) -> true | _ -> false)
-      in
-      let n_regressed =
-        count (fun r ->
-            match r.verdict with Judged (Regressed _) -> true | _ -> false)
-      in
-      let n_equivalent =
-        count (fun r ->
-            match r.verdict with
-            | Judged (Equivalent _ | Within_budget _) -> true
-            | _ -> false)
-      in
-      let n_inconclusive =
-        count (fun r ->
-            match r.verdict with
-            | Proposed | Judged (Inconclusive _) -> true
-            | _ -> false)
-      in
+      let counts = List.map counted_as reports in
+      let count c = List.length (List.filter (( = ) c) counts) in
       let ratios =
         List.filter_map (fun r -> ratio_of_verdict r.verdict) reports
       in
@@ -807,7 +802,8 @@ let json_summary buf t =
       Buffer.add_string buf
         (Printf.sprintf
            ":{\"n_improved\":%d,\"n_regressed\":%d,\"n_equivalent\":%d,\"n_inconclusive\":%d,\"geomean_delta\":"
-           n_improved n_regressed n_equivalent n_inconclusive);
+           (count `Improved) (count `Regressed) (count `Equivalent)
+           (count `Inconclusive));
       json_float buf geomean_delta;
       Buffer.add_char buf '}')
     (summary_metrics t);
