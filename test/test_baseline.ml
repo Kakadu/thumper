@@ -621,6 +621,34 @@ let unreadable_is_io_never_absent () =
   | Ok None -> fail "an unreadable path was reported absent"
   | Error (Baseline.Corrupt _) -> fail "expected Io for a directory"
 
+let read_closes_its_descriptor_on_any_exception () =
+  (* An exception that is not [Unix_error] interrupts the drain: a signal
+     handler raises while [read] blocks on an empty FIFO this test holds
+     open for writing. The descriptor [read] opened is closed all the same. *)
+  if Sys.win32 then skip ~reason:"no FIFO" ()
+  else
+    let path = Filename.concat (temp_dir ()) "fifo.thumper" in
+    Unix.mkfifo path 0o600;
+    let writer = Unix.openfile path [ Unix.O_RDWR; Unix.O_CLOEXEC ] 0 in
+    let open_fds () = Array.length (Sys.readdir "/dev/fd") in
+    let before = open_fds () in
+    let previous =
+      Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit))
+    in
+    Fun.protect
+      ~finally:(fun () ->
+        ignore
+          (Unix.setitimer Unix.ITIMER_REAL { it_interval = 0.; it_value = 0. });
+        Sys.set_signal Sys.sigalrm previous;
+        Unix.close writer)
+      (fun () ->
+        ignore
+          (Unix.setitimer Unix.ITIMER_REAL { it_interval = 0.; it_value = 0.1 });
+        raises_match
+          (function Exit -> true | _ -> false)
+          (fun () -> ignore (Baseline.read path));
+        equal ~msg:"no descriptor left open" int before (open_fds ()))
+
 (* Row constructors and the print contract *)
 
 let exact_row_validates () =
@@ -1252,6 +1280,8 @@ let () =
       group "reading files"
         [
           test "a missing file reads as None" missing_file_reads_absent;
+          test "read closes its descriptor on any exception"
+            read_closes_its_descriptor_on_any_exception;
           test "an unreadable path is Io, never absent"
             unreadable_is_io_never_absent;
           test "a permission-denied file is Io, never absent"

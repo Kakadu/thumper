@@ -466,13 +466,9 @@ let read path =
             drain ()
         | exception Unix.Unix_error (Unix.EINTR, _, _) -> drain ()
       in
-      match drain () with
-      | () ->
-          close ();
-          Result.map Option.some (of_string (Buffer.contents buf))
-      | exception Unix.Unix_error (e, _, _) ->
-          close ();
-          cannot_read e)
+      match Fun.protect ~finally:close drain with
+      | () -> Result.map Option.some (of_string (Buffer.contents buf))
+      | exception Unix.Unix_error (e, _, _) -> cannot_read e)
 
 let read_exn path =
   match read path with Ok t -> t | Stdlib.Error e -> raise (Error e)

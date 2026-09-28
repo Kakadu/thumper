@@ -99,7 +99,9 @@ val read : string -> (t option, error) result
       included;
     - [Error (Corrupt _)] if its text is refused by {!of_string}.
 
-    A failure to read is never taken for an absent file. *)
+    A failure to read is never taken for an absent file. The file [read] opens
+    is closed before it returns, and before any exception that interrupts it
+    escapes. *)
 
 val read_exn : string -> t option
 (** [read_exn path] is [read path] without its errors.
