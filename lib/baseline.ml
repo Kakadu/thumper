@@ -3,10 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Format-v1 codec. The parser accepts exactly the canonical
-   grammar, so every accepted file re-emits byte-identically: rows and header
-   comments keep their verbatim text, and layout (blank lines, ordering) is
-   part of the grammar rather than reconstructed. *)
+(* Rows and header comments keep their verbatim text, and the layout (blank
+   lines, order) is part of the grammar rather than reconstructed, so every
+   file the parser accepts prints back byte for byte. *)
 
 type evidence =
   | Exact_int of int
@@ -62,11 +61,7 @@ let reserved_words = [ "machine:"; "host:"; "ocaml:"; "suite:" ]
 let reserved_annotation text =
   List.exists (fun prefix -> String.starts_with ~prefix text) reserved_words
 
-(* Identifier charsets
-
-   Ids are [/]-separated segments of [A-Za-z0-9._-]; metric ids and machine
-   keys are single such segments. The whitespace ban is what keeps the
-   tab/space grammar escape-free. *)
+(* Identifiers *)
 
 let is_id_char = function
   | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' -> true
@@ -80,7 +75,6 @@ let valid_id s =
 let valid_metric = valid_segment
 let valid_key = valid_segment
 
-(* The suite name is the [# suite:] header's body. *)
 let check_suite ~fname name =
   if name = "" || String.contains name '\n' then
     invalid_arg
@@ -89,11 +83,7 @@ let check_suite ~fname name =
           baselines)"
          fname)
 
-(* The print contract
-
-   Samples print [%.3e]; the stored median is re-derived from the {e stored}
-   sample texts — midpoint of the two central for even n, the central for odd
-   n — printed [%.3e] and compared by string equality on read. *)
+(* Printing samples *)
 
 let e3 = Printf.sprintf "%.3e"
 
@@ -158,8 +148,7 @@ let sampled_row ~id ~metric ~k ~samples =
     if samples.(i) > samples.(i + 1) then
       invalid_arg (fname ^ ": samples are not sorted ascending")
   done;
-  (* Quantize to file precision: the row's evidence is what the file stores,
-     so a print/parse round-trip is the identity. *)
+  (* Read back from the texts, so the evidence is what the line holds. *)
   let texts = Array.map e3 samples in
   let stored = Array.map float_of_string texts in
   let text =
@@ -174,7 +163,6 @@ let sampled_row ~id ~metric ~k ~samples =
     r_text = text;
   }
 
-(* Sort a fresh row list canonically; duplicates are a programmer error. *)
 let sort_rows fname rows =
   let sorted = List.stable_sort compare_rows rows in
   let rec check = function
@@ -189,10 +177,6 @@ let sort_rows fname rows =
   check sorted;
   sorted
 
-(* Quoting file content in a message: single quotes, and every control
-   byte (below 0x20, and 0x7f) as [\xNN], so a crafted file cannot write
-   escape sequences or carriage returns to a terminal or a CI log. Other
-   bytes, UTF-8 included, pass through. *)
 let quote s =
   let b = Buffer.create (String.length s + 2) in
   Buffer.add_char b '\'';
@@ -275,10 +259,9 @@ let parse_row lnum line =
         "malformed row: expected 'id\\tmetric\\texact\\tcount' or \
          'id\\tmetric\\tbatch=K\\tn=N\\tmedian\\tsamples'"
 
-(* One section: the "# machine:" line was consumed by the caller; parse the
-   remaining header comments, then the blank-separated rows. [i] is a mutable
-   cursor over [lines]; returns the section with the cursor left on the blank
-   line that precedes the next section (or at end of input). *)
+(* [i] is a cursor over [lines], on the line after the section's
+   [# machine:] line. On return it is on the blank line before the next
+   section, or at the end. *)
 let parse_section lines i key =
   let n = Array.length lines in
   let entry_lnum = !i + 1 in
@@ -447,11 +430,9 @@ let to_string t =
 
 (* Reading and writing files *)
 
-(* Absence must be decided here, where the errno is: a caller probing with
-   [Sys.file_exists] races the answer, and a caller pattern-matching [Io]
-   message text re-invents errno parsing. Only ENOENT is [Ok None] — every
-   other failure (permissions, a directory at the path, I/O errors) is [Io],
-   so an unreadable file can never be mistaken for a missing one. *)
+(* Absence is decided here, from the errno: a caller probing with
+   [Sys.file_exists] races the answer, and one matching [Io]'s text parses
+   the errno again. *)
 let read path =
   let rec open_read () =
     match Unix.openfile path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
@@ -492,8 +473,6 @@ let read path =
 let read_exn path =
   match read path with Ok t -> t | Stdlib.Error e -> raise (Error e)
 
-(* The file is published whole or not at all (Os.write_atomic); the lease
-   serializes measurement, not writes, so concurrent writers are last-wins. *)
 let write path t =
   try Os.write_atomic path (to_string t)
   with Unix.Unix_error (e, _, _) ->
@@ -547,9 +526,6 @@ let check_annotations fname annotations =
 
 let set_section ?(annotations = []) t identity row_list =
   let fname = "Baseline.set_section" in
-  (* A suite-less baseline with sections is unparseable (the grammar requires
-     the header): the writer must not emit what the reader rejects. Only the
-     empty-file baseline lacks a suite; give it one first. *)
   if t.t_suite = None then
     invalid_arg
       (fname
@@ -558,7 +534,6 @@ let set_section ?(annotations = []) t identity row_list =
     invalid_arg
       (Printf.sprintf "%s: invalid machine key %S (must be [A-Za-z0-9._-]+)"
          fname identity.machine);
-  (* The parser refuses an empty [# host:] or [# ocaml:] value too. *)
   List.iter
     (fun (what, value) ->
       if value = "" then invalid_arg (Printf.sprintf "%s: empty %s" fname what);
