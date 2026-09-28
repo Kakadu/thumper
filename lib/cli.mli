@@ -269,10 +269,13 @@ val main :
     nests. It writes the [--json] file, then the corrected file when
     {!Verdict.corrected} is [Some], prints {!render_check}'s report on stdout
     and returns [Verdict.exit_code ~strict]. Its {!type:render} has [exe] set to
-    [argv.(0)], or [None] in a dune rule action, and [rerun_flags] holding
-    [--quick] or [--precise] when given, [--baseline] when [argv] gave one, and
-    one [--tag] per tag. When the corrected file cannot be written, the report
-    prints without its [accept:] line before the stop.
+    [argv.(0)], or [None] in a dune rule action; a path [argv.(0)] is made
+    absolute against the working directory, its directory is resolved with
+    [Unix.realpath], and it is written [./<rel>] when it lies under the working
+    directory, absolute otherwise. Its [rerun_flags] hold [--quick] or
+    [--precise] when given, [--baseline] when [argv] gave one, and one [--tag]
+    per tag. When the corrected file cannot be written, the report prints
+    without its [accept:] line before the stop.
 
     [bless] selects the cases as [list] does, validates [THUMPER_MACHINE], reads
     the baseline and waits under [--wait-quiet]. An expired wait stops the run

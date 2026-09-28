@@ -501,6 +501,28 @@ let shell_arg s =
   in
   if s <> "" && String.for_all plain s then s else Filename.quote s
 
+(* The [rerun:] line's executable: a bare name, found on [PATH], as typed;
+   a path relative to [cwd] when it lies under it, absolute otherwise, so
+   the line pastes from where the command ran whatever [argv.(0)] was. Its
+   directory is resolved as [cwd] is, symbolic links included ([/tmp] is
+   [/private/tmp] on macOS); the file name is kept, so an executable reached
+   through a link keeps its name. *)
+let rerun_exe ~cwd exe =
+  if not (String.contains exe '/') then exe
+  else
+    let abs =
+      if Filename.is_relative exe then Filename.concat cwd exe else exe
+    in
+    let dir =
+      try Unix.realpath (Filename.dirname abs)
+      with Unix.Unix_error _ -> Filename.dirname abs
+    in
+    let abs = Filename.concat dir (Filename.basename abs) in
+    if under_dir cwd abs then
+      let n = String.length cwd in
+      "./" ^ String.sub abs (n + 1) (String.length abs - n - 1)
+    else abs
+
 let accept_command ~promotion_staged ~corrected ~baseline =
   if promotion_staged then "dune promote"
   else Printf.sprintf "mv %s %s" (shell_arg corrected) (shell_arg baseline)
@@ -1634,7 +1656,8 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         | `List -> run_list ~o ~config ~filter ~budgets benches
         | `Check ->
             run_check ~o ~name ~config ~filter ~budgets ~baseline_path
-              ~corrected_path ~color ~accept ~staged ~exe benches
+              ~corrected_path ~color ~accept ~staged ~exe:(rerun_exe ~cwd exe)
+              benches
         | `Bless ->
             run_bless ~o ~name ~config ~filter ~budgets ~baseline_path
               ~corrected_path ~color ~accept benches

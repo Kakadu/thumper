@@ -57,6 +57,20 @@ file.
     rerun:   ./fixture/bench_fixture.exe --quick --baseline alt.thumper \
              -f alloc/list
 
+The rerun line names the executable relative to the working directory
+when it lies under it, and absolute otherwise, however it was invoked.
+
+  $ THUMPER_FIXTURE_MODE=alloc_more "$(pwd -P)/fixture/bench_fixture.exe" check --quick --baseline alt.thumper -f alloc > out6.log 2>&1
+  [1]
+  $ grep -o 'rerun: *[^ ]*' out6.log
+  rerun:   ./fixture/bench_fixture.exe
+  $ mkdir sub && cd sub
+  $ THUMPER_FIXTURE_MODE=alloc_more ../fixture/bench_fixture.exe check --quick --baseline ../alt.thumper -f alloc > ../out7.log 2>&1
+  [1]
+  $ cd ..
+  $ grep -o 'rerun: *[^ ]*' out7.log
+  rerun:   $TESTCASE_ROOT/fixture/bench_fixture.exe
+
 Under a dune rule action (INSIDE_DUNE set and the cwd in the build tree,
 as cram's is) there is no rerun line: its exe path is relative to the
 action's cwd and could not be pasted. The failing id stays in the table.

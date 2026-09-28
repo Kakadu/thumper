@@ -454,10 +454,11 @@ val run :
 
     The actions are:
     - [rerun:], when some case fails and the run is not a dune rule action: a
-      command that measures the failing cases again. It repeats the run's
-      [--quick] or [--precise], a [--baseline] given on the command line, and
-      its [--tag]s. Its [-f <id>] patterns are substrings and may select other
-      cases too.
+      command that measures the failing cases again. It names the executable
+      relative to the working directory when it lies under it, and absolute
+      otherwise. It repeats the run's [--quick] or [--precise], a [--baseline]
+      given on the command line, and its [--tag]s. Its [-f <id>] patterns are
+      substrings and may select other cases too.
     - [accept:], when a corrected file was written: [dune promote] in a dune
       rule action and [mv <corrected> <baseline>] otherwise. [bless] always
       prints it.

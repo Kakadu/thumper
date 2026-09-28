@@ -1660,6 +1660,60 @@ let check_prunes_a_vanished_case () =
   in
   is_true ~msg:"the row is pruned" (not (contains corrected "dead\t"))
 
+(* The rerun line names the executable as the shell that ran it can paste
+   it: a bare name, found on PATH, as typed; a path under the working
+   directory as [./<rel>]; any other path absolute. *)
+let rerun_names_the_executable_from_the_cwd () =
+  let start_cwd = Sys.getcwd () in
+  let dir = Unix.realpath (temp_dir ()) in
+  e2e_env dir;
+  Unix.mkdir (Filename.concat dir "sub") 0o700;
+  let bl = Filename.concat dir "digest.thumper" in
+  let current = { ident with Baseline.ocaml = Env.ocaml_identity () } in
+  Baseline.write bl
+    (Baseline.set_section
+       (Baseline.empty ~suite:"digest")
+       current
+       [ alloc_row "alloc" 0 ]);
+  let allocating =
+    [ Bench.bench "alloc" (fun () -> ignore (Sys.opaque_identity (ref 0))) ]
+  in
+  let rerun_exe argv0 =
+    let (_ : int) =
+      with_quiet_stderr (fun () ->
+          Cli.main ~config:fast_config
+            ~budgets:[ Budget.no_more_alloc_than 0.0 ]
+            ~argv:[| argv0; "check"; "--baseline"; bl |]
+            ~name:"digest" allocating)
+    in
+    let label = "  rerun:   " in
+    let n = String.length label in
+    match
+      List.find_opt
+        (fun l -> String.length l > n && String.equal (String.sub l 0 n) label)
+        (String.split_on_char '\n' (output ()))
+    with
+    | None -> failf "no rerun line for %s" argv0
+    | Some l ->
+        List.hd
+          (String.split_on_char ' ' (String.sub l n (String.length l - n)))
+  in
+  Fun.protect
+    ~finally:(fun () -> Unix.chdir start_cwd)
+    (fun () ->
+      Unix.chdir dir;
+      equal ~msg:"a bare name" string "bench.exe" (rerun_exe "bench.exe");
+      equal ~msg:"an absolute path under the cwd" string "./sub/b.exe"
+        (rerun_exe (Filename.concat dir "sub/b.exe"));
+      equal ~msg:"a relative path, resolved" string "./sub/b.exe"
+        (rerun_exe "sub/../sub/b.exe");
+      equal ~msg:"a path outside the cwd" string "/nonexistent/b.exe"
+        (rerun_exe "/nonexistent/b.exe");
+      Unix.chdir (Filename.concat dir "sub");
+      equal ~msg:"a relative path outside the cwd" string
+        (Filename.concat dir "b.exe")
+        (rerun_exe "../b.exe"))
+
 (* The real fixture executable, invoked through its build path from a
    scratch cwd, in the environment dune gave this test: the candidate must
    land next to the fixture's {e source} directory (test/cram/fixture — the
@@ -1903,6 +1957,8 @@ let () =
           test "a partial bless re-records the selected cases only"
             partial_bless_rerecords_the_selected_cases_only;
           test "check prunes a vanished case" check_prunes_a_vanished_case;
+          test "rerun names the executable from the cwd"
+            rerun_names_the_executable_from_the_cwd;
           test "default path lands next to the benchmark source"
             default_path_lands_next_to_the_source;
         ];
