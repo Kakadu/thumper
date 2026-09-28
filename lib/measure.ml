@@ -7,6 +7,9 @@
    so tests can script it; only the fork machinery and the GC discipline
    touch the operating system directly. *)
 
+let strf = Printf.sprintf
+let pf = Format.fprintf
+
 type instruments = {
   now_ns : unit -> int;
   cpu_ns : unit -> int;
@@ -39,12 +42,10 @@ type failure =
   | Deadline_exceeded of { case : string; deadline : float }
 
 let pp_failure ppf = function
-  | Worker_died { case; detail } ->
-      Format.fprintf ppf "worker for %s died: %s" case detail
-  | Case_raised { case; exn } ->
-      Format.fprintf ppf "case %s raised: %s" case exn
+  | Worker_died { case; detail } -> pf ppf "worker for %s died: %s" case detail
+  | Case_raised { case; exn } -> pf ppf "case %s raised: %s" case exn
   | Deadline_exceeded { case; deadline } ->
-      Format.fprintf ppf "case %s exceeded its deadline of %gs" case deadline
+      pf ppf "case %s exceeded its deadline of %gs" case deadline
 
 (* Constants *)
 
@@ -227,8 +228,8 @@ let gc_param_warnings (before : Gc.control) (after : Gc.control) =
   let changed name proj =
     if proj before <> proj after then
       Some
-        (Printf.sprintf "gc parameter %s changed during measurement (%d -> %d)"
-           name (proj before) (proj after))
+        (strf "gc parameter %s changed during measurement (%d -> %d)" name
+           (proj before) (proj after))
     else None
   in
   List.filter_map Fun.id
@@ -428,7 +429,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       let wall_median = Stats.median_sorted sorted_wall in
       if wall_median < fold_threshold_s then
         warn
-          (Printf.sprintf
+          (strf
              "wall_time %.3g ns/call: possibly folded: wrap the input in \
               black_box"
              (wall_median *. 1e9));
@@ -453,7 +454,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
                consistent h. *)
             if dk < 0. || d2k < 0. then
               invalid_arg
-                (Printf.sprintf
+                (strf
                    "Measure: %s decreased across a probe batch (deltas %g, \
                     %g); instrument counters must be non-decreasing"
                    (Metric.id m) dk d2k);
@@ -471,7 +472,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
             then Some (int_of_float a)
             else (
               warn
-                (Printf.sprintf
+                (strf
                    "%s: exactness probe failed: batch deltas %g (k=%d) and %g \
                     (2k=%d) give per-call %g words with harness h %g vs %g; \
                     treating as sampled"
@@ -529,9 +530,7 @@ let signal_name s =
       (Sys.sigxfsz, "SIGXFSZ");
     ]
   in
-  match List.assoc_opt s names with
-  | Some n -> n
-  | None -> Printf.sprintf "signal %d" s
+  match List.assoc_opt s names with Some n -> n | None -> strf "signal %d" s
 
 (* [Unix._exit], not [exit]: the child runs no [at_exit] and flushes no
    channel it shares with the parent. *)
@@ -615,29 +614,21 @@ let parent_collect ~deadline_s ~case pid r =
       kill_and_reap ();
       `Failure
         (Worker_died
-           {
-             case;
-             detail =
-               Printf.sprintf "output exceeded %d bytes" parent_read_bound;
-           })
+           { case; detail = strf "output exceeded %d bytes" parent_read_bound })
   | `Eof -> (
       match waitpid_retry pid with
       | Unix.WEXITED 0 -> `Parse (Buffer.contents buf)
       | Unix.WEXITED c ->
-          `Failure
-            (Worker_died
-               { case; detail = Printf.sprintf "exited with code %d" c })
+          `Failure (Worker_died { case; detail = strf "exited with code %d" c })
       | Unix.WSIGNALED s ->
           `Failure
-            (Worker_died
-               { case; detail = Printf.sprintf "killed by %s" (signal_name s) })
+            (Worker_died { case; detail = strf "killed by %s" (signal_name s) })
       | Unix.WSTOPPED s ->
           (* Only a traced worker reports a stop here ([waitpid] has no
              [WUNTRACED]): kill it, so no stopped worker outlives the run. *)
           kill_and_reap ();
           `Failure
-            (Worker_died
-               { case; detail = Printf.sprintf "stopped by %s" (signal_name s) })
+            (Worker_died { case; detail = strf "stopped by %s" (signal_name s) })
       )
 
 let case_forked ~instruments ~config ~frozen_k bcase =
