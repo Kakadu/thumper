@@ -7,23 +7,22 @@
    of this file, is a BSD extension.  glibc declares it only under
    _DEFAULT_SOURCE and musl only under _BSD_SOURCE (or _GNU_SOURCE), and
    feature-test macros must be in effect before the first system header
-   is included — the caml/ headers below already include system headers.
-   Both macros are usually on by default; defining them here keeps the
-   declaration visible under strict -std= modes, where an implicit
-   declaration is a hard error on modern compilers.
+   is included, which the caml/ headers below already do.  Both macros
+   are usually on by default; defining them here keeps the declaration
+   visible under strict -std= modes, where an implicit declaration is a
+   hard error on modern compilers.
 
    Vendoring notes: every stub symbol is renamed from upstream's
-   ocaml_mtime_clock_* to ocaml_thumper_clock_* — a consumer may link both
+   ocaml_mtime_clock_* to ocaml_thumper_clock_*: a consumer may link both
    thumper and the real mtime, and identical C symbols in two archives are
    a hard link error. Upstream's period_ns stub, elapsed clock and start
-   latch are dropped: nothing bound them or read them, and thumper reads
-   one clock, [now_ns]. [now_ns] returns an immediate OCaml int instead of
-   upstream's boxed int64, so a read allocates nothing and can sit inside
-   an allocation-counter interval; this needs 63-bit ints. The Windows
-   tier converts counter ticks to nanoseconds in integer arithmetic,
-   where upstream multiplies by a double-valued period. Error messages
-   name Thumper_clock.now_ns and the system call that failed, not
-   upstream's module. */
+   latch are dropped, since thumper reads one clock, [now_ns]. [now_ns]
+   returns an immediate OCaml int instead of upstream's boxed int64, so a
+   read allocates nothing and can sit inside an allocation-counter
+   interval; this needs 63-bit ints. The Windows tier converts counter
+   ticks to nanoseconds in integer arithmetic, where upstream multiplies
+   by a double-valued period. Error messages name Thumper_clock.now_ns and
+   the system call that failed, not upstream's module. */
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
 #endif
@@ -66,13 +65,12 @@
 
 #include <mach/mach_time.h>
 
-/* Thumper patch (vs. upstream mtime): [now_ns] is thumper's measurement
-   clock — it times individual benchmark batches — so it must be truly
-   raw-monotonic.  Upstream selects mach_continuous_time on macOS >= 10.12,
-   which keeps ticking through system sleep: a lid close mid-batch would
-   inject the entire sleep into one sample.  mach_absolute_time does not
-   advance during sleep and is not adjusted after boot, so we use it
-   unconditionally. */
+/* Thumper patch (vs. upstream mtime): [now_ns] times individual benchmark
+   batches, so it must be raw-monotonic.  Upstream selects
+   mach_continuous_time on macOS >= 10.12, which keeps ticking through
+   system sleep: a lid close mid-batch would inject the entire sleep into
+   one sample.  mach_absolute_time does not advance during sleep and is
+   not adjusted after boot, so we use it unconditionally. */
 
 static mach_timebase_info_data_t scale = {0};
 
@@ -99,13 +97,12 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 
 #include <time.h>
 
-/* Thumper patch (vs. upstream mtime): [now_ns] is thumper's measurement
-   clock — it times individual benchmark batches — so it must be truly
-   raw-monotonic.  Upstream uses CLOCK_BOOTTIME on Linux, which ticks
-   through system suspend (a suspend mid-batch would inject the entire
-   sleep into one sample) and is subject to NTP frequency slew (slew
-   silently stretches or shrinks long batches).  CLOCK_MONOTONIC_RAW has
-   neither problem. */
+/* Thumper patch (vs. upstream mtime): [now_ns] times individual benchmark
+   batches, so it must be raw-monotonic.  Upstream uses CLOCK_BOOTTIME on
+   Linux, which ticks through system suspend (a suspend mid-batch would
+   inject the entire sleep into one sample) and is subject to NTP
+   frequency slew (slew silently stretches or shrinks long batches).
+   CLOCK_MONOTONIC_RAW has neither problem. */
 
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
@@ -179,9 +176,8 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 /* Load average (thumper addition, not in upstream mtime).
 
    getloadavg(3) is available on Darwin, glibc and musl (and the BSDs).
-   Failure is reported as None rather than an exception: the load gate
-   that consumes this value degrades gracefully when the host cannot
-   report load. */
+   Failure is reported as None rather than an exception: Env then counts
+   the host as quiet, and the run still measures. */
 
 #if defined(OCAML_MTIME_DARWIN) || defined(OCAML_MTIME_POSIX)
 
