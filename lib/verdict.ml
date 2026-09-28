@@ -340,7 +340,7 @@ let compared_section ~identity file =
   | Compared -> section
   | No_baseline | Stale _ -> None
 
-let judge_metric ~load section ~id ~trial metric measurement budget =
+let judge_metric ~load ~section ~id ~trial ~budget metric measurement =
   match Baseline.find_row section ~id ~metric:(Metric.id metric) with
   | None -> Settled Proposed
   | Some row -> (
@@ -422,7 +422,8 @@ let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
                 match comparable with
                 | None -> Settled Proposed
                 | Some s ->
-                    judge_metric ~load s ~id ~trial metric measurement budget
+                    judge_metric ~load ~section:s ~id ~trial ~budget metric
+                      measurement
               in
               (metric, state, budget))
             measured
