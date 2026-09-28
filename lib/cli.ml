@@ -47,12 +47,12 @@ let subcommand_word = function
 let long_flags =
   [ "--help"; "--version"; "--quick"; "--precise"; "--strict"; "--force" ]
 
-(* Expand [--opt=VALUE] into [--opt; VALUE]. Long options only, and only up
-   to a ["--"] terminator — everything after it is a pattern and keeps its
-   '='. A pattern or a short option's argument keeps its '=' too, and a
-   nameless ["--=V"] stays whole so it fails as an unknown option instead of
-   silently becoming ["--"] plus a pattern. So does [--flag=V] on a flag
-   that takes no value: split, it would read as the flag plus a pattern. *)
+(* Expand [--opt=VALUE] into [--opt; VALUE], for long options before a ["--"]
+   only: after it every argument is a pattern and keeps its '='. A pattern or
+   a short option's argument keeps its '=' too. A nameless ["--=V"] stays
+   whole, so it fails as an unknown option instead of becoming ["--"] and a
+   pattern, and so does [--flag=V] on a flag that takes no value, which split
+   would read as the flag and a pattern. *)
 let split_eq args =
   let split1 arg =
     if String.length arg > 2 && arg.[0] = '-' && arg.[1] = '-' then
@@ -174,7 +174,7 @@ let parse argv =
               (Printf.sprintf "option '%s' takes no argument" (String.sub a 0 i))
         | Some _ | None -> fail (Printf.sprintf "unknown option '%s'" a))
     | a :: rest ->
-        (* Bare positionals are [-f] patterns — never swallowed. *)
+        (* A bare argument is a pattern, as after [-f]. *)
         patterns := a :: !patterns;
         go rest
   in
@@ -237,10 +237,8 @@ let filter_of ~patterns ~tags =
   | [], tag_fs -> Some (`And tag_fs)
   | ids, tag_fs -> Some (`And [ `Or ids; `And tag_fs ])
 
-(* [--quick]/[--precise] refine the caller's config — they set the batch count
-   to the preset's, keeping every other knob the caller chose. The CLI never
-   flips [fork]: in-process measurement is a different protocol than the
-   forked baseline evidence, so forking stays the library/test seam. *)
+(* The command line never changes [fork]: in-process measurement is another
+   protocol than the forked evidence a baseline holds. *)
 let config_of ?config (o : options) =
   let c = Option.value config ~default:Config.default in
   match o.preset with
@@ -248,14 +246,12 @@ let config_of ?config (o : options) =
   | `Quick -> Config.samples Config.quick.Config.n c
   | `Precise -> Config.samples Config.precise.Config.n c
 
-(* Color
+(* Color *)
 
-   [main] resolves the mode once, for stdout; stderr is never styled.
-   [--color always] beats NO_COLOR (the no-color.org contract: the variable
-   is a default, an explicit request wins); NO_COLOR only dampens Auto; a
-   rule action joins Auto because dune captures its output and re-displays
-   it in a color-capable terminal. [dune exec] sets INSIDE_DUNE too, but its
-   stdout is the user's own: a file there gets no escapes. *)
+(* [--color always] beats [NO_COLOR], which no-color.org makes a default that
+   an explicit request overrides. A rule action is coloured under [`Auto]
+   because dune captures its output and shows it again on a terminal;
+   [dune exec] sets [INSIDE_DUNE] too, but its stdout is the user's own. *)
 let use_color mode ~is_tty ~rule_action ~no_color =
   match mode with
   | `Always -> true
@@ -332,14 +328,9 @@ let build_layout_dir ~dir_exists ~exe ~cwd =
             if dir_exists dir then dir else cwd
         | _ -> cwd)
 
-(* Where the default [<suite>.thumper] resolves when no [--baseline] was
-   given. Under dune, [INSIDE_DUNE] is the build context's directory and
-   [DUNE_SOURCEROOT] the workspace root: a cwd under the build directory is
-   a rule action, which resolves in its cwd (the rule's [diff?] names files
-   there, and a build action never writes to the source tree); otherwise the
-   executable's path in the context maps into the source tree, the
-   committable location. Without either variable, a hand run recognises
-   dune's [_build]. Pure — [dir_exists] is its only window on the world. *)
+(* A rule action resolves in its cwd, because the rule's [diff?] names files
+   there and an action never writes to the source tree; any other run under
+   dune resolves beside the executable's source, the committable location. *)
 let default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd =
   let exe = if Filename.is_relative exe then Filename.concat cwd exe else exe in
   match (inside_dune, source_root) with
@@ -371,14 +362,12 @@ let without_dot_segments path =
   | [] -> if absolute then "/" else if path = "" then "" else "."
   | segs -> (if absolute then "/" else "") ^ String.concat "/" segs
 
-(* [dune promote] is meaningful only when this process runs as a dune rule
-   action: promotion is staged by the rule's [diff?], and actions run with
-   their cwd inside the build directory. [dune exec] also sets [INSIDE_DUNE]
-   but keeps the invoker's cwd in the source tree, where nothing is staged
-   and [dune promote] silently does nothing — the v1-era footgun. The
-   distinguisher: [INSIDE_DUNE]'s value is the build-context directory
-   (older dunes set ["1"]); an action's cwd — sandboxed or not — lies under
-   the build root, an exec'd or directly-run process's does not. *)
+(* [dune promote] applies only when this process is a dune rule action: the
+   rule's [diff?] stages the corrected file, and an action's cwd, sandboxed or
+   not, lies under the build root. [dune exec] also sets [INSIDE_DUNE] but
+   keeps the invoker's cwd in the source tree, where nothing is staged and
+   [dune promote] would silently do nothing. [INSIDE_DUNE] holds the build
+   context's directory; older dunes set ["1"]. *)
 let promotion_staged ~inside_dune ~cwd =
   match inside_dune with
   | None -> false
@@ -428,20 +417,19 @@ let fail2 fmt =
 
 let pp_str pp v = Format.asprintf "%a" pp v
 
-(* Startup unlink of an owned artifact: a leftover candidate or JSON
-   target must never survive into this invocation's readers. *)
+(* A corrected file or JSON document left by an earlier run must not survive
+   into this one, where a reader would take it for this run's. *)
 let unlink_owned path =
   try Unix.unlink path with
   | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
   | Unix.Unix_error (e, _, _) ->
       fail2 "cannot remove stale artifact %s: %s" path (Unix.error_message e)
 
-(* Pre-flight an artifact target that measurement will write unconditionally
-   (the [--json] document; bless's candidate): its directory must exist and be
-   writable {e before} minutes of measurement are spent, not after. The check
-   is advisory (the world can change under us — the write still handles its
-   own failure); what it buys is failing the common defect — a mistyped or
-   missing directory — up front, where exit 2 costs nothing. *)
+(* Measurement writes the [--json] document and bless's corrected file
+   whatever it finds, so their directory is checked before minutes are spent
+   measuring. The check is advisory, since the directory can change before the
+   write, which handles its own failure; it catches a mistyped or missing
+   directory while exit 2 costs nothing. *)
 let preflight_target path =
   let dir = Filename.dirname path in
   match (Unix.stat dir).Unix.st_kind with
@@ -460,8 +448,8 @@ let write_json path doc =
   with Unix.Unix_error (e, _, _) ->
     fail2 "cannot write %s: %s" path (Unix.error_message e)
 
-(* All measurement runs under the CLI's lease acquisition so the progress line
-   is ours; [Check]'s inner acquisition is reentrant (Env.Lock). *)
+(* Measurement runs under this acquisition of the lock, so the waiting lines
+   are the command line's; [Check]'s own acquisition nests. *)
 let with_lock_progress f =
   let waiting = ref false in
   let on_wait ~owner_changed =
@@ -485,9 +473,9 @@ let with_lock_progress f =
 let checked f =
   try f () with Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
-(* The status line: stderr, \r-overwritten, erased before anything
-   else prints, and emitted only on a TTY — dune, CI, and redirects see zero
-   bytes of it. It lives inside [checked] so an operational error erases the
+(* The status line goes to stderr, overwritten in place and erased before
+   anything else prints, and only on a terminal: dune, CI and redirects see
+   none of it. It runs inside [checked], so an operational error erases the
    line before its message prints. *)
 let with_status f =
   if not (Unix.isatty Unix.stderr) then f (fun _ -> ())
@@ -507,11 +495,9 @@ let baseline_error path = function
   | Baseline.Io _ as e -> pp_str Baseline.pp_error e
   | Baseline.Corrupt _ as e -> path ^ ": " ^ pp_str Baseline.pp_error e
 
-(* An absent file is the ordinary first-run state, [None]. Io and
-   Corrupt are exit 2, never treated as absent. A file whose
-   header names another suite is refused the same way cross-machine
-   comparison is: judging against the wrong ruler must be loud, not a page
-   of NEW proposals. *)
+(* An absent file is the first run's state, [None]; an unreadable or corrupt
+   one stops the run. So does a file whose header names another suite: judged
+   against it, every case would quietly read proposed. *)
 let read_baseline ~suite path =
   match Baseline.read path with
   | Ok (Some f) -> (
@@ -530,10 +516,10 @@ let write_baseline path file =
   try Baseline.write path file
   with Baseline.Error e -> fail2 "%s" (baseline_error path e)
 
-(* Selection preflight, before the lease: a broken suite or filter must fail
-   without waiting on a holder (and [list] is exactly this). The empty
-   selection names the unmatched patterns and tags — "bench.exe explore" must
-   explain itself, not exit a bare 2. *)
+(* The selection is checked before the lock, so a broken suite or filter
+   fails without waiting on another run; [list] is only this. An empty
+   selection names the patterns and tags that matched nothing, so a mistyped
+   subcommand, read as a pattern, explains itself. *)
 let no_match ~patterns ~tags =
   let quoted l = String.concat ", " (List.map (fun s -> "'" ^ s ^ "'") l) in
   match (patterns, tags) with
@@ -606,9 +592,9 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
        benches);
   let file = read_baseline ~suite:name baseline_path in
-  (* Without a baseline the corrected file is certain (every row is new), so
-     its target is pre-flighted like bless's before minutes of measurement.
-     With one, a pass run writes nothing and needs no writable directory. *)
+  (* Without a baseline the corrected file is certain, every row proposed, so
+     its directory is pre-flighted as bless's is. With one, a passing run writes
+     nothing and needs no writable directory. *)
   if Option.is_none file then preflight_target corrected_path;
   warn_expired (wait_for_quiet o.wait_quiet);
   let verdict =
@@ -618,10 +604,9 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                 Check.run_with ~on_progress:tick ~config ?budgets ~prune:true
                   ?filter ?baseline:file name benches)))
   in
-  (* The JSON document first: its contract is "present iff measurement
-     completed", and measurement has — a corrected-file write that fails (a
-     full disk, or an unwritable directory no pre-flight covered) must not
-     take the verdict document down with it. *)
+  (* The JSON document first: it is present iff measurement completed, which it
+     has, so a corrected-file write that fails (a full disk, or an unwritable
+     directory no pre-flight covered) must not take it down too. *)
   Option.iter (fun p -> write_json p (Verdict.to_json verdict ^ "\n")) o.json;
   (* A late write failure (a full disk) still prints the report, without
      the accept line of a file that does not exist, then the error. *)
@@ -672,9 +657,9 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
 
 let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept benches =
-  (* The run's budgets are not bless's business, but a suite [check] refuses
-     is refused here too (the selection checks the whole suite): blessing it
-     would record a ruler nothing can judge against. *)
+  (* The run's budgets are not bless's business, but a suite [check] refuses is
+     refused here too (the selection checks the whole suite): blessing it would
+     record a baseline nothing can judge against. *)
   let sel, scope =
     selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter benches
   in
@@ -698,16 +683,11 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
             secs load cores
       | Env.Quiet -> ())
   | expired -> warn_expired expired);
-  (* The gate refusal is bless's own guard: a noisy bless poisons
-     the ruler; [--force] overrides and is recorded in the section header.
-     The gate is sampled under the lease, directly before measurement — the
-     same principle as check's [Verdict.load]: a lease wait can be minutes long,
-     and a decision taken on a pre-lease sample would refuse on somebody
-     else's load, or worse, record an unannotated noisy bless after a
-     quiet-to-loaded transition. Residual, accepted: [--wait-quiet] still
-     waits pre-lease (holding the lease while waiting for quiet would block
-     every other process), so a load spike after both waits is refused only
-     here, at measurement time. *)
+  (* The load is sampled under the lock, just before measuring, as check's is:
+     the wait for the lock can last minutes, and an earlier sample would judge
+     another run's load. [--wait-quiet] waits before the lock, since holding it
+     would block every other run, so a load that rises after both waits is
+     refused only here. *)
   let forced_under_load = ref None in
   let refuse_or_force () =
     match Env.load () with
@@ -822,20 +802,14 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
           @@
           match (o.baseline, baseline) with
           | Some p, _ | None, Some p ->
-              (* An explicit path resolves, and prints, as typed: the hints
-                 are pasted where the command ran, and the header, the
-                 rerun line and the accept line then spell the file one
-                 way. Inside a rule, relative paths are the contract too —
-                 they name the same files the rule's [diff?] names. *)
+              (* An explicit path resolves and prints as typed: the hints are
+                 pasted where the command ran, so the header, the rerun line
+                 and the accept line spell the file one way. In a rule action
+                 a relative path names the same file as the rule's [diff?]. *)
               p
           | None, None ->
-              (* The default resolves in [default_baseline_dir]'s directory
-                 — the committable location next to the benchmark's source
-                 when the executable runs from a build context, the cwd inside
-                 a rule action ([diff?]'s contract) and for installed
-                 binaries. A mapped source directory under the invoker's
-                 cwd renders as the short relative path; everything else
-                 keeps the explicit-path rendering above. *)
+              (* The default prints bare in a rule action's cwd, relative
+                 when it lies below the cwd, and absolute otherwise. *)
               let dir =
                 let dir_exists d =
                   match Sys.is_directory d with
@@ -858,16 +832,12 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
               else Filename.concat dir file
         in
         let corrected_path = baseline_path ^ ".corrected" in
-        (* Startup unlinks of both owned artifacts, before anything else can
-           fail — for every subcommand, so no non-measuring
-           invocation leaves a stale artifact to be read. *)
+        (* Before anything else can fail, whatever the subcommand, so no run
+           leaves a stale file to be read. *)
         unlink_owned corrected_path;
         Option.iter unlink_owned o.json;
-        (* Unconditional write targets are pre-flighted here, before any
-           measurement can be wasted on a target that can never be written:
-           the [--json] document and bless's corrected file (check's is
-           conditional; [run_check] pre-flights it once it knows the
-           baseline is absent). *)
+        (* The files a run always writes, before any measurement; check's
+           corrected file waits for [run_check] to find no baseline. *)
         Option.iter preflight_target o.json;
         (match o.subcommand with
         | `Bless -> preflight_target corrected_path
