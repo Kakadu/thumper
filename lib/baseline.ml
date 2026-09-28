@@ -506,7 +506,7 @@ let case_frozen_k s ~id =
     (fun r ->
       if not (String.equal r.r_id id) then None
       else
-        match row_evidence r with
+        match r.r_evidence with
         | Sampled { k; _ } -> Some k
         | Exact_int _ -> None)
     s.s_rows
