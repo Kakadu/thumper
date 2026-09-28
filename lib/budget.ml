@@ -24,25 +24,20 @@ let band_cap = 0.025
    with e > r a confirmed shift in (r, e] would be both regressed and
    equivalent), and at r = 0 the model degenerates the band with no override
    carve-out. *)
-let band ?equivalent_within ~max_regression () =
-  match equivalent_within with
-  | Some e ->
-      if not (e >= 0.) then
-        invalid_arg "Thumper.Budget: negative or NaN equivalent_within";
-      if e > max_regression then
-        invalid_arg "Thumper.Budget: equivalent_within exceeds max_regression";
-      e
-  | None -> Float.min band_cap (max_regression /. 2.)
-
 let relative ~metric ?equivalent_within ~max_regression () =
   if not (max_regression >= 0.) then
     invalid_arg "Thumper.Budget: negative or NaN max_regression";
-  {
-    metric;
-    contract =
-      Relative
-        { max_regression; band = band ?equivalent_within ~max_regression () };
-  }
+  let band =
+    match equivalent_within with
+    | Some e ->
+        if not (e >= 0.) then
+          invalid_arg "Thumper.Budget: negative or NaN equivalent_within";
+        if e > max_regression then
+          invalid_arg "Thumper.Budget: equivalent_within exceeds max_regression";
+        e
+    | None -> Float.min band_cap (max_regression /. 2.)
+  in
+  { metric; contract = Relative { max_regression; band } }
 
 let no_slower_than ?(metric = Metric.wall_time) ?equivalent_within
     max_regression =
