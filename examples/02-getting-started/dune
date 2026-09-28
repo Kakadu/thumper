@@ -1,0 +1,11 @@
+(executable
+ (name bench_digest)
+ (libraries thumper))
+
+(rule
+ (alias bench)
+ (locks bench)
+ (action
+  (progn
+   (run %{exe:bench_digest.exe})
+   (diff? digest.thumper digest.thumper.corrected))))

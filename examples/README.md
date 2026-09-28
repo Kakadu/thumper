@@ -6,7 +6,7 @@ to a build-failing regression gate, to the library underneath the CLI.
 
 - `01-first-benchmark` — the smallest suite: `run` + `bench` in one
   executable; a bare run is the whole flow. A benchmark is an executable.
-- `02-regression-gate` — the manual `@bench` rule with `(locks bench)` and
+- `02-getting-started` — the manual `@bench` rule with `(locks bench)` and
   `diff?`: the first run proposes the baseline, `dune promote` accepts it,
   confirmed regressions fail the build (the gate cycle, below).
 - `03-budgets` — per-metric contracts: `no_slower_than`, the
@@ -64,23 +64,23 @@ scan/256-KiB
 
 ## The gate cycle (example 02)
 
-No `gate.thumper` is committed here, on purpose: a baseline is measured
+No `digest.thumper` is committed here, on purpose: a baseline is measured
 evidence, one section per machine, so a checked-out repository cannot ship
 one that means anything on your hardware. The first build bootstraps it:
 
 ```
 $ dune build @bench
-thumper: gate — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
+thumper: digest — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
 
   proposed    1.40 us  ±0.9%  54 w  md5/string-64
   proposed    1.10 us  ±0.7%   0 w  fib/10
   proposed  135.50 us  ±1.0%   0 w  fib/20
 
   accept:  dune promote
-File "examples/02-regression-gate/gate.thumper", line 1, characters 0-0:
+File "examples/02-getting-started/digest.thumper", line 1, characters 0-0:
 ...
 +# thumper baseline v1
-+# suite: gate
++# suite: digest
 +
 +# machine: ca352e279bc47cb1
 +# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
@@ -97,7 +97,7 @@ allocation integers and sorted timing sample vectors. Accept it, and in your
 own project commit it:
 
 ```
-$ dune promote && git add examples/02-regression-gate/gate.thumper
+$ dune promote && git add examples/02-getting-started/digest.thumper
 ```
 
 From then on, `dune build @bench` is the gate:

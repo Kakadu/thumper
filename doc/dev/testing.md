@@ -136,7 +136,7 @@ The determinism kit:
 
 `examples/` holds six graded, commented suites (first benchmark →
 regression gate → budgets, setup, config, programmatic);
-`02-regression-gate` carries the real `@bench` + `(locks bench)` +
+`02-getting-started` carries the real `@bench` + `(locks bench)` +
 `diff?` rule the manual teaches. Nothing in `examples/` measures under
 runtest — the `@bench` alias is manual. `doc/manual/snippets/`
 compiles every OCaml snippet in the manual (build-only — nothing there
