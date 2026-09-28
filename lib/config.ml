@@ -64,7 +64,7 @@ let precise = { default with n = precise_n }
 
 let samples n t =
   if n < 3 then
-    invalid_arg (strf "Thumper.Config.samples: %d (need at least 3 batches)" n);
+    invalid_arg (strf "Thumper.Config.samples: %d (need at least 3 samples)" n);
   { t with n }
 
 let batch_floor s t =

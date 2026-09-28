@@ -102,7 +102,7 @@ let setters_chain_in_pipelines () =
 
 let samples_rejects_below_3 () =
   raises
-    (Invalid_argument "Thumper.Config.samples: 2 (need at least 3 batches)")
+    (Invalid_argument "Thumper.Config.samples: 2 (need at least 3 samples)")
     (fun () -> Config.(default |> samples 2))
 
 let batch_floor_rejects_nonpositive () =
