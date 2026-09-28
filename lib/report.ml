@@ -28,11 +28,7 @@ let status_line (p : Check.progress) =
   Printf.sprintf "thumper: %s %d/%d — %s" verb p.Check.index p.Check.total
     p.Check.case
 
-(* Value formatting
-
-   ASCII units, per-column time scaling, thousands separators in exact
-   integers; ANSI styling only when the
-   caller decided color is on. *)
+(* Value formatting *)
 
 let plural n = if n = 1 then "" else "s"
 
@@ -87,9 +83,6 @@ let bound e = Printf.sprintf "%+.1f" (e *. 100.)
 
 (* Verdict classification *)
 
-(* The failure/status predicates are [Verdict]'s own — the capitalized
-   REGRESSED cells, the summary, and the [::error::] annotations agree with
-   [Verdict.exit_code] and the JSON [status] by construction. *)
 let case_fails (c : Verdict.case_report) = Verdict.case_overall c = `Fail
 
 let report_proposed (mr : Verdict.metric_report) =
@@ -136,9 +129,9 @@ type render = {
 let pad_left s w =
   if String.length s >= w then s else String.make (w - String.length s) ' ' ^ s
 
-(* The table
+(* The table *)
 
-   One row per case, suite order: status | time | ±ci% | alloc | id, and the
+(* One row per case, suite order: status | time | ±ci% | alloc | id, and the
    rest of the verdict cell, when there is any, on an indented line below.
    The status word opens the row and the id closes it, so only an id longer
    than the room left runs a row past 80 columns. The value columns show the
@@ -285,12 +278,12 @@ let table_lines ~color rows =
       | d -> [ Buffer.contents b; "      " ^ String.concat "; " d ])
     cells
 
-(* Verdict cells
+(* Verdict cells *)
 
-   Only REGRESSED is capitalized, and only when the metric gates the case —
-   the same predicate as [Verdict.exit_code]. Fragments of non-time
-   metrics carry the metric's tag after the verdict word; the cell holds the
-   case's notable relations, most severe first, "; "-joined. *)
+(* Only REGRESSED is capitalized, and only when the metric fails its case. A
+   non-time metric's fragment carries the metric's tag after its word; the
+   cell holds the case's notable relations, most severe first, joined by
+   ["; "]. *)
 
 let metric_tag m =
   match Metric.kind m with
@@ -309,8 +302,8 @@ let relative_budget (mr : Verdict.metric_report) =
       Some (Printf.sprintf "budget +%g%%" (max_regression *. 100.))
   | Some (Budget.Absolute_max _) | None -> None
 
-(* A proven-exact count over its absolute cap, as [(count, cap)], when the
-   report gates on it. Under a baseline row the count is [Regressed] and its
+(* An exact count over its absolute cap, as [(count, cap)], when the metric
+   fails its case. Under a baseline row the count is [Regressed] and its
    cell prints the pair; with no comparable row the cell prints the cap. *)
 let cap_breach (c : Verdict.case_report) (mr : Verdict.metric_report) =
   match
@@ -345,9 +338,10 @@ let cap_str metric cap =
   in
   group_int (Float.to_int cap) ^ digits ^ " " ^ unit
 
-(* (rank, fragment): rank orders fragments most-severe-first — 0 gating
-   REGRESSED, 1 demonstrated-but-ungated regression, 2 inconclusive, 3
-   improved, 4 within budget, 5 proposed, 6 the exact-equal reassurance. *)
+(* [(rank, fragment)], the rank ordering fragments most severe first: 0 a
+   REGRESSED that fails the case, 1 a regression that does not, 2
+   inconclusive, 3 improved, 4 within budget, 5 proposed, 6 the exact-equal
+   reassurance. *)
 let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
     =
   let m = mr.metric in
@@ -515,18 +509,16 @@ let check r v =
   let ident = Verdict.identity v in
   let comparison = Verdict.comparison v in
   let suite = Verdict.suite v in
-  (* The report's load message agrees with judgment: the gate the verdict
-     was decided under, never a pre-lease reading of somebody else's load
-     (the lease wait can be minutes long). *)
+  (* The load the verdict was judged under, never a reading taken before
+     the wait for the lock, which can last minutes. *)
   let load = Verdict.load v in
   let acceptance =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> true
     | Verdict.Compared -> false
   in
-  (* Header — with the compared run's load warning directly under it; the
-     acceptance states put their one load message beside the prompt
-     instead. *)
+  (* A compared run's load warning sits under the header; a missing or stale
+     section's sits beside the accept line instead. *)
   let header =
     let head =
       match comparison with
@@ -682,8 +674,8 @@ let check r v =
                  (String.concat ", " parts) strict_clause);
         ]
   in
-  (* GitHub annotations on gating regressions, closing the report: CI wants
-     them whatever the terminal shows, under the same gate predicate. *)
+  (* The [::error::] lines close the report: CI reads them whatever the
+     terminal shows. *)
   let annotations =
     if not r.github then []
     else
@@ -731,8 +723,7 @@ let check r v =
   in
   report_of_blocks [ header; table; actions; summary; annotations ]
 
-(* The bless report is the same shape as check's — header, table of proposed
-   rows, actions — and always prints whole. *)
+(* The blocks of check's report less the summary, every row [proposed]. *)
 let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
   let header =
     [
@@ -761,8 +752,6 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
         (Run.trials run)
   in
   let actions =
-    (* One load message per run: --force is the only way a bless report exists
-       under load, and its warning names the load. *)
     (match load with
       | Env.Loaded { load; cores } ->
           [
@@ -773,9 +762,8 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
                  load cores);
           ]
       | Env.Quiet -> [])
-    (* A partial bless over a stale section still re-records it whole; the
-       notice says what that drops, next to the prompt, where promotion is
-       reviewed. *)
+    (* A notice of what the corrected file drops sits beside the accept line,
+       where the file is reviewed. *)
     @ List.map (fun w -> styled ~color `Yellow ("  warning: " ^ w)) notices
     @ [ Printf.sprintf "  accept:  %s" accept ]
   in
