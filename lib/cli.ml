@@ -135,7 +135,7 @@ let parse argv =
             fail
               (Printf.sprintf
                  "option '--wait-quiet' requires a non-negative number of \
-                  seconds, got %S"
+                  seconds, got '%s'"
                  v))
     | [ "--wait-quiet" ] -> missing "--wait-quiet"
     | "--force" :: rest ->
@@ -155,10 +155,10 @@ let parse argv =
         | _ ->
             fail
               (Printf.sprintf
-                 "option '--color' takes auto, always, or never, got %S" v))
+                 "option '--color' takes auto, always, or never, got '%s'" v))
     | [ "--color" ] -> missing "--color"
     | a :: _ when String.length a > 1 && a.[0] = '-' ->
-        fail (Printf.sprintf "unknown option %S" a)
+        fail (Printf.sprintf "unknown option '%s'" a)
     | a :: rest ->
         (* Bare positionals are [-f] patterns — never swallowed. *)
         patterns := a :: !patterns;

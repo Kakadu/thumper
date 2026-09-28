@@ -233,8 +233,8 @@ type error =
 
 let pp_error ppf = function
   | Duplicate_id id ->
-      Format.fprintf ppf
-        "duplicate benchmark id %S (rename the case or pass ~id)" id
+      Format.fprintf ppf "duplicate case id '%s' (rename the case or pass ~id)"
+        id
   | Uncollected_budget { scope = ""; metric } ->
       Format.fprintf ppf
         "the run has a budget on %s but does not collect it (add it to \
@@ -242,8 +242,8 @@ let pp_error ppf = function
         metric
   | Uncollected_budget { scope; metric } ->
       Format.fprintf ppf
-        "%S has a budget on %s but does not collect it (add it to ~metrics or \
-         drop the budget)"
+        "'%s' has a budget on %s but does not collect it (add it to ~metrics \
+         or drop the budget)"
         scope metric
 
 let resolve benches =

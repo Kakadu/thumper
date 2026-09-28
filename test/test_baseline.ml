@@ -54,6 +54,25 @@ let invalid fn =
 
 let file lines = String.concat "\n" lines ^ "\n"
 
+let quoted_file_content_writes_no_control_byte () =
+  (* A crafted file must not reach the terminal raw: a machine key holding
+     an OSC title, an erase-line and a carriage return prints them as
+     [\xNN], and UTF-8 is kept. *)
+  let key = "\027]0;x\007\027[2K\rthumper: 6 cases: 6 passed.\127\xc2\xb1" in
+  match
+    Baseline.of_string
+      (file [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: " ^ key ])
+  with
+  | Error (Baseline.Corrupt { reason; _ }) ->
+      equal string
+        "invalid machine key '\\x1b]0;x\\x07\\x1b[2K\\x0dthumper: 6 cases: 6 \
+         passed.\\x7f\xc2\xb1' (must be [A-Za-z0-9._-]+)"
+        reason
+  | Ok _ -> fail "parsed a key with control bytes"
+  | Error e ->
+      failf "expected Corrupt, got %s"
+        (Format.asprintf "%a" Baseline.pp_error e)
+
 let pp_evidence ppf = function
   | Baseline.Exact_int n -> Format.fprintf ppf "Exact_int %d" n
   | Baseline.Sampled { k; samples } ->
@@ -1162,6 +1181,8 @@ let () =
       group "grammar"
         [
           test "a minimal canonical file parses" minimal_parses;
+          test "quoted file content writes no control byte"
+            quoted_file_content_writes_no_control_byte;
           test "rejects a bad header" rejects_bad_header;
           test "rejects a header-only file" rejects_header_only;
           test "rejects a truncated file (missing final newline)"

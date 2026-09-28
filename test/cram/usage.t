@@ -7,35 +7,35 @@ The flags are ordinary unknown options, exit 2, no deprecation window.
 
   $ $FIX -q > /dev/null 2> q.err
   [2]
-  $ grep -q 'unknown option "-q"' q.err && grep -q "Try '-h'" q.err && echo q-refused
+  $ grep -q "unknown option '-q'" q.err && grep -q "Try '-h'" q.err && echo q-refused
   q-refused
   $ $FIX -v > /dev/null 2> v.err
   [2]
-  $ grep -q 'unknown option "-v"' v.err && echo v-refused
+  $ grep -q "unknown option '-v'" v.err && echo v-refused
   v-refused
   $ $FIX --verbose > /dev/null 2> verbose.err
   [2]
-  $ grep -q 'unknown option "--verbose"' verbose.err && echo verbose-refused
+  $ grep -q "unknown option '--verbose'" verbose.err && echo verbose-refused
   verbose-refused
   $ $FIX --no-fork > /dev/null 2> nofork.err
   [2]
-  $ grep -q 'unknown option "--no-fork"' nofork.err && echo no-fork-refused
+  $ grep -q "unknown option '--no-fork'" nofork.err && echo no-fork-refused
   no-fork-refused
   $ $FIX --no-color > /dev/null 2> nocolor.err
   [2]
-  $ grep -q 'unknown option "--no-color"' nocolor.err && echo no-color-refused
+  $ grep -q "unknown option '--no-color'" nocolor.err && echo no-color-refused
   no-color-refused
   $ $FIX --explore > /dev/null 2> explore.err
   [2]
-  $ grep -q 'unknown option "--explore"' explore.err && echo explore-refused
+  $ grep -q "unknown option '--explore'" explore.err && echo explore-refused
   explore-refused
   $ $FIX --bless > /dev/null 2> bless.err
   [2]
-  $ grep -q 'unknown option "--bless"' bless.err && echo bless-refused
+  $ grep -q "unknown option '--bless'" bless.err && echo bless-refused
   bless-refused
   $ $FIX -l > /dev/null 2> l.err
   [2]
-  $ grep -q 'unknown option "-l"' l.err && echo l-refused
+  $ grep -q "unknown option '-l'" l.err && echo l-refused
   l-refused
 
 The explore subcommand word is now an ordinary selection pattern; the

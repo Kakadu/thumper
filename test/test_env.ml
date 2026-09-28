@@ -148,14 +148,20 @@ let override_rejects_empty () =
   setenv "THUMPER_MACHINE" (Some "");
   raises
     (Invalid_argument
-       "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])")
+       "THUMPER_MACHINE: '' (need a non-empty key over [A-Za-z0-9._-])")
     (fun () -> Env.machine_key ())
 
 let override_rejects_bad_charset () =
   setenv "THUMPER_MACHINE" (Some "bad key!");
   raises
     (Invalid_argument
-       "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over \
+       "THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])")
+    (fun () -> Env.machine_key ());
+  (* A control byte in the value prints escaped, never raw. *)
+  setenv "THUMPER_MACHINE" (Some "a\027[2Kb");
+  raises
+    (Invalid_argument
+       "THUMPER_MACHINE: 'a\\x1b[2Kb' (need a non-empty key over \
         [A-Za-z0-9._-])") (fun () -> Env.machine_key ())
 
 (* The charset is what keeps the baseline header grammar escape-free: colons,

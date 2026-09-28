@@ -376,7 +376,7 @@ let same_name_in_different_groups_is_fine () =
        ])
 
 let pp_error_names_the_id_and_the_remedy () =
-  equal string "duplicate benchmark id \"g/x\" (rename the case or pass ~id)"
+  equal string "duplicate case id 'g/x' (rename the case or pass ~id)"
     (Format.asprintf "%a" Bench.pp_error (Bench.Duplicate_id "g/x"))
 
 (* A budget names a metric its scope collects *)
@@ -462,7 +462,7 @@ let an_inherited_budget_a_case_does_not_collect_is_fine () =
 
 let pp_error_names_the_scope_and_the_metric () =
   equal string
-    "\"g/x\" has a budget on cpu_time but does not collect it (add it to \
+    "'g/x' has a budget on cpu_time but does not collect it (add it to \
      ~metrics or drop the budget)"
     (Format.asprintf "%a" Bench.pp_error
        (Bench.Uncollected_budget { scope = "g/x"; metric = "cpu_time" }));

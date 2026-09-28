@@ -182,6 +182,22 @@ let sort_rows fname rows =
   check sorted;
   sorted
 
+(* Quoting file content in a message: single quotes, and every control
+   byte (below 0x20, and 0x7f) as [\xNN], so a crafted file cannot write
+   escape sequences or carriage returns to a terminal or a CI log. Other
+   bytes, UTF-8 included, pass through. *)
+let quote s =
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b '\'';
+  String.iter
+    (fun c ->
+      let n = Char.code c in
+      if n < 0x20 || n = 0x7f then Printf.bprintf b "\\x%02x" n
+      else Buffer.add_char b c)
+    s;
+  Buffer.add_char b '\'';
+  Buffer.contents b
+
 (* Parsing *)
 
 exception Parse of int * string
@@ -192,15 +208,15 @@ let parse_nat lnum what s =
   if
     s = ""
     || not (String.for_all (function '0' .. '9' -> true | _ -> false) s)
-  then perr lnum "%s must be a decimal integer, got %S" what s;
+  then perr lnum "%s must be a decimal integer, got %s" what (quote s);
   match int_of_string_opt s with
   | Some n -> n
-  | None -> perr lnum "%s is out of range: %S" what s
+  | None -> perr lnum "%s is out of range: %s" what (quote s)
 
 let parse_finite lnum what s =
   match float_of_string_opt s with
   | Some f when Float.is_finite f -> f
-  | _ -> perr lnum "%s is not a finite number: %S" what s
+  | _ -> perr lnum "%s is not a finite number: %s" what (quote s)
 
 let after prefix line =
   String.sub line (String.length prefix)
@@ -208,8 +224,9 @@ let after prefix line =
 
 let parse_row lnum line =
   let check_names id metric =
-    if not (valid_id id) then perr lnum "invalid case id %S" id;
-    if not (valid_metric metric) then perr lnum "invalid metric id %S" metric
+    if not (valid_id id) then perr lnum "invalid case id %s" (quote id);
+    if not (valid_metric metric) then
+      perr lnum "invalid metric id %s" (quote metric)
   in
   match String.split_on_char '\t' line with
   | [ id; metric; "exact"; count ] ->
@@ -219,11 +236,11 @@ let parse_row lnum line =
   | [ id; metric; batch; nfield; median; samples ] ->
       check_names id metric;
       if not (String.starts_with ~prefix:"batch=" batch) then
-        perr lnum "malformed row: expected 'batch=K', got %S" batch;
+        perr lnum "malformed row: expected 'batch=K', got %s" (quote batch);
       let k = parse_nat lnum "batch size" (after "batch=" batch) in
       if k < 1 then perr lnum "batch size must be at least 1";
       if not (String.starts_with ~prefix:"n=" nfield) then
-        perr lnum "malformed row: expected 'n=N', got %S" nfield;
+        perr lnum "malformed row: expected 'n=N', got %s" (quote nfield);
       let n = parse_nat lnum "sample count" (after "n=" nfield) in
       if n < 3 then perr lnum "sample count n=%d is below the minimum of 3" n;
       let sample_texts = String.split_on_char ' ' samples in
@@ -238,8 +255,8 @@ let parse_row lnum line =
       done;
       let derived = derived_median arr in
       if not (String.equal derived median) then
-        perr lnum "stored median %S does not match its samples (re-derived %S)"
-          median derived;
+        perr lnum "stored median %s does not match its samples (re-derived %s)"
+          (quote median) (quote derived);
       {
         r_id = id;
         r_metric = metric;
@@ -280,9 +297,9 @@ let parse_section lines i key =
     else if String.starts_with ~prefix:"# " line then (
       let text = after "# " line in
       if reserved_annotation text then
-        perr lnum "malformed section comment %S" line;
+        perr lnum "malformed section comment %s" (quote line);
       anns := text :: !anns)
-    else perr lnum "malformed comment line %S" line;
+    else perr lnum "malformed comment line %s" (quote line);
     incr i
   done;
   (* The grammar's section header is machine + host + ocaml, all three
@@ -344,7 +361,7 @@ let parse s =
     in
     let n = Array.length lines in
     if not (String.equal lines.(0) header_line) then
-      perr 1 "expected %S on the first line" header_line;
+      perr 1 "expected %s on the first line" (quote header_line);
     let i = ref 1 in
     (* The grammar requires the suite header on every non-empty file
        (baseline-format.md): a section-bearing file without one would make
@@ -370,7 +387,8 @@ let parse s =
         perr (!i + 1) "expected a '# machine:' section header";
       let key = after machine_prefix line in
       if not (valid_key key) then
-        perr (!i + 1) "invalid machine key %S (must be [A-Za-z0-9._-]+)" key;
+        perr (!i + 1) "invalid machine key %s (must be [A-Za-z0-9._-]+)"
+          (quote key);
       (match !prev_key with
       | Some p -> (
           match String.compare p key with

@@ -19,13 +19,13 @@ instead of hanging the session.
   $ WATCHDOG=$!
 
   $ $FIX check --quick
-  thumper: "cpu" has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
+  thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
   [2]
   $ $FIX bless --quick
-  thumper: "cpu" has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
+  thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
   [2]
   $ $FIX list
-  thumper: "cpu" has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
+  thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
   [2]
 
 Nothing was measured and no candidate was written.

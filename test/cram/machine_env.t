@@ -38,10 +38,10 @@ grammar escape-free), not measured under a garbage key: one line, exit 2,
 never an uncaught exception.
 
   $ THUMPER_MACHINE='bad key!' $FIX check --quick
-  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
+  thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
   [2]
   $ THUMPER_MACHINE='bad key!' $FIX bless --quick
-  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
+  thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
   [2]
 
 The refusal comes before the lease: with the lease file unusable, the key
@@ -49,6 +49,6 @@ is still the error named.
 
   $ chmod 0666 "locks/thumper-$(id -u).lock"
   $ THUMPER_MACHINE='bad key!' $FIX check --quick
-  thumper: THUMPER_MACHINE: "bad key!" (need a non-empty key over [A-Za-z0-9._-])
+  thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
   [2]
   $ chmod 0600 "locks/thumper-$(id -u).lock"

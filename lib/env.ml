@@ -115,8 +115,8 @@ let machine_key () =
       if not (Baseline.valid_segment key) then
         invalid_arg
           (Printf.sprintf
-             "THUMPER_MACHINE: %S (need a non-empty key over [A-Za-z0-9._-])"
-             key)
+             "THUMPER_MACHINE: %s (need a non-empty key over [A-Za-z0-9._-])"
+             (Baseline.quote key))
       else key
   | None ->
       let { host; os; cpu_model; _ } = Lazy.force facts in

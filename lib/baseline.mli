@@ -82,6 +82,12 @@ val pp_error : Format.formatter -> error -> unit
 val is_id_char : char -> bool
 (** [is_id_char c] is [true] iff [c] is in [[A-Za-z0-9._-]]. *)
 
+val quote : string -> string
+(** [quote s] is [s] in single quotes for a message, every control byte (below
+    [0x20], and [0x7f]) written [\xNN]: text read from a file or the environment
+    cannot write escape sequences to a terminal. Other bytes, UTF-8 included,
+    are kept. *)
+
 val valid_segment : string -> bool
 (** [valid_segment s] is [true] iff [s] is nonempty and every character
     satisfies {!is_id_char}. *)
