@@ -241,17 +241,19 @@ val render_check : render -> Verdict.t -> string
       ([warning: load L on C cores — timing verdicts degraded]); acceptance
       states (NEW, stale) put their load message in the actions block instead —
       one load message per run, never two.
-    - {b Table.} One row per case, in suite (authoring) order: id, time, ±ci%,
-      alloc, verdict. Values are right-aligned, widths content-derived, at least
-      two spaces between columns. Both value columns are unit-scaled
-      {e per column} — the unit of the column's smallest positive magnitude, so
-      cells stay comparable down the column and never mix [us] and [ms], or [w]
-      and [kw]; units are ASCII. At the base unit, exact allocation integers
-      render with thousands separators (["32,730 w"]); a kilo-scale column
-      renders scaled with trailing zeros trimmed (["3 kw"], ["32.73 kw"]).
-      Display rounds; the gate never does — exact deltas in verdict cells keep
-      full integers. Sampled allocation renders approximate, scaled, without its
-      own ci% (["~2.1 kw"] — one representation, the time ci already carries the
+    - {b Table.} One row per case, in suite (authoring) order: the status word
+      (the verdict cell's first relation), time, ±ci%, alloc, id; the rest of
+      the cell, when there is any, follows on a line indented six spaces. Status
+      words are left-aligned, values right-aligned, widths content-derived, two
+      spaces between columns. Both value columns are unit-scaled {e per column}
+      — the unit of the column's smallest positive magnitude, so cells stay
+      comparable down the column and never mix [us] and [ms], or [w] and [kw];
+      units are ASCII. At the base unit, exact allocation integers render with
+      thousands separators (["32,730 w"]); a kilo-scale column renders scaled
+      with trailing zeros trimmed (["3 kw"], ["32.73 kw"]). Display rounds; the
+      gate never does — exact deltas in verdict cells keep full integers.
+      Sampled allocation renders approximate, scaled, without its own ci%
+      (["~2.1 kw"] — one representation, the time ci already carries the
       sampling noise). The value columns show the first time-kind and first
       allocation-kind metrics; every other metric surfaces through the verdict
       cell. Per-case measurement warnings and run-level prune notices follow the

@@ -570,7 +570,7 @@ let rerun_hint_reproduces_the_invocation () =
   is_true ~msg:"no rerun line under a rule action"
     (not (contains staged "rerun:"));
   assert_contains ~msg:"the failing id stays in the table" staged
-    "REGRESSED alloc"
+    "REGRESSED  1.00 us  \xc2\xb10.0%  71 w  alpha"
 
 (* The default baseline path
 
@@ -660,9 +660,11 @@ let mixed_run_renders_all_four_blocks () =
        {|
 thumper: digest — 3 cases vs digest.thumper [testkey]
 
-  alpha   2.00 us  ±0.0%      54 w   REGRESSED +100.0% [+100.0, +100.0]  budget +5%  confirmed; equivalent (alloc exact)
-  beta    1.00 us  ±0.0%   2,100 w   improved -50.0% [-50.0, -50.0]  confirmed
-  gamma   1.00 us  ±0.0%   3,000 w   equivalent
+  REGRESSED   2.00 us  ±0.0%     54 w  alpha
+      +100.0% [+100.0, +100.0]  budget +5%  confirmed; equivalent (alloc exact)
+  improved    1.00 us  ±0.0%  2,100 w  beta
+      -50.0% [-50.0, -50.0]  confirmed
+  equivalent  1.00 us  ±0.0%  3,000 w  gamma
 
   rerun:   bench.exe -f alpha
   ratchet the baseline:  dune promote
@@ -681,7 +683,7 @@ let pass_run_renders_header_table_summary () =
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
-  alpha   1.00 us  ±0.0%   54 w   equivalent
+  equivalent  1.00 us  ±0.0%  54 w  alpha
 
   1 case: 1 passed.
 |}
@@ -693,9 +695,28 @@ let new_run_renders_proposed_rows_and_the_accept_prompt () =
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
 
-  alpha   1.00 us  ±0.0%   54 w   proposed
+  proposed  1.00 us  ±0.0%  54 w  alpha
 
   accept:  dune promote
+|}
+
+let a_proposed_metric_reads_as_proposed () =
+  (* The time compared equivalent; the allocation has no baseline row yet:
+     the row opens on the compared metric's word and the detail names what
+     is proposed. *)
+  let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
+  let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — 1 case vs digest.thumper [testkey]
+
+  equivalent  1.00 us  ±0.0%  54 w  alpha
+      proposed alloc
+
+  ratchet the baseline:  dune promote
+
+  1 case: 1 passed.
 |}
 
 let mv_hint_replaces_promote_outside_dune () =
@@ -723,7 +744,8 @@ let loaded_run_warns_under_the_header () =
 thumper: digest — 1 case vs digest.thumper [testkey]
 warning: load 7.9 on 8 cores — timing verdicts degraded
 
-  alpha   2.00 us  ±0.0%   54 w   inconclusive: environment; equivalent (alloc exact)
+  inconclusive  2.00 us  ±0.0%  54 w  alpha
+      environment; equivalent (alloc exact)
 
   1 case: 0 passed, 1 inconclusive.
 |}
@@ -750,7 +772,8 @@ let improvement_only_renders_the_ratchet_prompt () =
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
-  alpha   1.00 us  ±0.0%   54 w   improved -50.0% [-50.0, -50.0]  confirmed
+  improved  1.00 us  ±0.0%  54 w  alpha
+      -50.0% [-50.0, -50.0]  confirmed
 
   ratchet the baseline:  dune promote
 
@@ -769,7 +792,8 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
-  alpha   2.00 us  ±0.0%   54 w   inconclusive: unconfirmed; equivalent (alloc exact)
+  inconclusive  2.00 us  ±0.0%  54 w  alpha
+      unconfirmed; equivalent (alloc exact)
 
   1 case: 0 passed, 1 inconclusive.
 |}
@@ -783,7 +807,8 @@ let exact_alloc_failure_names_the_alloc_side () =
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
-  alpha   1.00 us  ±0.0%   71 w   REGRESSED alloc 54 w → 71 w (exact)
+  REGRESSED  1.00 us  ±0.0%  71 w  alpha
+      alloc 54 w → 71 w (exact)
 
   rerun:   bench.exe -f alpha
 
@@ -870,11 +895,24 @@ let measurement_warnings_render_after_the_table () =
        {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
-  alpha   1.00 us  ±0.0%   54 w   equivalent
+  equivalent  1.00 us  ±0.0%  54 w  alpha
   warning: alpha: possibly folded: wrap the input in black_box
 
   1 case: 1 passed.
 |}
+
+let absent_columns_leave_no_gap () =
+  (* A column no case fills is left out whole, its separator included. *)
+  let wall_only =
+    Run.Trial.make ~k:8 [ (m_wall, Run.Samples (sam (ties 5 1e-6))) ]
+  in
+  let alloc_only = Run.Trial.make ~k:8 [ (m_alloc, Run.Exact 54) ] in
+  assert_contains ~msg:"no alloc column"
+    (Cli.render_check (ctx ()) (verdict_of (bcase "alpha", wall_only)))
+    "\n  proposed  1.00 us  \xc2\xb10.0%  alpha\n";
+  assert_contains ~msg:"no time column"
+    (Cli.render_check (ctx ()) (verdict_of (bcase "alpha", alloc_only)))
+    "\n  proposed  54 w  alpha\n"
 
 let github_annotations_on_confirmed_regressions () =
   let v = fail_fixture () in
@@ -894,7 +932,7 @@ let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
   is_true ~msg:"no capital REGRESSED on an exit-0 run"
     (not (contains out "REGRESSED"));
   assert_contains ~msg:"the demonstrated relation stays visible" out
-    "regressed alloc +100.0%";
+    "regressed  1.00 us  \xc2\xb10.0%  ~200 w  alpha\n      alloc +100.0%";
   is_true ~msg:"no ::error:: annotation" (not (contains out "::error"));
   assert_contains ~msg:"summary agrees" out "1 case: 1 passed."
 
@@ -1389,6 +1427,9 @@ let () =
             sampled_alloc_renders_approximate;
           test "measurement warnings render after the table"
             measurement_warnings_render_after_the_table;
+          test "an absent column leaves no gap" absent_columns_leave_no_gap;
+          test "a proposed metric reads as proposed"
+            a_proposed_metric_reads_as_proposed;
           test "GitHub annotations on confirmed regressions"
             github_annotations_on_confirmed_regressions;
           test "an absolute cap on sampled evidence agrees with the exit code"

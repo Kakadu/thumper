@@ -48,7 +48,7 @@ identical.
   1
   $ grep -Ec '6 cases: [0-9]+ passed' out.log
   1
-  $ grep -Ec 'busy/spin +[0-9.]+ [mun]?s' out.log
+  $ grep -Ec ' [0-9.]+ [mun]?s .* busy/spin$' out.log
   1
   $ grep -c 'accept:\|ratchet' out.log
   0

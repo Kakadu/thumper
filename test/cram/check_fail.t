@@ -33,10 +33,10 @@ degraded leg asserts the inconclusive (environment) cell directly.
   >   code=$?
   >   if [ "$code" -eq 1 ]; then break; fi
   > done
-  $ if [ "$code" -eq 1 ] && grep -Eq 'busy/spin .*REGRESSED.*confirmed' out.log \
+  $ if [ "$code" -eq 1 ] && grep -A1 -E '^  REGRESSED .* busy/spin$' out.log | grep -q 'confirmed' \
   >    && grep -q 'rerun:' out.log && grep -q '::error' out.log; then
   >   echo spin-run-ok
-  > elif [ "$code" -eq 0 ] && grep -q 'inconclusive: environment' out.log; then
+  > elif [ "$code" -eq 0 ] && grep -q '^      environment' out.log; then
   >   echo spin-run-ok
   > fi
   spin-run-ok
@@ -80,7 +80,7 @@ no candidate.
   >   else
   >     echo "unexpected candidate: $changed $pooled"
   >   fi
-  > elif [ "$code" -eq 0 ] && grep -q 'inconclusive: environment' out2.log && [ ! -e fixture.thumper.corrected ]; then
+  > elif [ "$code" -eq 0 ] && grep -q '^      environment' out2.log && [ ! -e fixture.thumper.corrected ]; then
   >   echo mixed-run-ok
   > fi
   mixed-run-ok

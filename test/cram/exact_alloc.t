@@ -20,7 +20,7 @@ The bootstrapped row is proven exact evidence, not a sampled vector.
 
   $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick -f alloc > out.log 2>&1
   [1]
-  $ grep -Eq 'alloc/list .*REGRESSED alloc' out.log && echo alloc-gated
+  $ grep -A1 -E '^  REGRESSED .* alloc/list$' out.log | grep -q '^      alloc ' && echo alloc-gated
   alloc-gated
   $ grep -q '(exact)' out.log && echo integer-compared
   integer-compared
@@ -64,5 +64,5 @@ action's cwd and could not be pasted. The failing id stays in the table.
   $ grep -c 'rerun:' out5.log
   0
   [1]
-  $ grep -Eq 'alloc/list .*REGRESSED alloc' out5.log && echo failing-id-in-table
+  $ grep -A1 -E 'REGRESSED.* alloc/list$' out5.log | grep -q '^      alloc ' && echo failing-id-in-table
   failing-id-in-table

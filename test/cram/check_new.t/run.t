@@ -16,7 +16,7 @@ sets the variable but stages no promotion).
   $ INSIDE_DUNE=1 $FIX check --quick > out.log 2>&1
   $ grep -q 'no baseline for machine testkey' out.log && echo new-banner
   new-banner
-  $ grep -Ec 'busy/spin .*proposed' out.log
+  $ grep -Ec '^  proposed .* busy/spin$' out.log
   1
   $ grep -q 'accept:  dune promote' out.log && echo promotion-hint
   promotion-hint

@@ -19,8 +19,8 @@
    Noise never turns into a red build. A strong verdict must reproduce in
    an in-run confirmation pass before it stands, and the host's load is
    sampled at run start and again before confirmation: on a loaded host,
-   timing comparisons degrade to inconclusive — each verdict cell names
-   the reason ("inconclusive: environment") — while exact allocation
+   timing comparisons degrade to inconclusive — each row names the
+   reason ("environment") on the line below it — while exact allocation
    comparisons still gate. Inconclusive exits 0. Knobs for better hosts:
 
      --wait-quiet 60    wait up to 60 s for a quiet host instead of degrading

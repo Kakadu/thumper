@@ -51,9 +51,9 @@ compare, proposes a complete fresh section, and exits 0 (1 under
 $ dune build @bench
 thumper: digest — stale baseline for machine 9f3a1c2e8b4d6a07 (ocaml 5.5.0 · 64-bit · release → 5.6.0 · 64-bit · release)
 
-  sha256/string-64     1.40 us  ±0.9%   54 w   proposed
-  fib/10               1.10 us  ±0.7%    0 w   proposed
-  fib/20             135.50 us  ±1.0%    0 w   proposed
+  proposed    1.40 us  ±0.9%  54 w  sha256/string-64
+  proposed    1.10 us  ±0.7%   0 w  fib/10
+  proposed  135.50 us  ±1.0%   0 w  fib/20
 
   accept:  dune promote
 ```
@@ -78,9 +78,12 @@ $ dune build @bench
 thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 warning: load 7.9 on 10 cores — timing verdicts degraded
 
-  sha256/string-64     1.40 us  ±1.0%   54 w   inconclusive: environment; equivalent (alloc exact)
-  fib/10               1.10 us  ±0.8%    0 w   inconclusive: environment; equivalent (alloc exact)
-  fib/20             135.90 us  ±1.0%    0 w   inconclusive: environment; equivalent (alloc exact)
+  inconclusive    1.40 us  ±1.0%  54 w  sha256/string-64
+      environment; equivalent (alloc exact)
+  inconclusive    1.10 us  ±0.8%   0 w  fib/10
+      environment; equivalent (alloc exact)
+  inconclusive  135.90 us  ±1.0%   0 w  fib/20
+      environment; equivalent (alloc exact)
 
   3 cases: 0 passed, 3 inconclusive.
 ```
@@ -122,9 +125,9 @@ other sections untouched:
 $ dune exec bench/bench_digest.exe -- bless
 thumper: digest — blessed 3 cases for machine 9f3a1c2e8b4d6a07
 
-  sha256/string-64     1.40 us  ±0.9%   54 w   proposed
-  fib/10               1.10 us  ±0.7%    0 w   proposed
-  fib/20             135.50 us  ±1.0%    0 w   proposed
+  proposed    1.40 us  ±0.9%  54 w  sha256/string-64
+  proposed    1.10 us  ±0.7%   0 w  fib/10
+  proposed  135.50 us  ±1.0%   0 w  fib/20
 
   accept:  mv bench/digest.thumper.corrected bench/digest.thumper
 ```

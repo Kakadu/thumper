@@ -124,7 +124,7 @@ The determinism kit:
   need a judged outcome retry behind `--wait-quiet`, then accept
   either leg explicitly: the quiet-host outcome with its strong
   assertions, or the specified degradation
-  (`inconclusive: environment`, exit 0) as a visible skip. A run that
+  (`inconclusive`, reason `environment`, exit 0) as a visible skip. A run that
   judged on a quiet gate and still got the wrong exit code matches
   neither leg and fails. Invariants that hold on both legs (the
   baseline is never written; a candidate never carries regressed,

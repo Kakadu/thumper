@@ -77,10 +77,10 @@ case and proposes one. Accepting it is one command:
 $ dune build @bench
 thumper: digest — no baseline for machine 9f3a1c2e8b4d6a07 (Apple M1 Max)
 
-  sha256/string-64     1.40 us  ±0.9%   54 w   proposed
-  fib/10               1.10 us  ±0.7%    0 w   proposed
-  fib/20             135.50 us  ±1.0%    0 w   proposed
-  fib/30               1.62 ms  ±0.8%    0 w   proposed
+  proposed    1.40 us  ±0.9%  54 w  sha256/string-64
+  proposed    1.10 us  ±0.7%   0 w  fib/10
+  proposed  135.50 us  ±1.0%   0 w  fib/20
+  proposed    1.62 ms  ±0.8%   0 w  fib/30
 
   accept:  dune promote
 $ dune promote && git add bench/digest.thumper
@@ -96,8 +96,9 @@ fail:
 $ dune build @bench
 thumper: digest — 4 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 
-  sha256/string-64     1.84 us  ±1.1%   54 w   REGRESSED +31.4% [+30.0, +32.9]  budget +5%  confirmed; equivalent (alloc exact)
-  fib/10               1.10 us  ±0.7%    0 w   equivalent
+  REGRESSED   1.84 us  ±1.1%  54 w  sha256/string-64
+      +31.4% [+30.0, +32.9]  budget +5%  confirmed; equivalent (alloc exact)
+  equivalent  1.10 us  ±0.7%   0 w  fib/10
   ...
 
   4 cases: 3 passed, 1 regressed.

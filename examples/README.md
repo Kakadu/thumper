@@ -39,8 +39,8 @@ nothing is installed behind your back:
 $ dune exec examples/01-first-benchmark/bench_hello.exe
 thumper: hello — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
 
-  list-rev     1.43 us  ±2.4%       3 kw   proposed
-  list-sort   25.03 us  ±2.2%   32.73 kw   proposed
+  proposed   1.43 us  ±2.4%      3 kw  list-rev
+  proposed  25.03 us  ±2.2%  32.73 kw  list-sort
 
   accept:  mv examples/01-first-benchmark/hello.thumper.corrected examples/01-first-benchmark/hello.thumper
   measured under load (7.6/10) — prefer a quiet host before accepting
@@ -73,9 +73,9 @@ one that means anything on your hardware. The first build bootstraps it:
 $ dune build @bench
 thumper: gate — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
 
-  md5/string-64    1.40 us  ±0.9%   54 w   proposed
-  fib/10           1.10 us  ±0.7%    0 w   proposed
-  fib/20         135.50 us  ±1.0%    0 w   proposed
+  proposed    1.40 us  ±0.9%  54 w  md5/string-64
+  proposed    1.10 us  ±0.7%   0 w  fib/10
+  proposed  135.50 us  ±1.0%   0 w  fib/20
 
   accept:  dune promote
 File "examples/02-regression-gate/gate.thumper", line 1, characters 0-0:
@@ -133,18 +133,18 @@ the baseline accepts (that is all `dune promote` does in example 02):
 $ dune exec examples/03-budgets/bench_budgets.exe -- check --baseline /tmp/budgets.thumper
 thumper: budgets — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
 
-  codec/hex-encode   12.87 us  ±0.8%   2,048 w   proposed
-  codec/hex-decode    8.13 us  ±0.9%   1,024 w   proposed
-  scratch-table       0.03 us  ±1.2%      64 w   proposed
+  proposed  12.87 us  ±0.8%  2,048 w  codec/hex-encode
+  proposed   8.13 us  ±0.9%  1,024 w  codec/hex-decode
+  proposed   0.03 us  ±1.2%     64 w  scratch-table
 
   accept:  mv /tmp/budgets.thumper.corrected /tmp/budgets.thumper
 $ mv /tmp/budgets.thumper.corrected /tmp/budgets.thumper
 $ dune exec examples/03-budgets/bench_budgets.exe -- check --baseline /tmp/budgets.thumper
 thumper: budgets — 3 cases vs /tmp/budgets.thumper [ca352e279bc47cb1]
 
-  codec/hex-encode   12.88 us  ±0.8%   2,048 w   equivalent
-  codec/hex-decode    8.12 us  ±0.8%   1,024 w   equivalent
-  scratch-table       0.03 us  ±1.1%      64 w   equivalent
+  equivalent  12.88 us  ±0.8%  2,048 w  codec/hex-encode
+  equivalent   8.12 us  ±0.8%  1,024 w  codec/hex-decode
+  equivalent   0.03 us  ±1.1%     64 w  scratch-table
 
   3 cases: 3 passed.
 $ echo $?
@@ -171,9 +171,12 @@ parallel build:
 thumper: budgets — 3 cases vs /tmp/budgets.thumper [ca352e279bc47cb1]
 warning: load 7.6 on 10 cores — timing verdicts degraded
 
-  codec/hex-encode   12.91 us  ±1.1%   2,048 w   inconclusive: environment; equivalent (alloc exact)
-  codec/hex-decode    8.11 us  ±1.4%   1,024 w   inconclusive: environment; equivalent (alloc exact)
-  scratch-table       0.03 us  ±1.9%      64 w   inconclusive: environment; equivalent (alloc exact)
+  inconclusive  12.91 us  ±1.1%  2,048 w  codec/hex-encode
+      environment; equivalent (alloc exact)
+  inconclusive   8.11 us  ±1.4%  1,024 w  codec/hex-decode
+      environment; equivalent (alloc exact)
+  inconclusive   0.03 us  ±1.9%     64 w  scratch-table
+      environment; equivalent (alloc exact)
 
   3 cases: 0 passed, 3 inconclusive.
 ```

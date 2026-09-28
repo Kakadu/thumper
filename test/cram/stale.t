@@ -20,7 +20,7 @@ Doctor the compiler identity to a version that never existed.
   $ $FIX check --quick > out.log 2>&1
   $ grep -q 'stale baseline for machine testkey' out.log && echo stale-rendered
   stale-rendered
-  $ grep -Ec 'proposed$' out.log
+  $ grep -Ec '^  proposed ' out.log
   6
   $ grep -q 'accept:  ' out.log && echo remedy-named
   remedy-named

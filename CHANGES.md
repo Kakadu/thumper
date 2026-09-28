@@ -65,9 +65,10 @@ pipeline is new (design rationale distilled in `doc/dev/`):
   keep resolving in the action's cwd — the `diff?` contract — and installed
   binaries in the invoker's; `--baseline PATH` always wins). The report
   always prints,
-  whole, on stdout: header, a per-case table (id, time, ±ci%, alloc,
-  verdict — per-column time units, thousands-separated exact allocation
-  integers, only `REGRESSED` capitalized and only when the metric gates),
+  whole, on stdout: header, a per-case table (status, time, ±ci%, alloc,
+  id, the rest of the verdict on an indented line — per-column time units,
+  thousands-separated exact allocation integers, only `REGRESSED`
+  capitalized and only when the metric gates),
   actions (`rerun:`, `accept:`, `ratchet the baseline:`), summary. On a TTY
   a transient stderr status line narrates measurement and is erased before
   the report. `--color auto|always|never` resolves per stream; an explicit

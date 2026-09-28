@@ -19,7 +19,7 @@ cell names the reason directly (there is no -v; the report is always
 whole), and the summary counts it.
 
   $ THUMPER_FIXTURE_MODE=nondet $FIX check --quick -f nondet > out.log 2>&1
-  $ grep -Ec 'nondet/flip .*inconclusive: ' out.log
+  $ grep -A1 -E '^  inconclusive .* nondet/flip$' out.log | grep -Ec '^      [a-z]'
   1
   $ grep -c '1 case: 0 passed, 1 inconclusive.' out.log
   1

@@ -72,9 +72,9 @@ proposes the whole baseline:
 $ dune build @bench
 thumper: digest — no baseline for machine 9f3a1c2e8b4d6a07 (Apple M1 Max)
 
-  sha256/string-64     1.40 us  ±0.9%   54 w   proposed
-  fib/10               1.10 us  ±0.7%    0 w   proposed
-  fib/20             135.50 us  ±1.0%    0 w   proposed
+  proposed    1.40 us  ±0.9%  54 w  sha256/string-64
+  proposed    1.10 us  ±0.7%   0 w  fib/10
+  proposed  135.50 us  ±1.0%   0 w  fib/20
 
   accept:  dune promote
 File "bench/digest.thumper", line 1, characters 0-0:
@@ -99,9 +99,9 @@ where every case is within budget prints the full report and exits 0:
 $ dune build @bench
 thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 
-  sha256/string-64     1.40 us  ±0.8%   54 w   equivalent
-  fib/10               1.10 us  ±0.7%    0 w   equivalent
-  fib/20             135.52 us  ±0.9%    0 w   equivalent
+  equivalent    1.40 us  ±0.8%  54 w  sha256/string-64
+  equivalent    1.10 us  ±0.7%   0 w  fib/10
+  equivalent  135.52 us  ±0.9%   0 w  fib/20
 
   3 cases: 3 passed.
 ```
@@ -119,9 +119,10 @@ verdict stands only if both measurements agree.
 $ dune build @bench
 thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 
-  sha256/string-64     1.84 us  ±1.1%   54 w   REGRESSED +31.4% [+30.0, +32.9]  budget +5%  confirmed; equivalent (alloc exact)
-  fib/10               1.10 us  ±0.7%    0 w   equivalent
-  fib/20             135.61 us  ±1.0%    0 w   equivalent
+  REGRESSED     1.84 us  ±1.1%  54 w  sha256/string-64
+      +31.4% [+30.0, +32.9]  budget +5%  confirmed; equivalent (alloc exact)
+  equivalent    1.10 us  ±0.7%   0 w  fib/10
+  equivalent  135.61 us  ±1.0%   0 w  fib/20
 
   3 cases: 2 passed, 1 regressed.
 ```
@@ -143,9 +144,10 @@ cases, and the diff you commit is the record of the improvement:
 $ dune build @bench
 thumper: digest — 3 cases vs digest.thumper [9f3a1c2e8b4d6a07]
 
-  sha256/string-64     1.19 us  ±0.8%   54 w   improved -15.0% [-15.7, -14.3]  confirmed
-  fib/10               1.10 us  ±0.7%    0 w   equivalent
-  fib/20             135.42 us  ±0.9%    0 w   equivalent
+  improved      1.19 us  ±0.8%  54 w  sha256/string-64
+      -15.0% [-15.7, -14.3]  confirmed
+  equivalent    1.10 us  ±0.7%   0 w  fib/10
+  equivalent  135.42 us  ±0.9%   0 w  fib/20
 
   ratchet the baseline:  dune promote
 
@@ -161,7 +163,7 @@ Promoting is always safe: a proposed update never contains a regressed,
 inconclusive, or unconfirmed case.
 
 **Noise** cannot fail the check. On a busy machine, timing verdicts
-degrade to `inconclusive: environment` (exit 0) with a warning naming
+degrade to `inconclusive`, reason `environment` (exit 0), with a warning naming
 the load; exact allocation is still checked. See
 [Machines and noise](machines-and-noise.md).
 
@@ -172,12 +174,13 @@ output. Four blocks, blank-line separated, empty blocks omitted:
 
 - **Header** — suite, case count, baseline path, machine key. On a busy
   machine a warning line sits directly under it.
-- **Table** — one row per case, in suite order: id, time, ±ci%,
-  allocation, verdict. An estimated allocation is marked `~`; an exact
+- **Table** — one row per case, in suite order: status, time, ±ci%,
+  allocation, id; the rest of the verdict, when there is any, on an
+  indented line below. An estimated allocation is marked `~`; an exact
   count isn't. Display rounds, the check never does. `REGRESSED` is
   capitalized only when the case actually fails, so the report and the
-  exit code never disagree; inconclusive cells name their reason inline
-  (`inconclusive: unconfirmed`).
+  exit code never disagree; an inconclusive row names its reason on the
+  line below (`unconfirmed`).
 - **Actions** — the `rerun:` command when something failed (not under
   a dune rule); the
   `accept:` / `ratchet the baseline:` command when an update was
@@ -199,7 +202,7 @@ speed:
 $ dune exec bench/bench_digest.exe -- --quick -f string-64
 thumper: digest — 1 case vs bench/digest.thumper [9f3a1c2e8b4d6a07]
 
-  sha256/string-64   1.40 us  ±0.9%   54 w   equivalent
+  equivalent  1.40 us  ±0.9%  54 w  sha256/string-64
 
   1 case: 1 passed.
 ```

@@ -34,7 +34,7 @@ paths).
 
   $ grep -c 'fixture — blessed 6 cases for machine testkey' out.log
   1
-  $ grep -Ec 'proposed$' out.log
+  $ grep -Ec '^  proposed ' out.log
   6
   $ grep -Eq 'accept:  mv /.*/fixture.thumper.corrected /.*/fixture.thumper' out.log && echo names-candidate
   names-candidate

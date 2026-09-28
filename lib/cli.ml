@@ -466,21 +466,31 @@ type render = {
 let pad_left s w =
   if String.length s >= w then s else String.make (w - String.length s) ' ' ^ s
 
-let pad_right s w =
-  if String.length s >= w then s else s ^ String.make (w - String.length s) ' '
-
 (* The table
 
-   One row per case, suite order: id | time | ±ci% | alloc | verdict. The
-   value columns show the first time-kind and first allocation-kind metrics;
-   everything else surfaces through the verdict cell. Widths are content-
-   derived; the time column is unit-scaled per column (the unit of its
-   smallest magnitude), so cells stay comparable down the column. *)
+   One row per case, suite order: status | time | ±ci% | alloc | id, and the
+   rest of the verdict cell, when there is any, on an indented line below.
+   The status word opens the row and the id closes it, so only an id longer
+   than the room left runs a row past 80 columns. The value columns show the
+   first time-kind and first allocation-kind metrics; everything else
+   surfaces through the cell. Widths are content-derived; the time column is
+   unit-scaled per column (the unit of its smallest magnitude), so cells stay
+   comparable down the column. *)
 
+(* A cell fragment: its relation word ([REGRESSED], [inconclusive], ...),
+   the separator that follows it ([" "], [": "], or [""] without a detail),
+   and its detail ([wide interval], [alloc 54 w → 71 w (exact)]). A row
+   opens on the first fragment's word; its detail line starts with that
+   fragment's detail alone. *)
 type frag = {
-  text : string;
+  word : string;
+  sep : string;
+  detail : string;
   style : [ `Red | `Green | `Yellow | `Faint ] option;
 }
+
+let frag ?style ?(sep = " ") word detail =
+  { word; sep = (if detail = "" then "" else sep); detail; style }
 
 type alloc_cell = Alloc_exact of int | Alloc_approx of float | No_alloc
 
@@ -569,29 +579,41 @@ let table_lines ~color rows =
       rows
   in
   let width f = List.fold_left (fun acc c -> max acc (String.length (f c))) 0 in
-  let idw = width (fun (i, _, _, _, _) -> i) cells in
+  let status = function f :: _ -> f.word | [] -> "" in
+  let sw = width (fun (_, _, _, _, frags) -> status frags) cells in
   let tw = width (fun (_, t, _, _, _) -> t) cells in
   let cw = width (fun (_, _, c, _, _) -> c) cells in
   let aw = width (fun (_, _, _, a, _) -> a) cells in
-  List.map
+  let paint style s =
+    match style with None -> s | Some st -> styled ~color st s
+  in
+  List.concat_map
     (fun (id, t, ci, a, frags) ->
       let b = Buffer.create 96 in
       Buffer.add_string b "  ";
-      Buffer.add_string b (pad_right id idw);
-      if tw > 0 then Buffer.add_string b ("   " ^ pad_left t tw);
+      (match frags with
+      | f :: _ ->
+          Buffer.add_string b (paint f.style f.word);
+          Buffer.add_string b (String.make (sw - String.length f.word) ' ')
+      | [] -> Buffer.add_string b (String.make sw ' '));
+      if tw > 0 then Buffer.add_string b ("  " ^ pad_left t tw);
       if cw > 0 then Buffer.add_string b ("  " ^ pad_left ci cw);
-      if aw > 0 then Buffer.add_string b ("   " ^ pad_left a aw);
-      let cell =
-        String.concat "; "
-          (List.map
-             (fun f ->
-               match f.style with
-               | None -> f.text
-               | Some st -> styled ~color st f.text)
-             frags)
+      if aw > 0 then Buffer.add_string b ("  " ^ pad_left a aw);
+      Buffer.add_string b ("  " ^ id);
+      (* The detail: the status fragment's own detail, plain (its word
+         already carries the style), then every other fragment whole. *)
+      let detail =
+        match frags with
+        | [] -> []
+        | f :: others ->
+            (if f.detail = "" then [] else [ f.detail ])
+            @ List.map
+                (fun f -> paint f.style (f.word ^ f.sep ^ f.detail))
+                others
       in
-      if cell <> "" then Buffer.add_string b ("   " ^ cell);
-      Buffer.contents b)
+      match detail with
+      | [] -> [ Buffer.contents b ]
+      | d -> [ Buffer.contents b; "      " ^ String.concat "; " d ])
     cells
 
 (* Verdict cells
@@ -606,66 +628,65 @@ let metric_tag m =
   | `Allocation -> "alloc"
   | `Time | `Other -> Metric.id m
 
+(* A sampled shift and its interval: [+12.1% [+7.3, +17.5]]. The report's
+   cells and the annotations print it, and a relative budget, the same way. *)
+let interval (s : Verdict.shift) =
+  Printf.sprintf "%s [%s, %s]" (pct s.Verdict.estimate) (bound s.Verdict.lower)
+    (bound s.Verdict.upper)
+
+let relative_budget (mr : Verdict.metric_report) =
+  match Option.map Budget.contract mr.budget with
+  | Some (Budget.Relative { max_regression; _ }) ->
+      Some (Printf.sprintf "budget +%g%%" (max_regression *. 100.))
+  | Some (Budget.Absolute_max _) | None -> None
+
 (* (rank, fragment): rank orders fragments most-severe-first — 0 gating
    REGRESSED, 1 demonstrated-but-ungated regression, 2 inconclusive, 3
    improved, 4 within budget, 5 proposed, 6 the exact-equal reassurance. *)
 let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
     =
   let m = mr.metric in
-  let tag = if primary then "" else " " ^ metric_tag m in
+  (* A non-time metric's fragment names it first: [alloc 54 w → 71 w]. *)
+  let tagged body =
+    if primary then body
+    else if body = "" then metric_tag m
+    else metric_tag m ^ " " ^ body
+  in
+  let confirmed = "  confirmed" in
+  let strong_detail = function
+    | Verdict.Confirmed { first; _ } -> interval first ^ confirmed
+    | Verdict.Exact_change { baseline; candidate } ->
+        Printf.sprintf "%s \xe2\x86\x92 %s (exact)" (exact_str m baseline)
+          (exact_str m candidate)
+  in
   match mr.verdict with
-  | Verdict.New_row -> Some (5, { text = "proposed" ^ tag; style = None })
+  | Verdict.New_row -> Some (5, frag "proposed" (tagged ""))
   | Verdict.Judged (Verdict.Regressed strong) ->
       let gates = report_fails c mr in
       let word = if gates then "REGRESSED" else "regressed" in
-      let style = Some (if gates then `Red else `Yellow) in
-      let text =
-        match strong with
-        | Verdict.Confirmed { first; _ } ->
-            let budget =
-              match Option.map Budget.contract mr.budget with
-              | Some (Budget.Relative { max_regression; _ }) ->
-                  Printf.sprintf "  budget +%g%%" (max_regression *. 100.)
-              | Some (Budget.Absolute_max _) | None -> ""
-            in
-            Printf.sprintf "%s%s %s [%s, %s]%s  confirmed" word tag
-              (pct first.Verdict.estimate)
-              (bound first.Verdict.lower)
-              (bound first.Verdict.upper)
-              budget
-        | Verdict.Exact_change { baseline; candidate } ->
-            Printf.sprintf "%s%s %s \xe2\x86\x92 %s (exact)" word tag
-              (exact_str m baseline) (exact_str m candidate)
+      let style = if gates then `Red else `Yellow in
+      let budget =
+        match (strong, relative_budget mr) with
+        | Verdict.Confirmed _, Some b -> "  " ^ b
+        | _ -> ""
       in
-      Some ((if gates then 0 else 1), { text; style })
+      let detail =
+        match strong with
+        | Verdict.Confirmed { first; _ } -> interval first ^ budget ^ confirmed
+        | Verdict.Exact_change _ -> strong_detail strong
+      in
+      Some ((if gates then 0 else 1), frag ~style word (tagged detail))
   | Verdict.Judged (Verdict.Improved strong) ->
-      let text =
-        match strong with
-        | Verdict.Confirmed { first; _ } ->
-            Printf.sprintf "improved%s %s [%s, %s]  confirmed" tag
-              (pct first.Verdict.estimate)
-              (bound first.Verdict.lower)
-              (bound first.Verdict.upper)
-        | Verdict.Exact_change { baseline; candidate } ->
-            Printf.sprintf "improved%s %s \xe2\x86\x92 %s (exact)" tag
-              (exact_str m baseline) (exact_str m candidate)
-      in
-      Some (3, { text; style = Some `Green })
+      Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
   | Verdict.Judged (Verdict.Within_budget s) ->
-      Some
-        ( 4,
-          {
-            text =
-              Printf.sprintf "within budget%s %s" tag (pct s.Verdict.estimate);
-            style = None;
-          } )
+      Some (4, frag "within budget" (tagged (pct s.Verdict.estimate)))
   | Verdict.Judged (Verdict.Inconclusive { reason; _ }) ->
+      let reason = reason_short reason in
       Some
         ( 2,
-          {
-            text = Printf.sprintf "inconclusive%s: %s" tag (reason_short reason);
-            style = Some `Yellow;
-          } )
+          if primary then frag ~style:`Yellow ~sep:": " "inconclusive" reason
+          else frag ~style:`Yellow "inconclusive" (metric_tag m ^ ": " ^ reason)
+        )
   | Verdict.Judged (Verdict.Equivalent _) -> None
 
 (* The reassurance exception (.mli): when the cell is otherwise non-pass, an
@@ -678,11 +699,8 @@ let reassurance_of ~primary (c : Verdict.case_report)
       | Some (Run.Exact _) ->
           Some
             ( 6,
-              {
-                text =
-                  Printf.sprintf "equivalent (%s exact)" (metric_tag mr.metric);
-                style = None;
-              } )
+              frag "equivalent"
+                (Printf.sprintf "(%s exact)" (metric_tag mr.metric)) )
       | _ -> None)
   | _ -> None
 
@@ -702,7 +720,7 @@ let check_cell (c : Verdict.case_report) =
     | None -> false
   in
   if c.reports <> [] && List.for_all report_new c.reports then
-    [ { text = "proposed"; style = None } ]
+    [ frag "proposed" "" ]
   else
     let notable =
       List.filter_map
@@ -710,8 +728,8 @@ let check_cell (c : Verdict.case_report) =
         c.reports
     in
     match notable with
-    | [] -> [ { text = "equivalent"; style = Some `Faint } ]
-    | _ ->
+    | [] -> [ frag ~style:`Faint "equivalent" "" ]
+    | _ -> (
         let non_pass = List.exists (fun (rank, _) -> rank <= 2) notable in
         let reassure =
           if non_pass then
@@ -720,10 +738,18 @@ let check_cell (c : Verdict.case_report) =
               c.reports
           else []
         in
-        List.stable_sort
-          (fun (a, _) (b, _) -> Int.compare a b)
-          (notable @ reassure)
-        |> List.map snd
+        let frags =
+          List.stable_sort
+            (fun (a, _) (b, _) -> Int.compare a b)
+            (notable @ reassure)
+          |> List.map snd
+        in
+        (* Only a non-time metric is proposed: the compared metric was
+           equivalent, and the row says so before naming what is proposed. *)
+        match frags with
+        | { word = "proposed"; detail; _ } :: _ when detail <> "" ->
+            frag ~style:`Faint "equivalent" "" :: frags
+        | _ -> frags)
 
 (* The report *)
 
@@ -789,8 +815,7 @@ let render_check r v =
     List.map
       (fun (c : Verdict.case_report) ->
         let cell =
-          if acceptance then [ { text = "proposed"; style = None } ]
-          else check_cell c
+          if acceptance then [ frag "proposed" "" ] else check_cell c
         in
         {
           row_id = c.id;
@@ -1237,7 +1262,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
              row_id = id;
              time = time_of_trial trial;
              alloc = alloc_of_trial trial;
-             cell = [ { text = "proposed"; style = None } ];
+             cell = [ frag "proposed" "" ];
            })
          (Run.trials run))
     @ List.concat_map

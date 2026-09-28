@@ -147,8 +147,8 @@ and the reason names why and what to do. Exit 0 (1 under `--strict`).
 | `exactness_lost` | allocation was nondeterministic this run | fix the nondeterminism |
 | `batch_drifted` | the case's speed changed enough to need recalibration | `bless` to re-baseline it |
 
-The report names each case's reason inline, in its verdict cell
-(`inconclusive: unconfirmed`), and the summary line counts them.
+The report names each case's reason on the line below its row
+(`unconfirmed`), and the summary line counts them.
 
 ## Exit codes
 
