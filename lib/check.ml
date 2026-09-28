@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type error =
   | Lock of Env.Lock.error
   | Measurement of Measure.failure
@@ -34,11 +36,6 @@ type progress = {
   case : string;
 }
 
-(* Resolution and selection, before the lease: a broken suite or filter must
-   fail without waiting on a holder. Duplicate ids are detected on the whole
-   suite before filtering ([Bench.resolve]'s contract), and a selection
-   covering every resolved case is [`Full] — what licenses [Verdict]'s prune
-   rule. *)
 let select ?filter ~metrics ~budgets benches =
   match Bench.resolve benches with
   | Error e -> error (Invalid_suite e)
@@ -59,17 +56,15 @@ let select ?filter ~metrics ~budgets benches =
           in
           (selected, selection))
 
-(* The frozen batch size for [id]: [Baseline.case_frozen_k], the single
-   reading [Verdict] also uses — the freeze side and the judge side agree by
-   construction (.mli). *)
+(* [Verdict] reads a case's frozen batch size with the same
+   [Baseline.case_frozen_k], so the batch size measured is the one judged. *)
 let frozen_k section ~id =
   Option.bind section (fun s -> Baseline.case_frozen_k s ~id)
 
-(* The first measurement failure aborts the run (.mli), in both sweeps. In
-   the first, a verdict over fewer cases than were selected would, under a full
-   selection, prune the rows of the cases that failed from the corrected file.
-   In the confirmation sweep, [Verdict.decide] reads a missing trial as
-   unconfirmed, an outcome that exits 0: a dead worker must not pass. *)
+(* A failure ends the run in either sweep. In the first, a verdict over fewer
+   cases than were selected would, under a full selection, prune the failed
+   cases' rows from the corrected file. In the second, [Verdict.decide] reads a
+   missing trial as unconfirmed, which exits 0: a dead worker must not pass. *)
 let measured ?instruments ~config ~frozen_k case =
   match Measure.case ?instruments ~config ~frozen_k case with
   | Ok trial -> trial
@@ -78,8 +73,6 @@ let measured ?instruments ~config ~frozen_k case =
 let under_lock f =
   match Env.Lock.with_lock f with Ok v -> v | Error e -> error (Lock e)
 
-(* One tick per case, before it is measured (.mli): the consumer names the
-   case currently holding the run, never one already done. *)
 let tick on_progress ~phase ~total ~index case =
   on_progress { phase; index; total; case = Bench.id case }
 
@@ -97,6 +90,7 @@ let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
              (Bench.id case, measured ?instruments ~config ~frozen_k:None case))
            selected))
 
+(* [Baseline.of_string] accepts the empty string. *)
 let empty_file =
   match Baseline.of_string "" with Ok f -> f | Error _ -> assert false
 
@@ -118,12 +112,12 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
       ocaml = Env.ocaml_identity ();
     }
   in
-  (* Wrong-ruler preflight, before the lease: a programmer error must not
-     wait on a holder or spend a measurement sweep before it raises. *)
+  (* Before the lock: a programmer error must neither wait on a holder nor
+     spend a sweep before it raises. *)
   (match Baseline.suite file with
   | Some s when not (String.equal s name) ->
       invalid_arg
-        (Printf.sprintf
+        (strf
            "Check.run: baseline is for suite %S, not %S; pass this suite's \
             file, or update its '# suite:' header if the suite was renamed"
            s name)
@@ -148,17 +142,12 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
       in
       match Verdict.confirmations provisional with
       | [] ->
-          (* No re-sample: with nothing pending the gate cannot matter. *)
+          (* No second sample: with nothing pending, the load changes nothing. *)
           Verdict.decide ~load:start_load ~confirmations:[] provisional
       | queue -> (
-          (* The gate is sampled again before the confirmation
-             queue. *)
           match sample_load () with
           | Env.Loaded _ as loaded ->
-              (* [decide] degrades every pending relation to
-                 [Inconclusive Environment] under a loaded gate whatever
-                 confirmation evidence is passed; measuring the queue would
-                 collect evidence judgment must discard. *)
+              (* [decide] would discard the confirmations of a loaded host. *)
               Verdict.decide ~load:loaded ~confirmations:[] provisional
           | Env.Quiet as quiet ->
               let total = List.length queue in
@@ -173,9 +162,7 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
                     | Some (case, trial) ->
                         tick on_progress ~phase:`Confirming ~total
                           ~index:(i + 1) case;
-                        (* Protocol identity: the confirmation is
-                           frozen at the provisional trial's k, in a fresh
-                           worker. *)
+                        (* One protocol for both trials of a case. *)
                         ( id,
                           measured ?instruments ~config
                             ~frozen_k:(Some (Run.Trial.k trial))
