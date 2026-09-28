@@ -564,6 +564,26 @@ let evidence_shape_reasons_survive_a_loaded_gate () =
   in
   check_rel t ~case:"a" ~metric:m_alloc "inconclusive:exactness_lost"
 
+let non_positive_survives_a_loaded_gate_and_drift_does_not () =
+  (* A quiet host cannot fix a zero sample, so load never hides it; load
+     does explain drift, so a drifted trial under load reads environment. *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let t =
+    run_check ~gate:loaded ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]
+  in
+  check_rel ~msg:"zeros under load" t ~case:"a" ~metric:m_wall
+    "inconclusive:non_positive";
+  let t =
+    run_check ~gate:loaded ~file
+      [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
+  in
+  check_rel ~msg:"drift under load" t ~case:"a" ~metric:m_wall
+    "inconclusive:environment";
+  (* The smallest stored row, three positive samples, is compared. *)
+  let file = file_of [ wall_row "a" (ties 3 1.0) ] in
+  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
+  check_rel ~msg:"a three-sample row" t ~case:"a" ~metric:m_wall "equivalent"
+
 (* Staleness *)
 
 let stale_ident = { ident with Baseline.ocaml = "5.4.0 64-bit release" }
@@ -1678,6 +1698,8 @@ let () =
             loaded_gate_at_decide_degrades_pendings;
           test "evidence-shape reasons survive a loaded gate"
             evidence_shape_reasons_survive_a_loaded_gate;
+          test "a non-positive sample survives load; drift does not"
+            non_positive_survives_a_loaded_gate_and_drift_does_not;
         ];
       group "staleness"
         [

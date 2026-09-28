@@ -197,18 +197,21 @@ let table ~e ~r ~l ~u sh =
 let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
     ~trial_k =
   let e, r = relative_params budget in
-  if is_loaded gate then Settled (Judged (inconclusive Environment))
-  else if cand.Run.drifted then
-    Settled (Judged (inconclusive Candidate_drifted))
+  if
+    (* A zero sample breaks the log-space comparison, and no amount of
+       re-measurement prices it: its own reason, with an honest remedy. A
+       quiet host would not fix it either, so it is tested before the load. *)
+    (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
+  then Settled (Judged (inconclusive Non_positive))
+  else if is_loaded gate then Settled (Judged (inconclusive Environment))
+  else if
+    (* Load explains drift, so drift is only read on a quiet host. *)
+    cand.Run.drifted
+  then Settled (Judged (inconclusive Candidate_drifted))
   else if
     (* Defensive: public constructors require n >= 3. *)
     Array.length baseline < 3
   then Settled (Judged (inconclusive Wide_interval))
-  else if
-    (* A zero sample breaks the log-space comparison, and no amount of
-       re-measurement prices it: its own reason, with an honest remedy. *)
-    (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
-  then Settled (Judged (inconclusive Non_positive))
   else
     let baseline_log = log_all baseline in
     let sh =
