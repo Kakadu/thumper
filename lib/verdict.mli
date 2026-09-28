@@ -143,8 +143,7 @@ type staleness =
   | Ocaml_mismatch of { section : string; current : string }
       (** Compiler identity changed — the only staleness (pre-rewrite files are
           parse errors in [Baseline], never sections). [section] is the recorded
-          [# ocaml:] line ([""] when the section has none — an unrecorded
-          identity is never comparable). *)
+          [# ocaml:] line. *)
 
 type comparison =
   | No_baseline  (** No section for this machine: whole section is NEW. *)

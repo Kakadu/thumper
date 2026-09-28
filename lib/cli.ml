@@ -831,11 +831,10 @@ let render_check r v =
             (Printf.sprintf " — no baseline for machine %s (%s)"
                ident.Baseline.machine r.cpu_model)
       | Verdict.Stale (Verdict.Ocaml_mismatch { section; current }) ->
-          let recorded = if section = "" then "(unrecorded)" else section in
           header_line ~color ~suite
             (Printf.sprintf
                " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
-               ident.Baseline.machine recorded current)
+               ident.Baseline.machine section current)
     in
     match (comparison, gate) with
     | Verdict.Compared, Env.Loaded { load; cores } ->

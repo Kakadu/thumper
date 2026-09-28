@@ -314,12 +314,7 @@ let classify_comparison identity section =
       (* The section is derived from the judged file by this machine's key,
          so a foreign section is unrepresentable here. *)
       let recorded = Baseline.ocaml_of s in
-      (* The grammar guarantees a recorded identity; [recorded = ""] arises
-         only from a programmatically built section with an empty identity,
-         and is stale even against an (equally pathological) empty current
-         one. *)
-      if recorded <> "" && String.equal recorded identity.Baseline.ocaml then
-        Compared
+      if String.equal recorded identity.Baseline.ocaml then Compared
       else
         Stale
           (Ocaml_mismatch

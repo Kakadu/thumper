@@ -749,6 +749,16 @@ let set_section_validates () =
       Baseline.set_section ~annotations:[ "two\nlines" ] t identity [ row ]);
   invalid (fun () -> Baseline.set_section t identity [ row; row ])
 
+let set_section_refuses_an_empty_identity_field () =
+  (* The parser refuses an empty [# host:] or [# ocaml:] value, so the
+     writer must not emit one. *)
+  let t = Baseline.empty ~suite:"s" in
+  let row = Baseline.exact_row ~id:"a" ~metric:"m" 1 in
+  raises (Invalid_argument "Baseline.set_section: empty host") (fun () ->
+      Baseline.set_section t { identity with Baseline.host = "" } [ row ]);
+  raises (Invalid_argument "Baseline.set_section: empty ocaml") (fun () ->
+      Baseline.set_section t { identity with Baseline.ocaml = "" } [ row ])
+
 let set_section_on_empty_file_baseline () =
   (* A suite-less sectioned file is unparseable (the grammar requires the
      header), so the writer refuses to construct one: [set_section] on the
@@ -1269,6 +1279,8 @@ let () =
           test "annotations render as comments and round-trip"
             set_section_annotations_round_trip;
           test "validates identity, annotations, and rows" set_section_validates;
+          test "refuses an empty host or ocaml"
+            set_section_refuses_an_empty_identity_field;
           test "works on the empty-file baseline"
             set_section_on_empty_file_baseline;
         ];

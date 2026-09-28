@@ -21,8 +21,8 @@ type row = {
 
 type section = {
   s_machine : string;
-  s_host : string; (* grammar-required; non-empty for parsed sections *)
-  s_ocaml : string; (* grammar-required; non-empty for parsed sections *)
+  s_host : string; (* grammar-required; never empty *)
+  s_ocaml : string; (* grammar-required; never empty *)
   s_annotations : string list; (* comment texts, without the "# " prefix *)
   s_rows : row list; (* ascending (id, metric) *)
 }
@@ -558,8 +558,10 @@ let set_section ?(annotations = []) t identity row_list =
     invalid_arg
       (Printf.sprintf "%s: invalid machine key %S (must be [A-Za-z0-9._-]+)"
          fname identity.machine);
+  (* The parser refuses an empty [# host:] or [# ocaml:] value too. *)
   List.iter
     (fun (what, value) ->
+      if value = "" then invalid_arg (Printf.sprintf "%s: empty %s" fname what);
       if String.contains value '\n' then
         invalid_arg (Printf.sprintf "%s: newline in %s %S" fname what value))
     [ ("host", identity.host); ("ocaml", identity.ocaml) ];

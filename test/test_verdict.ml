@@ -641,32 +641,6 @@ let stale_candidate_proposes_a_fresh_section () =
       equal ~msg:"other machine untouched" (option string) (row_line file "z")
         (row_line result "z")
 
-let unrecorded_compiler_identity_is_never_comparable () =
-  (* The grammar requires a recorded identity, so an empty one arises only
-     from a programmatically built section — and is stale against any
-     current identity, even an (equally pathological) empty one. *)
-  let file =
-    Baseline.set_section (Baseline.empty ~suite:"digest")
-      { ident with Baseline.ocaml = "" }
-      [ wall_row "a" (ties 5 1.0) ]
-  in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
-  (match Verdict.comparison t with
-  | Stale (Ocaml_mismatch { section = recorded; current }) ->
-      equal ~msg:"recorded is empty" string "" recorded;
-      equal ~msg:"current" string ident.Baseline.ocaml current
-  | _ -> failf "expected a stale comparison");
-  check_rel t ~case:"a" ~metric:m_wall "new";
-  let p =
-    Verdict.judge
-      ~identity:{ ident with Baseline.ocaml = "" }
-      ~suite:"digest" ~gate:Env.Quiet ~selection:`Full ~budgets:[] ~file
-      ~cases:[ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
-  let t = Verdict.decide ~gate:Env.Quiet ~confirmations:[] p in
-  is_true ~msg:"empty-vs-empty is stale, never compared"
-    (match Verdict.comparison t with Stale _ -> true | _ -> false)
-
 (* Exact metrics and their edges *)
 
 let exact_verdict ?(budgets = [ Budget.no_more_alloc_than 0.0 ]) ~row ~cand () =
@@ -1707,8 +1681,6 @@ let () =
             stale_section_makes_every_row_new;
           test "the candidate proposes a fresh section"
             stale_candidate_proposes_a_fresh_section;
-          test "an unrecorded compiler identity is never comparable"
-            unrecorded_compiler_identity_is_never_comparable;
         ];
       group "exact metrics"
         [

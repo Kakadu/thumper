@@ -158,10 +158,10 @@ val machine_of : section -> string
 
 val ocaml_of : section -> string
 (** [ocaml_of s] is the section's recorded [# ocaml:] identity line — always
-    present, the grammar requires it. A mismatch with the current identity
-    makes the section stale — that comparison is [Verdict]'s policy;
-    here it is an opaque string. Empty only for a programmatically built
-    section with an empty identity, which is never comparable. *)
+    present, the grammar requires it. A mismatch with the current identity makes
+    the section stale — that comparison is [Verdict]'s policy; here it is an
+    opaque string. Never empty: the parser and {!set_section} refuse an empty
+    identity. *)
 
 val rows : section -> row list
 (** [rows s] is the section's rows in ascending (id, metric) order. *)
@@ -231,9 +231,9 @@ val set_section : ?annotations:string list -> t -> identity -> row list -> t
     preserving every other section byte-for-byte. [rows] may be given in any
     order and are sorted canonically. [annotations] adds [# ] comment lines
     after the identity header (e.g. the [--force] record). Raises
-    [Invalid_argument] on a suite-less [t] (a sectioned file without the
-    header is unparseable — start from {!empty}), an invalid machine key, a
-    newline in an identity field, duplicate (id, metric) rows, or an
+    [Invalid_argument] on a suite-less [t] (a sectioned file without the header
+    is unparseable — start from {!empty}), an invalid machine key, an empty
+    identity field or one with a newline, duplicate (id, metric) rows, or an
     annotation that is multi-line or starts with a reserved header word
     ([machine:], [host:], [ocaml:], [suite:]). *)
 
