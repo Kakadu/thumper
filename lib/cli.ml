@@ -312,34 +312,23 @@ let time_unit v =
   else if a < 1. then ("ms", 1e3)
   else ("s", 1.)
 
-(* The alloc column scales per column like the time column: the unit is
-   picked from the column's smallest positive magnitude, so small counts
-   stay exact integers ("54 w", thousands-separated) and a kilo-scale column
-   reads "3 kw" / "32.73 kw" (trailing zeros trimmed). Display rounds; the
-   gate never does — exact deltas in verdict cells keep full integers via
-   [exact_str]. Sampled allocation is approximate by nature: the cell says
-   so with [~], without a ci% of its own — one representation; the
-   time ci already carries the run's sampling noise. *)
+(* An exact count prints whole words, grouped ("32,730 w"), whatever the
+   column holds: an exact count never rounds. Sampled allocation is
+   approximate by nature: its cells scale per column like the time column,
+   from the smallest sampled magnitude, and say so with [~] ("~3 kw",
+   "~32.7 kw"), without a ci% of their own; the time ci already carries the
+   run's sampling noise. *)
 let words_unit v =
   let a = Float.abs v in
   if a < 1e3 then ("w", 1.) else if a < 1e6 then ("kw", 1e-3) else ("Mw", 1e-6)
 
-(* A scaled value prints as a grouped integer, as base-unit counts do, from
-   where its [%g] precision would turn to exponent notation ([1.235e+04 kw]):
-   [%.4g] at five integer digits for an exact cell, [%.3g] at four for a
-   sampled one. Below that, the cell keeps its significant digits. The unit
-   stays the column's. *)
-let exact_exponent_at = 9999.5
+(* A scaled sampled value prints as a grouped integer from where its [%.3g]
+   would turn to exponent notation ([1.23e+03 kw]), at four integer digits.
+   Below that, the cell keeps its significant digits. *)
 let approx_exponent_at = 999.5
 
 let grouped_scaled v unit =
   group_int (Float.to_int (Float.round v)) ^ " " ^ unit
-
-let exact_words ~unit ~wscale n =
-  let v = float_of_int n *. wscale in
-  if wscale = 1. then group_int n ^ " w"
-  else if Float.abs v >= exact_exponent_at then grouped_scaled v unit
-  else Printf.sprintf "%.4g %s" v unit
 
 let approx_words ~unit ~wscale v =
   let v = v *. wscale in
@@ -581,7 +570,6 @@ let table_lines ~color rows =
   in
   let aunit, ascale =
     let mag = function
-      | Alloc_exact n when n <> 0 -> Some (Float.abs (float_of_int n))
       | Alloc_approx v when v <> 0. -> Some (Float.abs v)
       | Alloc_exact _ | Alloc_approx _ | No_alloc -> None
     in
@@ -611,7 +599,7 @@ let table_lines ~color rows =
         in
         let alloc =
           match r.alloc with
-          | Alloc_exact n -> exact_words ~unit:aunit ~wscale:ascale n
+          | Alloc_exact n -> group_int n ^ " w"
           | Alloc_approx v -> approx_words ~unit:aunit ~wscale:ascale v
           | No_alloc -> ""
         in

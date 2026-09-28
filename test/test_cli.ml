@@ -976,10 +976,9 @@ let per_column_time_unit_scaling () =
   assert_contains ~msg:"slow cell in the same unit" out "33000.00 us";
   is_true ~msg:"no ms cell" (not (contains out " ms"))
 
-let alloc_column_scales_per_column () =
-  (* The alloc column scales like the time column, from the column's
-     smallest positive magnitude. A
-     kilo-scale column renders scaled with trailing zeros trimmed... *)
+let exact_alloc_prints_whole_words () =
+  (* An exact count prints whole words, grouped, whatever the other rows:
+     the same count reads the same in every table. *)
   let v =
     verdict_of_cases
       [
@@ -988,10 +987,8 @@ let alloc_column_scales_per_column () =
       ]
   in
   let out = Cli.render_check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"trailing zeros trimmed" out "3 kw";
-  assert_contains ~msg:"kilo scaling" out "32.73 kw";
-  (* ...while a column whose smallest value is sub-kilo keeps exact
-     integers with thousands separators: small counts stay exact. *)
+  assert_contains ~msg:"whole words" out "3,000 w";
+  assert_contains ~msg:"grouped" out "32,730 w";
   let v =
     verdict_of_cases
       [
@@ -1000,14 +997,14 @@ let alloc_column_scales_per_column () =
       ]
   in
   let out = Cli.render_check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"small counts exact" out "54 w";
-  assert_contains ~msg:"separators at the base unit" out "32,730 w"
+  assert_contains ~msg:"small counts" out "54 w";
+  assert_contains ~msg:"the same cell beside a small count" out "32,730 w"
 
-let large_alloc_cells_never_print_an_exponent () =
-  (* Where [%.4g] (exact) or [%.3g] (sampled) would turn to exponent
-     notation, a cell prints a grouped integer: a 12 Mw count in a kilo
-     column, and a sampled 1,234.5 w beside a 54 w row. Exact cells below
-     that keep their four significant digits. *)
+let sampled_alloc_scales_per_column () =
+  (* Sampled cells take the unit of the column's smallest sampled magnitude,
+     as the time column does; exact cells beside them keep whole words.
+     Where [%.3g] would turn to exponent notation, a sampled cell prints a
+     grouped integer in the column's unit. *)
   let sampled v =
     Run.Trial.make ~k:8
       [
@@ -1021,9 +1018,8 @@ let large_alloc_cells_never_print_an_exponent () =
         (bcase "a", trial ~alloc:(Some 3000) (ties 5 1e-6));
         (bcase "b", trial ~alloc:(Some 12_345_678) (ties 5 1e-6));
         (bcase "c", sampled 2_345_678.);
-        (bcase "d", trial ~alloc:(Some 999_600) (ties 5 1e-6));
-        (bcase "e", trial ~alloc:(Some 1_234_500) (ties 5 1e-6));
-        (bcase "f", trial ~alloc:(Some 9_999_500) (ties 5 1e-6));
+        (bcase "d", sampled 3000.);
+        (bcase "e", trial ~alloc:(Some 6) (ties 5 1e-6));
         (bcase "g", sampled 999_500.);
       ]
   in
@@ -1032,13 +1028,12 @@ let large_alloc_cells_never_print_an_exponent () =
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
 
-  proposed  1.00 us  ±0.0%       3 kw  a
-  proposed  1.00 us  ±0.0%  12,346 kw  b
-  proposed  1.00 us  ±0.0%  ~2,346 kw  c
-  proposed  1.00 us  ±0.0%   999.6 kw  d
-  proposed  1.00 us  ±0.0%    1234 kw  e
-  proposed  1.00 us  ±0.0%  10,000 kw  f
-  proposed  1.00 us  ±0.0%  ~1,000 kw  g
+  proposed  1.00 us  ±0.0%       3,000 w  a
+  proposed  1.00 us  ±0.0%  12,345,678 w  b
+  proposed  1.00 us  ±0.0%     ~2,346 kw  c
+  proposed  1.00 us  ±0.0%         ~3 kw  d
+  proposed  1.00 us  ±0.0%           6 w  e
+  proposed  1.00 us  ±0.0%     ~1,000 kw  g
 
   accept:  dune promote
 |};
@@ -1055,7 +1050,7 @@ thumper: digest — no baseline for machine testkey (Test CPU)
 thumper: digest — no baseline for machine testkey (Test CPU)
 
   proposed  1.00 us  ±0.0%      54 w  a
-  proposed  1.00 us  ±0.0%  ~1,235 w  b
+  proposed  1.00 us  ±0.0%  ~1.23 kw  b
 
   accept:  dune promote
 |}
@@ -1789,11 +1784,10 @@ let () =
             exact_alloc_failure_names_the_alloc_side;
           test "per-column time unit scaling never mixes units"
             per_column_time_unit_scaling;
-          test "alloc column scales per column" alloc_column_scales_per_column;
+          test "exact alloc prints whole words" exact_alloc_prints_whole_words;
           test "sampled alloc renders approximate with the ~ marker"
             sampled_alloc_renders_approximate;
-          test "large alloc cells never print an exponent"
-            large_alloc_cells_never_print_an_exponent;
+          test "sampled alloc scales per column" sampled_alloc_scales_per_column;
           test "measurement warnings render after the table"
             measurement_warnings_render_after_the_table;
           test "an absent column leaves no gap" absent_columns_leave_no_gap;
