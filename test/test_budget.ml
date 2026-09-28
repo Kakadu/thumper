@@ -140,21 +140,27 @@ let at_most_is_an_absolute_contract () =
     (Budget.contract (Budget.at_most ~metric:Metric.major_collections 0.))
 
 let rejects_bad_max_regression () =
-  raises (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
+  raises
+    (Invalid_argument
+       "Thumper.Budget.no_slower_than: negative or NaN max_regression")
     (fun () -> Budget.no_slower_than (-0.05));
   raises ~msg:"NaN"
-    (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
+    (Invalid_argument
+       "Thumper.Budget.no_more_alloc_than: negative or NaN max_regression")
     (fun () -> Budget.no_more_alloc_than Float.nan);
   raises ~msg:"via relative"
-    (Invalid_argument "Thumper.Budget: negative or NaN max_regression")
+    (Invalid_argument "Thumper.Budget.relative: negative or NaN max_regression")
     (fun () ->
       Budget.relative ~metric:Metric.wall_time ~max_regression:(-1.) ())
 
 let rejects_bad_equivalent_within () =
-  raises (Invalid_argument "Thumper.Budget: negative or NaN equivalent_within")
+  raises
+    (Invalid_argument
+       "Thumper.Budget.no_slower_than: negative or NaN equivalent_within")
     (fun () -> Budget.no_slower_than ~equivalent_within:(-0.01) 0.05);
   raises ~msg:"NaN"
-    (Invalid_argument "Thumper.Budget: negative or NaN equivalent_within")
+    (Invalid_argument
+       "Thumper.Budget.no_slower_than: negative or NaN equivalent_within")
     (fun () -> Budget.no_slower_than ~equivalent_within:Float.nan 0.05)
 
 let rejects_band_exceeding_budget () =
@@ -162,13 +168,17 @@ let rejects_band_exceeding_budget () =
      ([L, U] within [-e, e]) overlap on (r, e] — the relations stop
      partitioning shifts. The override escapes band_cap, never the budget. *)
   raises
-    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
+    (Invalid_argument
+       "Thumper.Budget.no_slower_than: equivalent_within exceeds max_regression")
     (fun () -> Budget.no_slower_than ~equivalent_within:0.06 0.05);
   raises ~msg:"positive band on a zero budget"
-    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
-    (fun () -> Budget.no_more_alloc_than ~equivalent_within:0.01 0.);
+    (Invalid_argument
+       "Thumper.Budget.no_more_alloc_than: equivalent_within exceeds \
+        max_regression") (fun () ->
+      Budget.no_more_alloc_than ~equivalent_within:0.01 0.);
   raises ~msg:"via relative"
-    (Invalid_argument "Thumper.Budget: equivalent_within exceeds max_regression")
+    (Invalid_argument
+       "Thumper.Budget.relative: equivalent_within exceeds max_regression")
     (fun () ->
       Budget.relative ~metric:Metric.wall_time ~equivalent_within:0.2
         ~max_regression:0.1 ())
