@@ -487,6 +487,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
                    "Measure: %s decreased across a probe batch (deltas %g, \
                     %g); instrument counters must be non-decreasing"
                    (Metric.id m) dk d2k);
+            (* The counters are floats holding whole numbers, exact below
+               2^53, so these differences are exact. *)
             let diff = d2k -. dk in
             let quotient = Float.floor (diff /. kf) in
             let residue = diff -. (kf *. quotient) in
