@@ -44,7 +44,6 @@ let other_ident =
   }
 
 let ties n v = Array.make n v
-
 let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
 
 let wall_trial ?(k = 8) ?(drifted = false) samples =
@@ -54,7 +53,6 @@ let wall_trial ?(k = 8) ?(drifted = false) samples =
    [100 v]. Judgment reads the instability from the sorted vector itself;
    the rank shift against tied rows at [x] stays exactly [log v -. log x]. *)
 let spiked v = Array.append (Array.make 19 v) [| 100. *. v |]
-
 let trial ?(k = 8) ms = Run.Trial.make ~k ms
 
 let bcase ?budgets id =
@@ -77,8 +75,8 @@ let empty_file = Result.get_ok (Baseline.of_string "")
 
 let judge ?(load = Env.Quiet) ?(selection = `Full) ?(budgets = [])
     ?(file = empty_file) cases =
-  Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets
-    ~file ~cases
+  Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets ~file
+    ~cases
 
 (* Judge, confirm via [confirm : id -> Trial.t option], decide. *)
 let run_check ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
@@ -486,8 +484,7 @@ let confirmation_is_judged_at_the_wider_alpha () =
      L > r = 0.05 — judged at the initial α this would decide
      inconclusive (unconfirmed). *)
   let file =
-    (fun f -> f)
-      (file_of [ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ])
+    (fun f -> f) (file_of [ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ])
   in
   let t =
     run_check ~file
@@ -668,9 +665,7 @@ let non_positive_samples_get_their_own_reason () =
           ~samples:[| 0.0; 1.0; 2.0 |];
       ]
   in
-  let t =
-    run_check ~file:zero_file [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
+  let t = run_check ~file:zero_file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
   check_rel ~msg:"stored zeros" t ~case:"a" ~metric:m_wall
     "inconclusive:non_positive";
   is_true ~msg:"wire spelling"
@@ -741,8 +736,7 @@ let loaded = Env.Loaded { load = 7.9; cores = 8 }
 
 let loaded_gate_degrades_sampled_but_not_exact () =
   let file =
-    (fun f -> f)
-      (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
+    (fun f -> f) (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let t =
     run_check ~load:loaded
@@ -765,9 +759,7 @@ let loaded_gate_degrades_sampled_but_not_exact () =
 
 let loaded_gate_queues_no_confirmations () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let p =
-    judge ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
+  let p = judge ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ] in
   equal (list string) [] (Verdict.confirmations p)
 
 let loaded_gate_at_decide_degrades_pendings () =
@@ -850,9 +842,7 @@ let stale_section_makes_every_row_new () =
 
 let stale_candidate_proposes_a_fresh_section () =
   let file = stale_file () in
-  let t =
-    run_check ~file [ (bcase "a", stale_trial ()) ]
-  in
+  let t = run_check ~file [ (bcase "a", stale_trial ()) ] in
   match Verdict.corrected t with
   | None -> failf "expected a fresh-section candidate"
   | Some result ->
@@ -912,8 +902,7 @@ let exact_rows_and_the_probe_k () =
      recalibration down to k = 2; at k = 1 the probe ran at the trial's k,
      and differing counts drift. The sampled row reads its moved k. *)
   let file =
-    (fun f -> f)
-      (file_of [ wall_row ~k:32 "a" (ties 5 1.0); alloc_row "a" 54 ])
+    (fun f -> f) (file_of [ wall_row ~k:32 "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let run_at ~k cand =
     run_check ~file
@@ -1326,10 +1315,7 @@ let proposals_record_gated_and_flagged_evidence () =
 
 let equivalent_run_writes_nothing () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
+  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
   is_none (Verdict.corrected t)
 
 let advance_is_a_one_row_diff () =
@@ -1378,7 +1364,8 @@ let stale_partial_selection_warns_about_dropped_rows () =
      bless gives its partial re-record. A full-selection stale run drops
      nothing it did not judge and warns about nothing. *)
   let stale_file =
-    Baseline.set_section (Baseline.empty ~suite:"digest")
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
       { ident with Baseline.ocaml = "0.0.0" }
       [ wall_row "a" (ties 5 1.0); wall_row "b" (ties 5 1.0) ]
   in
@@ -1411,8 +1398,7 @@ let full_selection_prunes_dead_ids_with_a_notice () =
     file_of [ wall_row "a" (ties 5 1.0); wall_row "dead" (ties 5 1.0) ]
   in
   let t =
-    run_check ~selection:`Full ~file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
+    run_check ~selection:`Full ~file [ (bcase "a", wall_trial (ties 5 1.0)) ]
   in
   (match Verdict.warnings t with
   | [ w ] -> is_true ~msg:"notice names the id" (contains ~sub:"dead" w)

@@ -43,20 +43,18 @@ let pp ppf m = Format.pp_print_string ppf m.id
 let make ~id ~name ~units ~kind ~source = { id; name; units; kind; source }
 
 let wall_time =
-  make ~id:"wall_time" ~name:"wall time" ~units:"s"
-    ~kind:`Time ~source:Wall_clock
+  make ~id:"wall_time" ~name:"wall time" ~units:"s" ~kind:`Time
+    ~source:Wall_clock
 
 let alloc_words =
   (* Promoted words are counted by both the minor and major counters;
      subtracting removes the double count. *)
-  make ~id:"alloc_words" ~name:"allocations" ~units:"words"
-    ~kind:`Allocation
+  make ~id:"alloc_words" ~name:"allocations" ~units:"words" ~kind:`Allocation
     ~source:
       (Gc_counter (fun s -> s.minor_words +. s.major_words -. s.promoted_words))
 
 let cpu_time =
-  make ~id:"cpu_time" ~name:"CPU time" ~units:"s"
-    ~kind:`Time ~source:Cpu_clock
+  make ~id:"cpu_time" ~name:"CPU time" ~units:"s" ~kind:`Time ~source:Cpu_clock
 
 let minor_alloc_words =
   make ~id:"minor_alloc_words" ~name:"minor allocations" ~units:"words"

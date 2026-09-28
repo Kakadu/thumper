@@ -9,7 +9,8 @@
    renders as-is. *)
 let version =
   let watermark = "%%VERSION_NUM%%" in
-  if String.length watermark > 0 && watermark.[0] = '%' then "dev" else watermark
+  if String.length watermark > 0 && watermark.[0] = '%' then "dev"
+  else watermark
 
 (* Parsing *)
 
