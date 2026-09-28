@@ -535,10 +535,10 @@ let use_color_resolution () =
 (* The status line *)
 
 let status_line_formats () =
-  equal ~msg:"measuring" string "thumper: measuring 3/6 — busy/spin"
+  equal ~msg:"measuring" string "thumper: measuring 3/6: busy/spin"
     (Report.status_line
        { Check.phase = `Measuring; index = 3; total = 6; case = "busy/spin" });
-  equal ~msg:"confirming" string "thumper: confirming 1/2 — alloc/list"
+  equal ~msg:"confirming" string "thumper: confirming 1/2: alloc/list"
     (Report.status_line
        { Check.phase = `Confirming; index = 1; total = 2; case = "alloc/list" })
 
@@ -1619,7 +1619,7 @@ let partial_bless_rerecords_the_selected_cases_only () =
   let out = output () in
   equal ~msg:"stale bless exits 0" int 0 code;
   assert_contains ~msg:"the drop is noticed" out
-    "partial selection on a stale section — the corrected file re-records this \
+    "partial selection on a stale section: the corrected file re-records this \
      machine's whole section and drops the rows of the 1 unselected case";
   is_true ~msg:"unselected rows dropped (wholesale re-record)"
     (not (contains (corrected ()) "g/beta"))

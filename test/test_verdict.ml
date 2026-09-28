@@ -1660,9 +1660,9 @@ let bless_partial_on_a_stale_section_notices_the_drop () =
   in
   equal ~msg:"the stale-partial notice" (list string)
     [
-      "partial selection on a stale section \xe2\x80\x94 the corrected file \
-       re-records this machine's whole section and drops the rows of the 1 \
-       unselected case";
+      "partial selection on a stale section: the corrected file re-records \
+       this machine's whole section and drops the rows of the 1 unselected \
+       case";
     ]
     notices;
   is_none ~msg:"unselected row dropped" (row_line result "old");

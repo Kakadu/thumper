@@ -18,7 +18,7 @@
 
 val status_line : Check.progress -> string
 (** [status_line p] is the text of the progress tick [p],
-    [thumper: <verb> <index>/<total> — <id>], where [<verb>] is [measuring] or
+    [thumper: <verb> <index>/<total>: <id>], where [<verb>] is [measuring] or
     [confirming] for [p]'s phase. It holds no carriage return and no escape
     sequence. {!Cli.main} prints it on stderr at each tick while [check] and
     [bless] measure, when stderr is a terminal. *)

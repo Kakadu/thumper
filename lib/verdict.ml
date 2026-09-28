@@ -394,7 +394,7 @@ let stale_partial_notice ~selection ~comparison ~section ~case_ids =
       else
         [
           strf
-            "partial selection on a stale section — the corrected file \
+            "partial selection on a stale section: the corrected file \
              re-records this machine's whole section and drops the rows of the \
              %d unselected case%s"
             n

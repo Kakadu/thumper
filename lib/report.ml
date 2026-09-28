@@ -30,7 +30,7 @@ let status_line (p : Check.progress) =
     | `Measuring -> "measuring"
     | `Confirming -> "confirming"
   in
-  strf "thumper: %s %d/%d — %s" verb p.Check.index p.Check.total p.Check.case
+  strf "thumper: %s %d/%d: %s" verb p.Check.index p.Check.total p.Check.case
 
 (* The carriage return goes back to column 0 and the erase clears what a
    longer previous line left beyond the new one. *)
