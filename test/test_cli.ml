@@ -1011,6 +1011,70 @@ let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
   is_true ~msg:"no ::error:: annotation" (not (contains out "::error"));
   assert_contains ~msg:"summary agrees" out "1 case: 1 passed."
 
+(* A 71-word exact count under a 64-word cap, with no baseline row for it:
+   on a first run ([file] empty), or beside a compared time row. *)
+let cap_without_a_row_fixture ?file ?(cap = 64.) ?(count = 71) () =
+  let case =
+    bcase_budgeted ~budgets:[ Budget.at_most ~metric:m_alloc cap ] "alpha"
+  in
+  verdict_of ?file (case, trial ~alloc:(Some count) (ties 5 1e-6))
+
+let a_cap_fails_a_first_run () =
+  let v = cap_without_a_row_fixture () in
+  expect (Cli.render_check (ctx ~wrote:true ~github:true ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — no baseline for machine testkey (Test CPU)
+
+  REGRESSED  1.00 us  ±0.0%  71 w  alpha
+      alloc 71 w, over its 64 w cap (exact); proposed
+
+  rerun:   bench.exe -f alpha
+  accept:  dune promote
+
+::error::alpha regressed: alloc_words 71 w, over its 64 w cap (exact)
+|};
+  equal ~msg:"exit 1" int 1 (Verdict.exit_code v)
+
+let a_cap_fails_a_new_row () =
+  let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
+  let v = cap_without_a_row_fixture ~file () in
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — 1 case vs digest.thumper for machine testkey
+
+  REGRESSED  1.00 us  ±0.0%  71 w  alpha
+      alloc 71 w, over its 64 w cap (exact)
+
+  rerun:   bench.exe -f alpha
+  accept:  dune promote
+
+  1 case: 0 passed, 1 regressed.
+|};
+  equal ~msg:"exit 1" int 1 (Verdict.exit_code v);
+  assert_contains ~msg:"a fractional cap"
+    (Cli.render_check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.5 ()))
+    "alloc 71 w, over its 64.5 w cap (exact)";
+  assert_contains ~msg:"a fraction below six decimals"
+    (Cli.render_check (ctx ())
+       (cap_without_a_row_fixture ~file ~cap:64.0000001 ()))
+    "alloc 71 w, over its 64 w cap (exact)";
+  (* Large counts and caps print grouped, never in exponent notation. *)
+  let big cap = cap_without_a_row_fixture ~file ~cap ~count:1_234_568 () in
+  let out = Cli.render_check (ctx ~github:true ()) (big 1e6) in
+  assert_contains ~msg:"cell, integral cap" out
+    "alloc 1,234,568 w, over its 1,000,000 w cap (exact)";
+  assert_contains ~msg:"annotation, integral cap" out
+    "::error::alpha regressed: alloc_words 1,234,568 w, over its 1,000,000 w \
+     cap (exact)";
+  let out = Cli.render_check (ctx ~github:true ()) (big 1234567.5) in
+  assert_contains ~msg:"cell, fractional cap" out
+    "alloc 1,234,568 w, over its 1,234,567.5 w cap (exact)";
+  assert_contains ~msg:"annotation, fractional cap" out
+    "::error::alpha regressed: alloc_words 1,234,568 w, over its 1,234,567.5 w \
+     cap (exact)"
+
 let color_uses_ansi_only_when_enabled () =
   let v = fail_fixture () in
   let plain = Cli.render_check (ctx ()) v in
@@ -1543,6 +1607,8 @@ let () =
             github_annotations_on_confirmed_regressions;
           test "an absolute cap on sampled evidence agrees with the exit code"
             absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
+          test "a cap fails a first run" a_cap_fails_a_first_run;
+          test "a cap fails a new row" a_cap_fails_a_new_row;
           test "ANSI color only when enabled" color_uses_ansi_only_when_enabled;
           test "the summary counts proposed cases" summary_counts_proposed_cases;
           test "the summary's color follows the exit code"

@@ -161,7 +161,8 @@ The report names each case's reason on the line below its row
 Two deliberate asymmetries. An empty selection is exit 2, not 0: a
 broken `--tag` filter must not silently pass. And a new case exits 0
 while `diff?` still turns the check red — as a prompt to review the
-proposed baseline, not as a verdict.
+proposed baseline, not as a verdict. (An `at_most` cap is the exception:
+it needs no baseline, so an exact count over it exits 1 on any run.)
 
 `--strict` is for dedicated runners, where inconclusive means the
 runner itself is misconfigured; on shared machines it converts honest
@@ -186,7 +187,8 @@ schema is frozen; automation may rely on every field below:
   Wire relations: `improved`, `regressed`, `equivalent`,
   `changed_within_budget`, `inconclusive`; `reason` carries the
   inconclusive cause with the spellings of the table above. A new row
-  is `relation: null`, `reason: "missing_baseline"`, `status: "pass"`.
+  is `relation: null`, `reason: "missing_baseline"`, `status: "pass"`,
+  or `status: "fail"` when its exact count is over an `at_most` cap.
 
 Numeric fields are `null` where they are undefined: the interval bounds
 of exact counts, the deltas of new rows and of inconclusive rows no

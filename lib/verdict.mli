@@ -234,11 +234,12 @@ val decide :
 val overall : t -> [ `Pass | `Fail | `Inconclusive ]
 (** [`Fail] iff some case fails: a budgeted metric is confirmed-regressed under
     a relative contract, or exact evidence exceeds its budget (relative or
-    absolute) — no cross-metric forgiveness. An [Absolute_max] contract
-    gates only proven exact evidence: a statistical estimate crossing an
-    absolute line is not an earned verdict. [`Inconclusive] iff no case
-    fails and some {e budgeted} metric is [Inconclusive]; unbudgeted relations
-    and [New_row]s never change the outcome. *)
+    absolute) — no cross-metric forgiveness. An [Absolute_max] contract gates
+    only proven exact evidence: a statistical estimate crossing an absolute line
+    is not an earned verdict. [`Inconclusive] iff no case fails and some
+    {e budgeted} metric is [Inconclusive]; unbudgeted relations never change the
+    outcome, and a [New_row] changes it only when its exact count is over an
+    absolute cap, which consults no baseline. *)
 
 val comparison : t -> comparison
 val cases : t -> case_report list
@@ -309,7 +310,8 @@ val to_json : t -> string
       relations: [improved], [regressed], [equivalent], [changed_within_budget]
       (terminal renders "within_budget"), [inconclusive]; [null] for [New_row],
       which reports [reason: "missing_baseline"] (v1's spelling) and
-      [status: "pass"] — NEW is a promotion prompt, not a verdict. [reason] is
+      [status: "pass"] — NEW is a promotion prompt, not a verdict — unless its
+      exact count is over an absolute cap ([status: "fail"]). [reason] is
       otherwise non-null exactly for [inconclusive] relations, with the wire
       values ([Candidate_unstable] is ["unstable"], [Candidate_drifted] is
       ["drifted"]). [delta] is [0.0] for exact equality and [null] for

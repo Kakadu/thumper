@@ -578,13 +578,14 @@ module Verdict : sig
   (** The type for decided verdicts. *)
 
   val overall : t -> [ `Pass | `Fail | `Inconclusive ]
-  (** [overall t] is the run's outcome as a value: [`Fail] iff some case
-      fails (a budgeted confirmed regression, or exact evidence over budget —
-      no cross-metric forgiveness); else [`Inconclusive] iff some
-      budgeted metric could not earn a verdict; else [`Pass]. NEW rows and
-      unbudgeted relations never change the outcome. The same
-      three-way state {!exit_code} conflates into [0]: an in-process
-      consumer branches here instead of parsing the JSON. *)
+  (** [overall t] is the run's outcome as a value: [`Fail] iff some case fails
+      (a budgeted confirmed regression, or exact evidence over budget — no
+      cross-metric forgiveness); else [`Inconclusive] iff some budgeted metric
+      could not earn a verdict; else [`Pass]. Unbudgeted relations never change
+      the outcome, and NEW rows only when an exact count is over an absolute
+      cap, which consults no baseline. The same three-way state {!exit_code}
+      conflates into [0]: an in-process consumer branches here instead of
+      parsing the JSON. *)
 
   val exit_code : ?strict:bool -> t -> int
   (** [exit_code t] is the CLI exit table (the manual's Checking page): [0]
@@ -614,7 +615,8 @@ module Verdict : sig
         [exactness_lost]).
 
       A NEW row reports [relation: null], [reason: "missing_baseline"], and
-      [status: "pass"] — NEW is a promotion prompt, not a verdict. This is a
+      [status: "pass"] — NEW is a promotion prompt, not a verdict — unless an
+      exact count is over an absolute cap ([status: "fail"]). This is a
       deliberate change from v1, which reported NEW rows as [inconclusive]. *)
 
   val corrected : t -> Baseline.t option

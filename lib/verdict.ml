@@ -260,14 +260,24 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
                   p_r = r;
                 })
 
+(* Whether a proven-exact count exceeds its budget's absolute cap. The cap
+   is on the measured value itself, so it is judged on this run's count
+   alone, whatever the baseline holds or lacks. *)
+let over_cap budget c =
+  match Option.map Budget.contract budget with
+  | Some (Budget.Absolute_max cap) -> float_of_int c > cap
+  | Some (Budget.Relative _) | None -> false
+
 (* First-pass judgment of one exact (integer) comparison. *)
 let judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c =
   let k_moved = match case_k with Some kb -> kb <> trial_k | None -> false in
-  if k_moved && b <> c then
+  let strong = Exact_change { baseline = b; candidate = c } in
+  (* A moved batch size explains a changed count, never one over the cap. *)
+  if over_cap budget c then Regressed strong
+  else if k_moved && b <> c then
     (* Amortized allocators can be k-phase-dependent. *)
     inconclusive Batch_drifted
   else
-    let strong = Exact_change { baseline = b; candidate = c } in
     let better = c < b in
     (* Degradation as a fraction of the baseline; [None] when b = 0 (a change
        from zero has no relative size and exceeds any relative budget). *)
@@ -283,10 +293,9 @@ let judge_exact ~metric ~budget ~case_k ~trial_k ~b ~c =
       Within_budget { estimate = point; lower = point; upper = point }
     in
     match Option.map Budget.contract budget with
-    | Some (Budget.Absolute_max threshold) ->
-        (* The cap is on the measured value itself, baseline-independent. *)
-        if float_of_int c > threshold then Regressed strong
-        else if c = b then Equivalent None
+    | Some (Budget.Absolute_max _) ->
+        (* Under the cap: the change is reported, never gated. *)
+        if c = b then Equivalent None
         else if better then Improved strong
         else budgeted_increase ()
     | (Some (Budget.Relative _) | None) as contract ->
@@ -575,16 +584,19 @@ let exact_evidence case_report metric =
   | Some (Run.Exact _) -> true
   | Some (Run.Samples _) | None -> false
 
-(* Whether a report fails its case: a budgeted regression, where absolute
-   contracts gate proven exact evidence only (a statistical estimate
-   crossing an absolute line is not an earned verdict). *)
+(* Whether a report fails its case: a regression beyond a relative budget,
+   or a proven-exact count over an absolute cap — on any run, with or
+   without a baseline row. A statistical estimate crossing an absolute line
+   is not an earned verdict, so a sampled count never gates a cap. *)
 let report_gates case_report report =
-  match (report.budget, report.verdict) with
-  | Some budget, Judged (Regressed _) -> (
-      match Budget.contract budget with
-      | Budget.Relative _ -> true
-      | Budget.Absolute_max _ -> exact_evidence case_report report.metric)
-  | _ -> false
+  match Option.map Budget.contract report.budget with
+  | Some (Budget.Relative _) -> (
+      match report.verdict with Judged (Regressed _) -> true | _ -> false)
+  | Some (Budget.Absolute_max _) -> (
+      match Run.Trial.measurement case_report.trial report.metric with
+      | Some (Run.Exact c) -> over_cap report.budget c
+      | Some (Run.Samples _) | None -> false)
+  | None -> false
 
 let report_inconclusive report =
   match report.verdict with Judged (Inconclusive _) -> true | _ -> false

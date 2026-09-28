@@ -656,6 +656,41 @@ let relative_budget (mr : Verdict.metric_report) =
       Some (Printf.sprintf "budget +%g%%" (max_regression *. 100.))
   | Some (Budget.Absolute_max _) | None -> None
 
+(* A proven-exact count over its absolute cap, as [(count, cap)], when the
+   report gates on it. Under a baseline row the count is [Regressed] and its
+   cell prints the pair; with no comparable row the cell prints the cap. *)
+let cap_breach (c : Verdict.case_report) (mr : Verdict.metric_report) =
+  match
+    ( Option.map Budget.contract mr.budget,
+      Run.Trial.measurement c.trial mr.metric )
+  with
+  | Some (Budget.Absolute_max cap), Some (Run.Exact n) when report_fails c mr ->
+      Some (n, cap)
+  | _ -> None
+
+(* A cap in the metric's units, grouped like a count and never in exponent
+   notation: an integral cap reads as a count, a fractional one keeps up to
+   six decimals ([1,234,567.5 w]). It prints only below a measured count, so
+   it is non-negative and fits an int. *)
+let cap_str metric cap =
+  let whole = Float.of_int (Float.to_int cap) in
+  let digits =
+    if Float.is_integer cap then ""
+    else
+      let f = Printf.sprintf "%.6f" (cap -. whole) in
+      let i = ref (String.length f) in
+      while !i > 2 && f.[!i - 1] = '0' do
+        decr i
+      done;
+      if !i <= 2 then "" else String.sub f 1 (!i - 1)
+  in
+  let unit =
+    match Metric.kind metric with
+    | `Allocation -> "w"
+    | `Time | `Other -> Metric.units metric
+  in
+  group_int (Float.to_int cap) ^ digits ^ " " ^ unit
+
 (* (rank, fragment): rank orders fragments most-severe-first — 0 gating
    REGRESSED, 1 demonstrated-but-ungated regression, 2 inconclusive, 3
    improved, 4 within budget, 5 proposed, 6 the exact-equal reassurance. *)
@@ -674,9 +709,17 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
         Printf.sprintf "%s \xe2\x86\x92 %s (exact)" (exact_str m baseline)
           (exact_str m candidate)
   in
-  match mr.verdict with
-  | Verdict.New_row -> Some (5, frag "proposed" (tagged ""))
-  | Verdict.Judged (Verdict.Regressed strong) ->
+  match (mr.verdict, cap_breach c mr) with
+  | (Verdict.New_row | Verdict.Judged (Verdict.Inconclusive _)), Some (n, cap)
+    ->
+      Some
+        ( 0,
+          frag ~style:`Red "REGRESSED"
+            (tagged
+               (Printf.sprintf "%s, over its %s cap (exact)" (exact_str m n)
+                  (cap_str m cap))) )
+  | Verdict.New_row, None -> Some (5, frag "proposed" (tagged ""))
+  | Verdict.Judged (Verdict.Regressed strong), _ ->
       let gates = report_fails c mr in
       let word = if gates then "REGRESSED" else "regressed" in
       let style = if gates then `Red else `Yellow in
@@ -688,18 +731,18 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
       Some
         ( (if gates then 0 else 1),
           frag ~style word (tagged (strong_detail strong ^ budget)) )
-  | Verdict.Judged (Verdict.Improved strong) ->
+  | Verdict.Judged (Verdict.Improved strong), _ ->
       Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
-  | Verdict.Judged (Verdict.Within_budget s) ->
+  | Verdict.Judged (Verdict.Within_budget s), _ ->
       Some (4, frag "within budget" (tagged (pct s.Verdict.estimate)))
-  | Verdict.Judged (Verdict.Inconclusive { reason; _ }) ->
+  | Verdict.Judged (Verdict.Inconclusive { reason; _ }), None ->
       let reason = reason_short reason in
       Some
         ( 2,
           if primary then frag ~style:`Yellow ~sep:": " "inconclusive" reason
           else frag ~style:`Yellow "inconclusive" (metric_tag m ^ ": " ^ reason)
         )
-  | Verdict.Judged (Verdict.Equivalent _) -> None
+  | Verdict.Judged (Verdict.Equivalent _), _ -> None
 
 (* The reassurance exception (.mli): when the cell is otherwise non-pass, an
    exact-equal metric's earned verdict stays visible. *)
@@ -731,8 +774,8 @@ let check_cell (c : Verdict.case_report) =
     | Some m -> Metric.equal m mr.metric
     | None -> false
   in
-  if c.reports <> [] && List.for_all report_new c.reports then
-    [ frag "proposed" "" ]
+  if c.reports <> [] && List.for_all report_new c.reports && not (case_fails c)
+  then [ frag "proposed" "" ]
   else
     let notable =
       List.filter_map
@@ -851,8 +894,10 @@ let render_check r v =
   let rows =
     List.map
       (fun (c : Verdict.case_report) ->
+        (* A proposed case whose count breaks its cap fails even here. *)
         let cell =
-          if acceptance then [ frag "proposed" "" ] else check_cell c
+          if acceptance && not (case_fails c) then [ frag "proposed" "" ]
+          else check_cell c
         in
         {
           row_id = c.id;
@@ -999,7 +1044,16 @@ let render_check r v =
                     Some
                       (Printf.sprintf "::error::%s regressed: %s %s" c.id
                          (Metric.id mr.metric) detail)
-                | _ -> None)
+                | _ -> (
+                    match cap_breach c mr with
+                    | Some (n, cap) ->
+                        Some
+                          (Printf.sprintf
+                             "::error::%s regressed: %s %s, over its %s cap \
+                              (exact)"
+                             c.id (Metric.id mr.metric) (exact_str mr.metric n)
+                             (cap_str mr.metric cap))
+                    | None -> None))
             c.reports)
         cases
   in

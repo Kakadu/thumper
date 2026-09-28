@@ -832,6 +832,62 @@ let absolute_budget_never_gates_sampled_evidence () =
   check_rel t ~case:"a" ~metric:m_alloc "regressed-confirmed";
   check_overall ~msg:"reported, never gating" t `Pass
 
+let a_cap_is_judged_without_a_baseline_row () =
+  (* An absolute cap consults no baseline: a proven-exact count over it
+     fails its case on a first run, on a stale section, for a new case, at a
+     moved batch size, and against a sampled row. *)
+  let budgets = [ Budget.at_most ~metric:m_alloc 100.0 ] in
+  let alloc n = trial [ (m_alloc, Run.Exact n) ] in
+  let first_run n = run_check ~budgets [ (bcase "a", alloc n) ] in
+  let t = first_run 120 in
+  check_rel ~msg:"first run: the row is proposed" t ~case:"a" ~metric:m_alloc
+    "new";
+  check_overall ~msg:"first run: over the cap fails" t `Fail;
+  equal ~msg:"first run: exit 1" int 1 (Verdict.exit_code t);
+  check_overall ~msg:"first run: at the cap passes" (first_run 100) `Pass;
+  let stale =
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
+      stale_ident
+      [ alloc_row "a" 50 ]
+  in
+  check_overall ~msg:"stale section"
+    (run_check ~budgets ~file:stale [ (bcase "a", alloc 120) ])
+    `Fail;
+  let other = file_of [ alloc_row "b" 50 ] in
+  check_overall ~msg:"a new case"
+    (run_check ~budgets ~file:other [ (bcase "a", alloc 120) ])
+    `Fail;
+  let moved =
+    run_check ~budgets
+      ~file:(file_of [ wall_row ~k:16 "a" (ties 5 1.0); alloc_row "a" 50 ])
+      [
+        ( bcase "a",
+          trial ~k:8
+            [
+              (m_wall, Run.Samples (sam (ties 5 1.0))); (m_alloc, Run.Exact 120);
+            ] );
+      ]
+  in
+  check_rel ~msg:"a moved batch size" moved ~case:"a" ~metric:m_alloc
+    "regressed-exact";
+  check_overall ~msg:"a moved batch size fails" moved `Fail;
+  let sampled_row =
+    file_of
+      [
+        Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8
+          ~samples:(ties 5 50.0);
+      ]
+  in
+  check_overall ~msg:"against a sampled row"
+    (run_check ~budgets ~file:sampled_row [ (bcase "a", alloc 120) ])
+    `Fail;
+  let sampled_first_run =
+    run_check ~budgets
+      [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 120.0))) ]) ]
+  in
+  check_overall ~msg:"a sampled count never gates" sampled_first_run `Pass
+
 (* Budgets and case verdicts *)
 
 let uncollected_inherited_budget_is_dropped () =
@@ -1736,6 +1792,8 @@ let () =
             absolute_budget_gates_exact_evidence;
           test "an absolute budget never gates sampled evidence"
             absolute_budget_never_gates_sampled_evidence;
+          test "a cap is judged without a baseline row"
+            a_cap_is_judged_without_a_baseline_row;
         ];
       group "budgets and case verdicts"
         [
