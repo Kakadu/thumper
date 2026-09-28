@@ -3,6 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+let err_duplicate what id = strf "Verdict: duplicate %s %S" what id
+
+let err_unrequested id =
+  strf "Verdict.decide: confirmation for %S was not requested" id
+
 type shift = { estimate : float; lower : float; upper : float }
 
 type reason =
@@ -105,8 +111,6 @@ type provisional = { p_core : core; p_cases : pcase list }
 type t = { core : core; v_load : Env.load; v_cases : case_report list }
 
 (* Small helpers *)
-
-let invalid fmt = Printf.ksprintf invalid_arg fmt
 
 (* An inconclusive relation keeps the first-pass shift iff the rank test ran:
    the estimate and interval are reported whatever the relation. *)
@@ -313,7 +317,7 @@ let check_distinct ~what ~ids =
   let tbl = Hashtbl.create 16 in
   List.iter
     (fun id ->
-      if Hashtbl.mem tbl id then invalid "Verdict: duplicate %s %S" what id
+      if Hashtbl.mem tbl id then invalid_arg (err_duplicate what id)
       else Hashtbl.add tbl id ())
     ids
 
@@ -374,7 +378,7 @@ let stale_partial_notice ~selection ~comparison ~section ~case_ids =
       if n = 0 then []
       else
         [
-          Printf.sprintf
+          strf
             "partial selection on a stale section — the corrected file \
              re-records this machine's whole section and drops the rows of the \
              %d unselected case%s"
@@ -387,7 +391,7 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
   match (selection, comparison, section) with
   | `Full, Compared, Some s ->
       List.map
-        (Printf.sprintf
+        (strf
            "case %s no longer exists in this binary; its rows will be pruned \
             from the corrected file")
         (absent_ids s ~case_ids)
@@ -516,8 +520,7 @@ let decide ~load ~confirmations:confs p =
   check_distinct ~what:"confirmation id" ~ids:(List.map fst confs);
   List.iter
     (fun (id, _) ->
-      if not (List.mem id queue) then
-        invalid "Verdict.decide: confirmation for %S was not requested" id)
+      if not (List.mem id queue) then invalid_arg (err_unrequested id))
     confs;
   let v_cases =
     List.map
@@ -729,9 +732,8 @@ let json_metric buf case_report report =
             | Improved _ | Regressed _ -> true
             | Equivalent _ | Within_budget _ | Inconclusive _ -> false
           in
-          Buffer.add_string buf
-            (Printf.sprintf ",\"confirmed\":%b,\"n\":%d" confirmed
-               (Array.length s.Run.sorted))
+          Printf.bprintf buf ",\"confirmed\":%b,\"n\":%d" confirmed
+            (Array.length s.Run.sorted)
       | None -> ())
   | Proposed -> ());
   let delta, lower, upper =
@@ -799,11 +801,10 @@ let json_summary buf t =
         | _ -> Some (Stats.geometric_mean (Array.of_list ratios) -. 1.0)
       in
       json_string buf (Metric.id metric);
-      Buffer.add_string buf
-        (Printf.sprintf
-           ":{\"n_improved\":%d,\"n_regressed\":%d,\"n_equivalent\":%d,\"n_inconclusive\":%d,\"geomean_delta\":"
-           (count `Improved) (count `Regressed) (count `Equivalent)
-           (count `Inconclusive));
+      Printf.bprintf buf
+        ":{\"n_improved\":%d,\"n_regressed\":%d,\"n_equivalent\":%d,\"n_inconclusive\":%d,\"geomean_delta\":"
+        (count `Improved) (count `Regressed) (count `Equivalent)
+        (count `Inconclusive);
       json_float buf geomean_delta;
       Buffer.add_char buf '}')
     (summary_metrics t);
