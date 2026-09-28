@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 (* Sleeps restart on EINTR until the wake time. *)
 
 let rec sleep_until wake =
@@ -25,7 +27,7 @@ let hash s =
       h :=
         Int64.mul (Int64.logxor !h (Int64.of_int (Char.code c))) 0x100000001b3L)
     s;
-  Printf.sprintf "%016Lx" !h
+  strf "%016Lx" !h
 
 (* [process_line prog args] is the trimmed first stdout line of [prog], run
    without a shell ([prog] is searched in PATH), and [None] on any failure:
@@ -116,8 +118,7 @@ let machine_key () =
          may be. *)
       if not (Baseline.valid_segment key) then
         invalid_arg
-          (Printf.sprintf
-             "THUMPER_MACHINE: %s (need a non-empty key over [A-Za-z0-9._-])"
+          (strf "THUMPER_MACHINE: %s (need a non-empty key over [A-Za-z0-9._-])"
              (Baseline.quote key))
       else key
   | None ->
@@ -163,8 +164,7 @@ let ocaml_identity () =
     | Sys.Other name ->
         if String.equal variant "release" then name else name ^ "+" ^ variant
   in
-  Printf.sprintf "%s \xc2\xb7 %d-bit \xc2\xb7 %s" Sys.ocaml_version
-    Sys.word_size profile
+  strf "%s \xc2\xb7 %d-bit \xc2\xb7 %s" Sys.ocaml_version Sys.word_size profile
 
 (* The environment gate *)
 
@@ -182,8 +182,7 @@ type load = Quiet | Loaded of { load : float; cores : int }
    verdict at all. *)
 let classify ~load ~cores =
   if cores < 1 then
-    invalid_arg
-      (Printf.sprintf "Thumper.Env.classify: %d cores (need at least 1)" cores);
+    invalid_arg (strf "Thumper.Env.classify: %d cores (need at least 1)" cores);
   match load with
   | Some load when load /. float_of_int cores >= load_threshold ->
       Loaded { load; cores }
@@ -199,13 +198,13 @@ let default_poll_s = 1.0
 let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?load:(sample = load) () =
   if not (timeout_s >= 0.) then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "Thumper.Env.wait_quiet: timeout_s %g (need a non-negative timeout in \
           seconds)"
          timeout_s);
   if not (poll_s > 0. && poll_s < infinity) then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "Thumper.Env.wait_quiet: poll_s %g (need a positive finite poll \
           interval in seconds)"
          poll_s);
@@ -252,7 +251,7 @@ module Lock = struct
           | Some dir when dir <> "" -> dir
           | Some _ | None -> Filename.get_temp_dir_name ())
     in
-    Filename.concat dir (Printf.sprintf "thumper-%d.lock" (Unix.geteuid ()))
+    Filename.concat dir (strf "thumper-%d.lock" (Unix.geteuid ()))
 
   let same_file (a : Unix.stats) (b : Unix.stats) =
     a.st_dev = b.st_dev && a.st_ino = b.st_ino
@@ -278,9 +277,7 @@ module Lock = struct
     read ()
 
   let write_stamp fd =
-    let stamp =
-      Printf.sprintf "%d:%d\n" (Unix.getpid ()) (Thumper_clock.now_ns ())
-    in
+    let stamp = strf "%d:%d\n" (Unix.getpid ()) (Thumper_clock.now_ns ()) in
     Unix.ftruncate fd 0;
     ignore (Unix.lseek fd 0 Unix.SEEK_SET);
     Os.write_all fd stamp
@@ -343,6 +340,8 @@ module Lock = struct
         | exception Unix.Unix_error (Unix.EEXIST, _, _) when attempts > 1 ->
             open_lock ~attempts:(attempts - 1) path)
 
+  let unusable fmt = Printf.ksprintf (fun msg -> Error (Unusable msg)) fmt
+
   (* Validate the opened file before use (as in next/): one stable regular
      file — the fd's file and the named file must agree, refusing symlinks
      and swaps — owned by the effective user, no group/other bits. Then
@@ -351,9 +350,7 @@ module Lock = struct
   let acquire_fd ~path ~wait_s ~on_wait =
     match open_lock ~attempts:8 path with
     | exception Unix.Unix_error (e, _, _) ->
-        Error
-          (Unusable
-             (Printf.sprintf "cannot open %s: %s" path (Unix.error_message e)))
+        unusable "cannot open %s: %s" path (Unix.error_message e)
     | fd -> (
         let checked =
           try
@@ -363,36 +360,24 @@ module Lock = struct
               opened.st_kind <> Unix.S_REG
               || named.st_kind <> Unix.S_REG
               || not (same_file opened named)
-            then
-              Error
-                (Unusable
-                   (Printf.sprintf "%s is not one stable regular file" path))
+            then unusable "%s is not one stable regular file" path
             else if opened.st_uid <> Unix.geteuid () then
-              Error
-                (Unusable
-                   (Printf.sprintf "%s is not owned by the current user" path))
+              unusable "%s is not owned by the current user" path
             else if opened.st_perm land 0o077 <> 0 then
-              Error
-                (Unusable
-                   (Printf.sprintf "%s permissions are broader than 0600" path))
+              unusable "%s permissions are broader than 0600" path
             else
               match acquire ~path ~wait_s ~on_wait fd with
               | Error _ as error -> error
               | Ok () ->
                   let named = Unix.lstat path in
                   if named.st_kind <> Unix.S_REG || not (same_file opened named)
-                  then
-                    Error
-                      (Unusable
-                         (Printf.sprintf "%s changed while being acquired" path))
+                  then unusable "%s changed while being acquired" path
                   else begin
                     write_stamp fd;
                     Ok ()
                   end
           with Unix.Unix_error (e, _, _) ->
-            Error
-              (Unusable
-                 (Printf.sprintf "cannot use %s: %s" path (Unix.error_message e)))
+            unusable "cannot use %s: %s" path (Unix.error_message e)
         in
         match checked with
         | Ok () -> Ok fd
@@ -413,7 +398,7 @@ module Lock = struct
   let with_lock ?dir ?(wait_s = default_wait_s) ?on_wait f =
     if not (wait_s >= 0.) then
       invalid_arg
-        (Printf.sprintf
+        (strf
            "Thumper.Env.Lock.with_lock: wait_s %g (need a non-negative wait in \
             seconds)"
            wait_s);
