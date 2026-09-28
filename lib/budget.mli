@@ -92,7 +92,7 @@ val at_most : metric:Metric.t -> float -> t
     a run whose probe fails reads the cap as inconclusive, never as failure.
 
     Raises [Invalid_argument] if [v] is negative or NaN — checked first — or
-    if [metric] is not {!Metric.exact_capable}: a cap on a metric that can
+    if [metric] is not {!Metric.is_counter}: a cap on a metric that can
     never be exact could never fail, and a budget that cannot fail is a
     silent lie in the suite's contract list. *)
 

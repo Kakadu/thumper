@@ -60,7 +60,7 @@ module Trial = struct
     List.iter
       (fun (m, v) ->
         match v with
-        | Exact _ when not (Metric.exact_capable m) ->
+        | Exact _ when not (Metric.is_counter m) ->
             invalid_arg
               (Printf.sprintf
                  "Run.Trial.make: exact evidence for %s, which no probe can \

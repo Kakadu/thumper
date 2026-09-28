@@ -135,7 +135,7 @@ let counter_projections () =
   equal ~msg:"major_collections" float_exact 3.
     (project Metric.major_collections)
 
-let exact_capable_classification () =
+let is_counter_classification () =
   (* Exactly the Gc_counter class: integral counters the k/2k probe can prove
      an exact integer for. Clocks are always sampled. *)
   List.iter
@@ -143,11 +143,11 @@ let exact_capable_classification () =
       let expected =
         match Metric.source m with Metric.Gc_counter _ -> true | _ -> false
       in
-      equal ~msg:(Metric.id m) bool expected (Metric.exact_capable m))
+      equal ~msg:(Metric.id m) bool expected (Metric.is_counter m))
     builtins;
-  is_false (Metric.exact_capable Metric.wall_time);
-  is_false (Metric.exact_capable Metric.cpu_time);
-  is_true (Metric.exact_capable Metric.alloc_words)
+  is_false (Metric.is_counter Metric.wall_time);
+  is_false (Metric.is_counter Metric.cpu_time);
+  is_true (Metric.is_counter Metric.alloc_words)
 
 let identity_is_the_id () =
   (* Baseline rows key on the id alone. *)
@@ -180,8 +180,8 @@ let () =
         ];
       group "exactness"
         [
-          test "exact-capable is exactly the Gc_counter class"
-            exact_capable_classification;
+          test "is_counter is exactly the Gc_counter class"
+            is_counter_classification;
         ];
       group "identity"
         [

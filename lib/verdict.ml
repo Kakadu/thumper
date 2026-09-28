@@ -171,7 +171,7 @@ let relative_params budget =
 (* A zero-tolerance relative budget on a downgraded exact-capable
    metric is never a rank test at r = 0. *)
 let zero_tolerance_downgrade metric budget =
-  Metric.exact_capable metric
+  Metric.is_counter metric
   &&
   match Option.map Budget.contract budget with
   | Some (Budget.Relative { max_regression = 0.; _ }) -> true

@@ -9,7 +9,7 @@
     {!source}. [Measure] drives the source around timed batches; [Verdict]
     compares the resulting numbers; this module knows nothing about either.
     Whether a counter metric is {e exact} is proven per run by the k/2k probe in
-    [Measure], never assumed here: {!exact_capable} states capability only.
+    [Measure], never assumed here: {!is_counter} states capability only.
 
     There are no [cycles] or [instructions] metrics: a metric that cannot be
     measured on this platform is absent, not NaN. There is no custom-metric
@@ -89,11 +89,11 @@ val kind : t -> kind
 val source : t -> source
 (** [source m] is how [m]'s quantity is read. *)
 
-val exact_capable : t -> bool
-(** [exact_capable m] is [true] iff {!source} is [Gc_counter _]: integral
-    counters the k/2k probe can prove an exact per-call integer for this run
-   . Capability, not proof — a failed probe downgrades the metric to
-    sampled treatment for the run. *)
+val is_counter : t -> bool
+(** [is_counter m] is [true] iff {!source} is [Gc_counter _]: integral counters
+    the k/2k probe can prove an exact per-call integer for this run .
+    Capability, not proof — a failed probe downgrades the metric to sampled
+    treatment for the run. *)
 
 (** {2:predicates Predicates and comparisons} *)
 

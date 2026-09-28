@@ -121,7 +121,7 @@ let trial_rejects_exact_for_unexactable_metric () =
   invalid (fun () -> Run.Trial.make ~k:1 [ (Metric.wall_time, Run.Exact 5) ]);
   invalid (fun () -> Run.Trial.make ~k:1 [ (Metric.cpu_time, Run.Exact 5) ])
 
-let trial_accepts_downgraded_exact_capable () =
+let trial_accepts_downgraded_counter () =
   (* The probe's downgrade path: a failed probe demotes an exact-capable
      metric to sampled treatment for the run. Form need not match
      capability in this direction. *)
@@ -258,7 +258,7 @@ let () =
           test "rejects exact evidence for a metric no probe can prove"
             trial_rejects_exact_for_unexactable_metric;
           test "accepts sampled evidence for an exact-capable metric"
-            trial_accepts_downgraded_exact_capable;
+            trial_accepts_downgraded_counter;
           test "measurement finds by metric identity"
             trial_measurement_by_identity;
         ];

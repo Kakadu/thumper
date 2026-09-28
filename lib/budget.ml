@@ -58,7 +58,7 @@ let at_most ~metric v =
   (* An absolute cap gates proven exact evidence only: on a metric that
      can never be exact the contract is structurally void — a budget that
      cannot fail is the same species of nonsense as a negative tolerance. *)
-  if not (Metric.exact_capable metric) then
+  if not (Metric.is_counter metric) then
     invalid_arg
       (Printf.sprintf
          "Thumper.Budget.at_most: metric %s can never be measured exactly, and \

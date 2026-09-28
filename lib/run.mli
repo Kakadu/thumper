@@ -79,7 +79,7 @@ module Trial : sig
 
       Raises [Invalid_argument] if [k < 1], if two measurements share a metric
       identity ({!Metric.equal}, i.e. the same id), or if an [Exact _]
-      measurement is paired with a metric that is not {!Metric.exact_capable}:
+      measurement is paired with a metric that is not {!Metric.is_counter}:
       exactness is proven per run by the k/2k counter probe, so exact
       evidence for a clock metric is a corrupted parse, not data. The converse
       is legal — sampled evidence for an exact-capable metric is the probe's
