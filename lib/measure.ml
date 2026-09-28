@@ -473,8 +473,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
             if dk < 0. || d2k < 0. then
               invalid_arg
                 (strf
-                   "Measure: %s decreased across a probe batch (deltas %g, \
-                    %g); instrument counters must be non-decreasing"
+                   "Measure.case: %s decreased across a probe batch (deltas \
+                    %g, %g); instrument counters must be non-decreasing"
                    (Metric.id m) dk d2k);
             (* The counters are floats holding whole numbers, exact below
                2^53, so these differences are exact. *)
