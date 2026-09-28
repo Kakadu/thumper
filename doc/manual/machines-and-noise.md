@@ -76,7 +76,7 @@ still checked**: counting doesn't care about load.
 ```
 $ dune build @bench
 thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
-warning: load 7.9 on 10 cores — timing verdicts degraded
+warning: load 7.9 on 10 cores; timing verdicts degraded
 
   inconclusive    1.40 us  ±1.0%  54 w  sha256/string-64
       environment; equivalent (alloc exact)
@@ -92,8 +92,8 @@ The exact allocation verdicts stay visible — `equivalent (alloc
 exact)` — even while the timing side degrades.
 
 `--wait-quiet SECS` polls the same condition and starts measuring when
-the machine goes quiet, up to the bound; if the bound expires it warns
-and proceeds degraded. `--strict` turns inconclusive into failure
+the machine goes quiet, up to the bound; if the bound expires, `check`
+warns and proceeds degraded, and `bless` refuses unless `--force`. `--strict` turns inconclusive into failure
 instead — the right choice for dedicated runners.
 
 The gate reads machine-wide numbers, so it cannot see container

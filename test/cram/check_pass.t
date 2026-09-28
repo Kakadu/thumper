@@ -60,7 +60,7 @@ identical.
 The status line is stderr-TTY-only narration: a redirected run captures
 zero bytes of it.
 
-  $ grep -c 'measuring\|confirming' out.log
+  $ grep -c 'thumper: measuring \|thumper: confirming ' out.log
   0
   [1]
 

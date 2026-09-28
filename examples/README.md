@@ -43,7 +43,7 @@ thumper: hello — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
   proposed  25.03 us  ±2.2%  32.73 kw  list-sort
 
   accept:  mv examples/01-first-benchmark/hello.thumper.corrected examples/01-first-benchmark/hello.thumper
-  measured under load (7.6/10) — prefer a quiet host before accepting
+  warning: load 7.6 on 10 cores; prefer a quiet host before accepting
 ```
 
 (This capture raced a parallel build — on a quiet host the load note
@@ -169,7 +169,7 @@ parallel build:
 
 ```
 thumper: budgets — 3 cases vs /tmp/budgets.thumper for machine ca352e279bc47cb1
-warning: load 7.6 on 10 cores — timing verdicts degraded
+warning: load 7.6 on 10 cores; timing verdicts degraded
 
   inconclusive  12.91 us  ±1.1%  2,048 w  codec/hex-encode
       environment; equivalent (alloc exact)

@@ -845,9 +845,8 @@ let render_check r v =
           head;
           styled ~color `Yellow
             (Printf.sprintf
-               "warning: load %.1f on %d cores \xe2\x80\x94 timing verdicts \
-                degraded"
-               load cores);
+               "warning: load %.1f on %d cores; timing verdicts degraded" load
+               cores);
         ]
     | _ -> [ head ]
   in
@@ -906,8 +905,8 @@ let render_check r v =
           [
             styled ~color `Yellow
               (Printf.sprintf
-                 "  measured under load (%.1f/%d) \xe2\x80\x94 prefer a quiet \
-                  host before accepting"
+                 "  warning: load %.1f on %d cores; prefer a quiet host before \
+                  accepting"
                  load cores);
           ]
       | _ -> []
@@ -1139,12 +1138,14 @@ let selection ~patterns ~tags ~config ~budgets ?filter benches =
       fail2 "%s" (no_match ~patterns ~tags)
   | exception Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
+(* [--wait-quiet]: [Some secs] iff the wait expired with the host still
+   loaded, for the caller to warn ([check]) or refuse ([bless]). *)
 let wait_for_quiet = function
-  | None -> ()
+  | None -> None
   | Some secs -> (
       (* A bounded wait must be loud: a silent multi-second pause is
          indistinguishable from a hang. One line when the wait begins (only
-         when there is something to wait out), one when it expires. *)
+         when there is something to wait out). *)
       (match Env.gate () with
       | Env.Loaded { load; cores } ->
           Printf.eprintf
@@ -1153,13 +1154,17 @@ let wait_for_quiet = function
             secs load cores
       | Env.Quiet -> ());
       match Env.wait_quiet ~timeout_s:secs () with
-      | Ok () -> ()
-      | Error `Timeout ->
-          Printf.eprintf
-            "thumper: warning — host still loaded after %gs; proceeding, \
-             timing verdicts may degrade\n\
-             %!"
-            secs)
+      | Ok () -> None
+      | Error `Timeout -> Some secs)
+
+(* An expired wait on a run that measures anyway: the report's own load
+   warning says what that costs. *)
+let warn_expired = function
+  | None -> ()
+  | Some secs ->
+      Printf.eprintf
+        "thumper: warning: host still loaded after %gs; measuring anyway\n%!"
+        secs
 
 let validate_budgets budgets =
   Option.iter (Budget.check_distinct ~fname:"Thumper.run") budgets
@@ -1188,7 +1193,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
      its target is pre-flighted like bless's before minutes of measurement.
      With one, a pass run writes nothing and needs no writable directory. *)
   if Option.is_none file then preflight_target corrected_path;
-  wait_for_quiet o.wait_quiet;
+  warn_expired (wait_for_quiet o.wait_quiet);
   let verdict =
     checked (fun () ->
         with_status (fun tick ->
@@ -1266,7 +1271,17 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     }
   in
   let file = read_baseline ~suite:name baseline_path in
-  wait_for_quiet o.wait_quiet;
+  (* On bless an expired wait is the refusal itself, unless [--force]. *)
+  (match wait_for_quiet o.wait_quiet with
+  | Some secs when not o.force -> (
+      match Env.gate () with
+      | Env.Loaded { load; cores } ->
+          fail2
+            "bless refused: host still loaded after %gs (load %.1f on %d \
+             cores); rerun with --force to record it anyway"
+            secs load cores
+      | Env.Quiet -> ())
+  | expired -> warn_expired expired);
   (* The gate refusal is bless's own guard: a noisy bless poisons
      the ruler; [--force] overrides and is recorded in the section header.
      The gate is sampled under the lease, directly before measurement — the
@@ -1285,9 +1300,8 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
         if o.force then forced_under_load := Some (load, cores)
         else
           fail2
-            "bless refused — load %.1f on %d cores (a noisy bless poisons the \
-             ruler); wait for a quiet host, use --wait-quiet, or record anyway \
-             with --force"
+            "bless refused: load %.1f on %d cores; rerun with --wait-quiet \
+             SECS, or with --force to record it anyway"
             load cores
   in
   let run =

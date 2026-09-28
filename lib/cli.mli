@@ -243,7 +243,7 @@ val render_check : render -> Verdict.t -> string
       identities. When the verdict was decided under a loaded gate
       ([Verdict.gate], so the message never contradicts the cells), a
       {e compared} run has one yellow warning line directly under the header
-      ([warning: load L on C cores — timing verdicts degraded]); acceptance
+      ([warning: load L on C cores; timing verdicts degraded]); acceptance
       states (NEW, stale) put their load message in the actions block instead —
       one load message per run, never two.
     - {b Table.} One row per case, in suite (authoring) order: the status word
@@ -290,7 +290,7 @@ val render_check : render -> Verdict.t -> string
       the acceptance prompt iff a candidate was written — [accept:  <cmd>] for
       NEW/stale, [ratchet the baseline:  <cmd>] for improvements, [<cmd>] being
       [r.accept]; the acceptance-state load message
-      ([measured under load (L/C) — prefer a quiet host before accepting],
+      ([warning: load L on C cores; prefer a quiet host before accepting],
       yellow) beside the prompt.
     - {b Summary} (compared runs):
       [<N> cases: <a> passed[, <b> improved][, <c> regressed][, <d>
@@ -359,11 +359,11 @@ val main :
     + [check]/[bless] read the baseline: an absent file is the NEW flow (never
       an error; [check] then pre-flights its corrected file, which every NEW run
       writes), [Io]/[Corrupt] exit 2 with [Baseline]'s message. [--wait-quiet]
-      then polls for a quiet host; expiry warns and proceeds — degradation, not
-      refusal, is the specified fallback. [bless] under a loaded gate refuses
-      with the remedy (exit 2 — an operational stop, like the lease) unless
-      [--force], which is recorded as a [# forced:] annotation in the proposed
-      section.
+      then polls for a quiet host; on [check], expiry warns and proceeds —
+      degradation, not refusal, is the specified fallback; on [bless] an expired
+      wait is the refusal below. [bless] under a loaded gate refuses with the
+      remedy (exit 2 — an operational stop, like the lease) unless [--force],
+      which is recorded as a [# forced:] annotation in the proposed section.
     + Measurement runs under the lease with the lease notice and, on a TTY
       stderr, the {!status_line} ticker ([Check]'s [on_progress]); the line is
       erased before anything else prints. [Check.Error] — lease timeout, worker

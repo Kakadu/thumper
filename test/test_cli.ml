@@ -814,7 +814,7 @@ let loaded_run_warns_under_the_header () =
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
-warning: load 7.9 on 8 cores — timing verdicts degraded
+warning: load 7.9 on 8 cores; timing verdicts degraded
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
       environment; equivalent (alloc exact)
@@ -833,7 +833,7 @@ let loaded_new_run_warns_beside_the_prompt () =
   let out = Cli.render_check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"prompt kept" out "accept:  dune promote";
   assert_contains ~msg:"load message beside the prompt" out
-    "measured under load (7.9/8) — prefer a quiet host before accepting";
+    "  warning: load 7.9 on 8 cores; prefer a quiet host before accepting";
   is_true ~msg:"no header-side load warning"
     (not (contains out "timing verdicts degraded"))
 
