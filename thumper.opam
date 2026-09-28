@@ -2,7 +2,7 @@
 opam-version: "2.0"
 synopsis: "Micro-benchmarks as regression tests for OCaml"
 description:
-  "Thumper measures OCaml micro-benchmarks under a frozen, reproducible protocol and stores the evidence - sorted timing samples and proven-exact allocation counts - in a committed baseline file, one section per machine. The build checks performance the way it checks correctness: verdicts come from rank statistics plus an in-run confirmation pass, regressions fail the build only after they reproduce, improvements ratchet the baseline through dune promote as a reviewable diff, and noise degrades to inconclusive rather than a red build. Unix-only; depends on the unix library alone."
+  "Thumper measures OCaml micro-benchmarks and checks them against a committed baseline, so a dune rule fails the build when a case regresses beyond its budget. The baseline stores the evidence, sorted timing samples and exact allocation counts, in one section per machine. A timing comparison is a rank test, and a regression or improvement stands only when a confirmation pass in the same run reproduces it; an exact count compares as an integer. A comparison that cannot decide is inconclusive and fails nothing unless --strict is given. An improvement, or a case with no baseline row yet, is written to a corrected file that dune promote accepts. Thumper depends on the unix library alone. On Unix each case runs in a forked worker."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
