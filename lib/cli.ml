@@ -420,6 +420,18 @@ let default_baseline_dir ~dir_exists ~exe ~cwd ~cwd_in_build =
 
 (* Rendering *)
 
+(* [path] without its [.] segments (and empty ones), so a path prints one
+   way however it was reached: [.././x] is [../x], [a/./b] is [a/b]. *)
+let without_dot_segments path =
+  let absolute = String.length path > 0 && path.[0] = '/' in
+  match
+    List.filter
+      (fun seg -> seg <> "." && seg <> "")
+      (String.split_on_char '/' path)
+  with
+  | [] -> if absolute then "/" else if path = "" then "" else "."
+  | segs -> (if absolute then "/" else "") ^ String.concat "/" segs
+
 (* [dune promote] is meaningful only when this process runs as a dune rule
    action: promotion is staged by the rule's [diff?], and actions run with
    their cwd inside the build directory. [dune exec] also sets [INSIDE_DUNE]
@@ -435,7 +447,7 @@ let promotion_staged ~inside_dune ~cwd =
       if Filename.is_relative v then has_build_component cwd
       else under_dir (Filename.dirname v) cwd || has_build_component cwd
 
-(* Hint arguments are copy-pasteable from anywhere (.mli): a path that a
+(* Hint arguments paste into a shell where the command ran (.mli): a path that a
    POSIX shell would split or expand is quoted, ordinary paths stay bare so
    transcripts keep reading naturally. *)
 let shell_arg s =
@@ -1187,7 +1199,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
           | `Quick -> [ "--quick" ]
           | `Precise -> [ "--precise" ])
         @ (match o.baseline with
-          | Some p -> [ "--baseline " ^ shell_arg p ]
+          | Some _ -> [ "--baseline " ^ shell_arg baseline_path ]
           | None -> [])
         @ List.map (fun t -> "--tag " ^ shell_arg t) o.tags;
       rerun_patterns = o.patterns;
@@ -1382,16 +1394,16 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         let inside_dune = Sys.getenv_opt "INSIDE_DUNE" in
         let staged = promotion_staged ~inside_dune ~cwd in
         let baseline_path =
+          without_dot_segments
+          @@
           match (o.baseline, baseline) with
           | Some p, _ | None, Some p ->
-              (* An explicit path resolves as given. Outside a rule action
-                 the process cwd is invisible to the user (dune exec,
-                 scripts): render and operate on absolute paths so
-                 "accept: mv ..." is unambiguous and copy-pasteable from
-                 anywhere. Inside a rule, relative paths are the contract —
+              (* An explicit path resolves, and prints, as typed: the hints
+                 are pasted where the command ran, and the header, the
+                 rerun line and the accept line then spell the file one
+                 way. Inside a rule, relative paths are the contract too —
                  they name the same files the rule's [diff?] names. *)
-              if staged || not (Filename.is_relative p) then p
-              else Filename.concat cwd p
+              p
           | None, None ->
               (* The default resolves in [default_baseline_dir]'s directory
                  — the committable location next to the benchmark's source

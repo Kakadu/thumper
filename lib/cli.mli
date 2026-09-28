@@ -196,8 +196,8 @@ val accept_command :
     staged ({!promotion_staged}), else ["mv CORRECTED BASELINE"] — in particular
     under [dune exec], where [INSIDE_DUNE] is set but ["dune promote"] would
     silently do nothing. Paths a POSIX shell would split or expand are quoted
-    (copy-pasteable from anywhere); ordinary paths stay bare so
-    transcripts read naturally. *)
+    (pasteable where the command ran); ordinary paths stay bare so transcripts
+    read naturally. *)
 
 type render = {
   color : bool;  (** Style with ANSI escapes. *)
@@ -326,10 +326,12 @@ val main :
       action's cwd inside a build directory (the [diff?] contract), the
       benchmark's source directory when the executable runs from [_build] (the
       committable location — [dune exec] from anywhere proposes the file next to
-      the benchmark's source), the cwd for an installed binary. Rendering: a
-      mapped source directory under the invoker's cwd prints as the short
-      relative path ([examples/01-first-benchmark/hello.thumper]); inside a rule
-      action the bare relative name is the [diff?] contract; every other path
+      the benchmark's source), the cwd for an installed binary. Rendering, with
+      [.] segments removed: an explicit path prints as typed, so the header, the
+      hints and the errors agree with the command line; a mapped source
+      directory under the invoker's cwd prints as the short relative path
+      ([examples/01-first-benchmark/hello.thumper]); inside a rule action the
+      bare relative name is the [diff?] contract; every other default path
       prints absolute, so a candidate's location is never a guess.
     + {b Startup unlinks}: [<baseline>.corrected] and the [--json] target
       are removed before anything else can fail, for every subcommand — no

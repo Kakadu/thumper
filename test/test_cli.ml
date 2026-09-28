@@ -1391,7 +1391,13 @@ let default_path_lands_next_to_the_source () =
           is_true ~msg:"candidate lands beside the explicit path"
             (Sys.file_exists (bl ^ ".corrected"));
           is_true ~msg:"the mapping is bypassed"
-            (not (Sys.file_exists candidate)))
+            (not (Sys.file_exists candidate));
+          (* A relative path prints as typed, without its [.] segments. *)
+          equal ~msg:"relative --baseline exits 0" int 0
+            (run "check --quick -f busy/spin --baseline ./typed.thumper");
+          let out = In_channel.with_open_bin log In_channel.input_all in
+          assert_contains ~msg:"the accept hint names the path as typed" out
+            "accept:  mv typed.thumper.corrected typed.thumper\n")
 
 (* Suite *)
 
