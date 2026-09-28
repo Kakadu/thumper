@@ -157,6 +157,7 @@ let rel_name = function
   | Judged (Regressed (Exact_change _)) -> "regressed-exact"
   | Judged (Equivalent None) -> "equivalent-exact"
   | Judged (Equivalent (Some _)) -> "equivalent"
+  | Judged (Changed_within_budget _) -> "changed_within_budget"
   | Judged (Within_budget _) -> "within_budget"
   | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
 

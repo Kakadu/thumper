@@ -140,12 +140,13 @@ module Budget : sig
       of the baseline value. A comparison of samples yields an interval
       \[[L];[U]\] for the change, positive when worse: the metric has regressed
       when [L > r], improved when [U < -e], is equivalent when \[[L];[U]\] lies
-      within \[[-e];[e]\], within budget when [L > e] and [U <= r], and
-      inconclusive otherwise. A sampled regression or improvement counts only
-      when a second trial of the case confirms it ({!Check.run}). An exact count
-      compares as an integer, with no second trial: it has improved when it
-      shrinks, and regressed when it grows by more than [r] of its baseline
-      value or grows at all from [0].
+      within \[[-e];[e]\], within budget otherwise when [U <= r], and
+      inconclusive otherwise, when the noise exceeds the budget. A sampled
+      regression or improvement counts only when a second trial of the case
+      confirms it ({!Check.run}); an improvement that is not confirmed is within
+      budget. An exact count compares as an integer, with no second trial: it
+      has improved when it shrinks, and regressed when it grows by more than [r]
+      of its baseline value or grows at all from [0].
 
       Each constructor raises [Invalid_argument] if [r] or [e] is negative or
       NaN, or if [e] exceeds [r]. *)
@@ -218,8 +219,8 @@ module Config : sig
   (** [quick] is {!default} with 11 samples. *)
 
   val precise : t
-  (** [precise] is {!default} with 40 samples. Prefer {!precise} when a
-      comparison is [inconclusive: wide interval]. *)
+  (** [precise] is {!default} with 40 samples. Prefer {!precise}, or a looser
+      budget, when a comparison is [inconclusive: wide interval]. *)
 
   (** {2:setters Setters} *)
 

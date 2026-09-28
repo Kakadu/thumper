@@ -88,7 +88,7 @@ val case :
       doubles from 1 until one batch lasts [config.batch_floor] or [k] reaches
       2{^ 30}. [Verdict] compares {!Run.Trial.k} with the baseline row's batch
       size, and a confirmation measured at a [k] other than its first trial's
-      reads [inconclusive: unconfirmed].
+      leaves the relation unconfirmed ([Verdict.decide]).
     + Warmup. Batches of [k] calls are discarded until [config.warmup_time] has
       passed and [config.warmup_batches] batches have run.
     + One [Gc.full_major], after which the GC runs freely.

@@ -35,6 +35,7 @@ type relation =
   | Improved of strong
   | Regressed of strong
   | Equivalent of shift option
+  | Changed_within_budget of shift
   | Within_budget of shift
   | Inconclusive of { reason : reason; shift : shift option }
 
@@ -192,21 +193,28 @@ let zero_tolerance_downgrade metric budget =
 
 type raw =
   | Strong of [ `Improved | `Regressed ]
-  | Demonstrated (* within budget: a demonstrated direction *)
-  | Tame of relation (* equivalent or inconclusive: no direction claimed *)
+  | Demonstrated (* changed within budget: a demonstrated direction *)
+  | Tame of relation (* no direction claimed *)
 
 let table ~e ~r sh =
   let l = sh.lower and u = sh.upper in
   if r = 0. then
     if u < 0. then Strong `Improved
     else if l > 0. then Strong `Regressed
-    else if u <= 0. then Demonstrated
+    else if u <= 0. then Tame (Within_budget sh)
     else Tame (inconclusive ~shift:sh Wide_interval)
   else if u < -.e then Strong `Improved
   else if l > r then Strong `Regressed
   else if -.e <= l && u <= e then Tame (Equivalent (Some sh))
   else if l > e && u <= r then Demonstrated
+  else if u <= r then Tame (Within_budget sh)
   else Tame (inconclusive ~shift:sh Wide_interval)
+
+(* A direction that cannot stand still shows its interval's upper end: at
+   [U <= r] it falls back to within budget, which needs no confirmation. A
+   regression has [U >= L > r] and never falls back. *)
+let unless_within ~r (sh : shift) reason =
+  if sh.upper <= r then Within_budget sh else inconclusive ~shift:sh reason
 
 (* First-pass judgment of one sampled comparison. *)
 let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
@@ -246,14 +254,15 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
       let unless_unstable state =
         if not (bias_comparable ~e sh) then state
         else if unstable baseline then
-          Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
+          Settled (Judged (unless_within ~r sh Baseline_unstable))
         else if unstable cand.Run.sorted then
-          Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
+          Settled (Judged (unless_within ~r sh Candidate_unstable))
         else state
       in
       match table ~e ~r sh with
       | Tame rel -> Settled (Judged rel)
-      | Demonstrated -> unless_unstable (Settled (Judged (Within_budget sh)))
+      | Demonstrated ->
+          unless_unstable (Settled (Judged (Changed_within_budget sh)))
       | Strong dir ->
           unless_unstable
             (Pending
@@ -299,7 +308,7 @@ let judge_exact ~budget ~case_k ~trial_k ~b ~c =
     let growth = strong_estimate strong in
     let within =
       let point = Option.value growth ~default:infinity in
-      Within_budget { estimate = point; lower = point; upper = point }
+      Changed_within_budget { estimate = point; lower = point; upper = point }
     in
     match Option.map Budget.contract budget with
     | Some (Budget.Absolute_max _) -> within
@@ -466,7 +475,7 @@ let resolve_pending ~load ~conf metric pd =
   if is_loaded load then inconclusive ~shift:first Environment
   else
     match conf with
-    | None -> inconclusive ~shift:first Unconfirmed
+    | None -> unless_within ~r:pd.p_r first Unconfirmed
     | Some trial -> (
         (* A confirmation that recalibrated measured at another batch size:
            two batch sizes are never pooled into one row. *)
@@ -490,7 +499,7 @@ let resolve_pending ~load ~conf metric pd =
               (not reproduced)
               || unstable s.Run.sorted
                  && bias_comparable ~e:pd.p_e confirmation
-            then inconclusive ~shift:first Unconfirmed
+            then unless_within ~r:pd.p_r first Unconfirmed
             else
               (* Pool both trials, which an improved row advances to;
                  [Array.append] is a fresh array, so neither trial's evidence
@@ -510,7 +519,7 @@ let resolve_pending ~load ~conf metric pd =
               | `Improved -> Improved strong
               | `Regressed -> Regressed strong)
         | Some (Run.Samples _) | Some (Run.Exact _) | None ->
-            inconclusive ~shift:first Unconfirmed)
+            unless_within ~r:pd.p_r first Unconfirmed)
 
 let decide ~load ~confirmations:confs p =
   let queue = confirmations p in
@@ -578,7 +587,9 @@ let report_fails case_report report =
       match report.verdict with
       | Judged (Regressed _) -> true
       | Proposed
-      | Judged (Improved _ | Equivalent _ | Within_budget _ | Inconclusive _) ->
+      | Judged
+          ( Improved _ | Equivalent _ | Changed_within_budget _
+          | Within_budget _ | Inconclusive _ ) ->
           false)
   | Some (Budget.Absolute_max _) -> (
       match Run.Trial.measurement case_report.trial report.metric with
@@ -589,7 +600,10 @@ let report_fails case_report report =
 let report_inconclusive report =
   match report.verdict with
   | Judged (Inconclusive _) -> true
-  | Judged (Improved _ | Regressed _ | Equivalent _ | Within_budget _) -> false
+  | Judged
+      ( Improved _ | Regressed _ | Equivalent _ | Changed_within_budget _
+      | Within_budget _ ) ->
+      false
   | Proposed -> false
 
 let case_overall case_report =
@@ -672,7 +686,8 @@ let wire_relation = function
   | Improved _ -> "improved"
   | Regressed _ -> "regressed"
   | Equivalent _ -> "equivalent"
-  | Within_budget _ -> "changed_within_budget"
+  | Changed_within_budget _ -> "changed_within_budget"
+  | Within_budget _ -> "within_budget"
   | Inconclusive _ -> "inconclusive"
 
 (* The reported deltas: the first-pass shift for confirmed strongs, the
@@ -683,6 +698,7 @@ let deltas_of_verdict ~exact = function
   | Judged (Inconclusive { shift = None; _ }) -> (None, None, None)
   | Judged (Equivalent None) -> (Some 0.0, None, None)
   | Judged (Equivalent (Some sh))
+  | Judged (Changed_within_budget sh)
   | Judged (Within_budget sh)
   | Judged (Inconclusive { shift = Some sh; _ }) ->
       if exact then (Some sh.estimate, None, None)
@@ -721,7 +737,9 @@ let json_metric buf case_report report =
           let confirmed =
             match rel with
             | Improved _ | Regressed _ -> true
-            | Equivalent _ | Within_budget _ | Inconclusive _ -> false
+            | Equivalent _ | Changed_within_budget _ | Within_budget _
+            | Inconclusive _ ->
+                false
           in
           Printf.bprintf buf ",\"confirmed\":%b,\"n\":%d" confirmed
             (Array.length s.Run.sorted)
@@ -763,7 +781,8 @@ let counted_as r =
   match r.verdict with
   | Judged (Improved _) -> `Improved
   | Judged (Regressed _) -> `Regressed
-  | Judged (Equivalent _ | Within_budget _) -> `Equivalent
+  | Judged (Equivalent _ | Changed_within_budget _ | Within_budget _) ->
+      `Equivalent
   | Proposed | Judged (Inconclusive _) -> `Inconclusive
 
 let json_summary buf t =
@@ -880,8 +899,8 @@ let corrected t =
                            r.metric)
                         (Run.Trial.measurement c.trial r.metric)
                   | Judged
-                      ( Regressed _ | Equivalent _ | Within_budget _
-                      | Inconclusive _ ) ->
+                      ( Regressed _ | Equivalent _ | Changed_within_budget _
+                      | Within_budget _ | Inconclusive _ ) ->
                       None)
                 c.reports)
             t.v_cases

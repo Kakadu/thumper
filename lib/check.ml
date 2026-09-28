@@ -69,7 +69,7 @@ let frozen_k section ~id =
    the first, a verdict over fewer cases than were selected would, under a full
    selection, prune the rows of the cases that failed from the corrected file.
    In the confirmation sweep, [Verdict.decide] reads a missing trial as
-   [Unconfirmed], an outcome that exits 0: a dead worker must not pass. *)
+   unconfirmed, an outcome that exits 0: a dead worker must not pass. *)
 let measured ?instruments ~config ~frozen_k case =
   match Measure.case ?instruments ~config ~frozen_k case with
   | Ok trial -> trial

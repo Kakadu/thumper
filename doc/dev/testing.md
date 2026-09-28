@@ -33,7 +33,7 @@ The laws of [`architecture.md`](architecture.md) are the test
 obligations. The pure-core laws are windtrap properties — notably the
 monotone ratchet (random verdicts × files: a candidate never moves a
 non-confirmed-improved row), relation totality for every (L ≤ U, r, e)
-including r = 0, unconfirmed-in-both-directions, staleness
+including r = 0, an unconfirmed direction never advancing a row, staleness
 short-circuit, codec round-trips (`parse ∘ print = id` byte-for-byte),
 and JSON goldens. The operational laws (lease, single write path,
 honest exits) are cram scenarios.

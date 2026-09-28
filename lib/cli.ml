@@ -759,6 +759,8 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
   | Verdict.Judged (Verdict.Improved strong), _ ->
       Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
   | Verdict.Judged (Verdict.Within_budget s), _ ->
+      Some (4, frag "within budget" (tagged (interval s)))
+  | Verdict.Judged (Verdict.Changed_within_budget s), _ ->
       Some (4, frag "within budget" (tagged (pct s.Verdict.estimate)))
   | Verdict.Judged (Verdict.Inconclusive { reason; _ }), None ->
       let reason = reason_short reason in

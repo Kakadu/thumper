@@ -55,11 +55,18 @@ confidence interval as one deterministic object. Mapped through
 and equivalence band e = min(2.5%, r/2):
 
 improved iff U < −e · regressed iff L > r · equivalent iff
-[L, U] ⊆ [−e, e] · within budget iff L > e and U ≤ r · else
-`inconclusive: wide interval`.
+[L, U] ⊆ [−e, e] · changed within budget iff L > e and U ≤ r · else
+within budget iff U ≤ r · else `inconclusive: wide interval`.
 
 With r = 0 the band degenerates and the order improved (U < 0) →
 regressed (L > 0) → within budget (U ≤ 0) → inconclusive is total.
+
+**Within budget.** `within_budget` claims no direction, only "no slower
+than the budget", at the first pass's α = 0.005 on the upper side. It
+needs no confirmation: a confirmation guards against false failures,
+and a pass adds none. A direction vetoed by instability within 2e, and
+an unconfirmed improvement, fall back to it when U ≤ r; an unconfirmed
+regression has L > r and never does.
 
 **No stopping.** n is fixed, never a convergence target. Optional
 stopping silently inflates type-I error in the high-frequency regime
@@ -76,13 +83,15 @@ draws), re-measured with fresh warmup at its first trial's batch size
 confirmation alone reproduces the relation at α = 0.05 per side
 against the same baseline samples. A confirmed relation carries both
 shifts, the pooled 2n samples, and the confirmation's k: what an
-advanced row records. Anything else is `inconclusive: unconfirmed`, in
-both directions (an unconfirmed improvement must never advance a row),
-with no in-run retry. That includes an unstable confirmation within 2e
-of zero, and a confirmation that recalibrated to another batch size,
-which is never pooled: one row never mixes two batch sizes under one
-`batch=`. On a host loaded at confirmation time every pending relation
-is `inconclusive: environment`.
+advanced row records. Anything else is unconfirmed, with no in-run
+retry: an unconfirmed regression is `inconclusive: unconfirmed`, and
+an unconfirmed improvement reads within budget when U ≤ r and
+`inconclusive: unconfirmed` otherwise; neither ever advances a row.
+That includes an unstable confirmation within 2e of zero, and a
+confirmation that recalibrated to another batch size, which is never
+pooled: one row never mixes two batch sizes under one `batch=`. On a
+host loaded at confirmation time every pending relation is
+`inconclusive: environment`.
 
 **Exact metrics** compare as integers: over an `at_most` cap →
 regressed, whatever the baseline (a proposed row over its cap fails

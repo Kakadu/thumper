@@ -34,8 +34,9 @@ type shift = { estimate : float; lower : float; upper : float }
     names its spelling in the JSON document ({!to_json}). *)
 type reason =
   | Wide_interval
-      (** The interval matches none of the relations ({!type-relation}). Its
-          JSON spelling is [wide_interval]. *)
+      (** The interval matches none of the relations ({!type-relation}): its
+          upper end is beyond the budget, and the noise exceeds what the budget
+          can check. Its JSON spelling is [wide_interval]. *)
   | Non_positive
       (** A sample on either side is zero or negative, so the logarithmic
           comparison is undefined. A loaded host does not hide it. Its JSON
@@ -50,7 +51,7 @@ type reason =
           was [Loaded]. It concerns sampled comparisons only. Its JSON spelling
           is [environment]. *)
   | Unconfirmed
-      (** The confirmation trial did not reproduce the pending relation, or
+      (** The confirmation trial did not reproduce the pending regression, or
           could not ({!decide}). Its JSON spelling is [unconfirmed]. *)
   | Exactness_lost
       (** One side is exact and the other sampled, or both are sampled for a
@@ -93,34 +94,41 @@ type strong =
 
     Over samples, with [L] and [U] the shift's bounds, the relation is
     [Improved] if [U < -e], [Regressed] if [L > r], [Equivalent] if [-e <= L]
-    and [U <= e], [Within_budget] if [L > e] and [U <= r], and
-    [Inconclusive Wide_interval] otherwise. At [r = 0], hence [e = 0], it is
-    [Improved] if [U < 0], [Regressed] if [L > 0], [Within_budget] if [U <= 0]
-    and [Wide_interval] otherwise, never [Equivalent]. An [Improved],
-    [Regressed] or [Within_budget] relation whose estimate is within [2e] of
-    zero is [Baseline_unstable] or [Candidate_unstable] when that side's samples
-    are unstable. An [Improved] or [Regressed] relation then waits for its
+    and [U <= e], [Changed_within_budget] if [L > e] and [U <= r],
+    [Within_budget] if [U <= r], and [Inconclusive Wide_interval] otherwise. At
+    [r = 0], hence [e = 0], it is [Improved] if [U < 0], [Regressed] if [L > 0],
+    [Within_budget] if [U <= 0] and [Wide_interval] otherwise, never
+    [Equivalent]. An [Improved], [Regressed] or [Changed_within_budget] relation
+    whose estimate is within [2e] of zero is vetoed when a side's samples are
+    unstable: it is [Within_budget] if [U <= r], and otherwise
+    [Baseline_unstable] or [Candidate_unstable], the baseline's taking
+    precedence. An [Improved] or [Regressed] relation then waits for its
     confirmation ({!decide}).
 
     Over exact counts [b] (baseline) and [c] (this run), the relation is
     [Equivalent None] if [c = b] and [Improved] if [c < b]. A growth is
     [Regressed] when it exceeds [r] of [b] or starts from [b = 0], and is
-    [Within_budget] otherwise. Under an [at_most] cap [v], a count [c > v] is
-    [Regressed] whatever [b], and any other growth is [Within_budget]. When this
-    trial's batch size is not the case's frozen one ({!Baseline.case_frozen_k}),
-    a changed count is [Batch_drifted], except over the cap.
+    [Changed_within_budget] otherwise. Under an [at_most] cap [v], a count
+    [c > v] is [Regressed] whatever [b], and any other growth is
+    [Changed_within_budget]. When this trial's batch size is not the case's
+    frozen one ({!Baseline.case_frozen_k}), a changed count is [Batch_drifted],
+    except over the cap.
 
-    An [at_most] cap thus yields [Equivalent None], [Improved], [Within_budget],
-    [Regressed] or [Inconclusive Batch_drifted] on exact counts,
-    [Inconclusive Exactness_lost] when one side is exact and the other sampled,
-    and the default budget's relations when both are sampled; only an exact
-    count over the cap fails the case ({!report_fails}). *)
+    An [at_most] cap thus yields [Equivalent None], [Improved],
+    [Changed_within_budget], [Regressed] or [Inconclusive Batch_drifted] on
+    exact counts, [Inconclusive Exactness_lost] when one side is exact and the
+    other sampled, and the default budget's relations when both are sampled;
+    only an exact count over the cap fails the case ({!report_fails}). *)
 type relation =
   | Improved of strong  (** A confirmed or exact improvement. *)
   | Regressed of strong  (** A confirmed or exact regression. *)
   | Equivalent of shift option
       (** No change beyond the band; [None] for equal counts. *)
-  | Within_budget of shift  (** A demonstrated slowdown the budget allows. *)
+  | Changed_within_budget of shift
+      (** A demonstrated slowdown the budget allows. *)
+  | Within_budget of shift
+      (** No slowdown beyond the budget, and no direction shown: the sampled
+          shift's upper bound is within the budget. *)
   | Inconclusive of { reason : reason; shift : shift option }
       (** No relation, for [reason]. [shift] is the first trial's shift iff the
           rank test ran, whatever the reason. *)
@@ -249,13 +257,15 @@ val decide :
     relation is [Confirmed], with both shifts and the pooled samples, when the
     confirmation alone reproduces it against the same baseline samples at α =
     0.05 per side ([U < -e] for an improvement, [L > r] for a regression). It is
-    [Inconclusive Unconfirmed] when it does not, and when the trial is missing,
+    unconfirmed when the confirmation does not, and when the trial is missing,
     lacks the metric, measured it as exact, is drifted, holds a non-positive
     sample, ran at another batch size than the first trial, or is unstable with
-    an estimate within [2e] of zero. When [load] is [Loaded], every pending
-    relation is [Inconclusive Environment] instead, whatever the trials. An
-    inconclusive relation keeps the first shift. Settled metrics are unchanged,
-    and [load] is recorded as {!load}.
+    an estimate within [2e] of zero. An unconfirmed improvement is
+    [Within_budget] with the first shift, since its [U < -e] is within any
+    budget; an unconfirmed regression is [Inconclusive Unconfirmed]. When [load]
+    is [Loaded], every pending relation is [Inconclusive Environment] instead,
+    whatever the trials. An inconclusive relation keeps the first shift. Settled
+    metrics are unchanged, and [load] is recorded as {!load}.
 
     Raises [Invalid_argument] if [confirmations] names a case twice or names a
     case {!confirmations} did not list. *)
@@ -329,15 +339,16 @@ val to_json : t -> string
     - [machine]: [identity t]'s key;
     - [summary]: an object mapping each metric id, in order of first appearance
       in the case reports, to [n_improved], [n_regressed], [n_equivalent]
-      ([Within_budget] included), [n_inconclusive] ([Proposed] included) and
-      [geomean_delta];
+      ([Changed_within_budget] and [Within_budget] included), [n_inconclusive]
+      ([Proposed] included) and [geomean_delta];
     - [cases]: per case, [id], [full_name], [overall] ({!case_overall}) and
       [metrics], one object per report.
 
     A metric object holds, in order:
     - [metric], its id;
     - [relation]: ["improved"], ["regressed"], ["equivalent"],
-      ["changed_within_budget"] or ["inconclusive"], and [null] for [Proposed];
+      ["changed_within_budget"], ["within_budget"] or ["inconclusive"], and
+      [null] for [Proposed];
     - [status], the metric's own: ["fail"] iff {!report_fails}, else
       ["inconclusive"] for an [Inconclusive] relation, budgeted or not, else
       ["pass"]. A case can pass over a metric that is ["inconclusive"];
@@ -371,8 +382,8 @@ val corrected : t -> Baseline.t option
     evidence as a row, one that fails its cap included. Under a [`Full]
     selection the rows of case ids no judged case has are pruned. Every other
     row, the section's header and its annotations keep their bytes, so
-    [Regressed], [Equivalent], [Within_budget] and [Inconclusive] rows keep
-    their old evidence.
+    [Regressed], [Equivalent], [Changed_within_budget], [Within_budget] and
+    [Inconclusive] rows keep their old evidence.
 
     On a missing or stale section ({!Baseline.set_section}), the section is
     replaced by one with [identity t]'s header, no annotation and the rows of

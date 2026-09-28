@@ -883,6 +883,39 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
   1 case: 0 passed, 1 improved.
 |}
 
+let within_budget_prints_its_interval () =
+  (* A noisy row whose interval ends within the budget passes within budget
+     and prints its interval, which shows no change; a demonstrated change
+     within budget prints its estimate. *)
+  let file =
+    file_of
+      [
+        wall_row "alpha" (ties 5 1e-6);
+        alloc_row "alpha" 54;
+        wall_row "beta" (ties 5 1e-6);
+        alloc_row "beta" 54;
+      ]
+  in
+  let v =
+    verdict_of_cases ~file
+      [
+        (bcase "alpha", trial [| 0.9e-6; 0.95e-6; 1e-6; 1.03e-6; 1.04e-6 |]);
+        (bcase "beta", trial (ties 5 1.03e-6));
+      ]
+  in
+  expect (Cli.render_check (ctx ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — 2 cases vs digest.thumper for machine testkey
+
+  within budget  1.00 us  ±7.0%  54 w  alpha
+      +0.0% [-10.0, +4.0]
+  within budget  1.03 us  ±0.0%  54 w  beta
+      +3.0%
+
+  2 cases: 2 passed.
+|}
+
 let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
   (* The provisional regression is never confirmed: decide folds an empty
      confirmation list in, and the cell names the reason — there is no -v. *)
@@ -1721,6 +1754,8 @@ let () =
             loaded_new_run_warns_beside_the_prompt;
           test "improvement-only run renders the accept line"
             improvement_only_renders_the_accept_line;
+          test "within budget prints its interval"
+            within_budget_prints_its_interval;
           test "unconfirmed inconclusive names the reason in the cell"
             unconfirmed_inconclusive_names_the_reason_in_the_cell;
           test "exact alloc failure names the alloc side"

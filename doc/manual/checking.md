@@ -108,6 +108,7 @@ and band `e`:
 | `regressed` | L > r, confirmed | fails the check |
 | `equivalent` | [L, U] ⊆ [−e, +e] | nothing; no diff |
 | `changed_within_budget` | L > e and U ≤ r | a real but budgeted slowdown; passes |
+| `within_budget` | U ≤ r otherwise | no slower than the budget allows; passes |
 | `inconclusive` | anything else | passes, with a named reason |
 
 `improved` and `regressed` are *strong* verdicts, and neither stands on
@@ -115,8 +116,9 @@ one measurement: thumper automatically measures the case again — a
 fresh worker process, a fresh warmup, the same batch size, run after
 all the other cases so the two measurements are spaced in time — and
 keeps the verdict only if the second measurement agrees. An unconfirmed
-strong verdict is `inconclusive (unconfirmed)` in *both* directions: an
-unconfirmed improvement never updates the baseline either.
+regression is `inconclusive (unconfirmed)`; an unconfirmed improvement
+is `within_budget`, since its interval still lies below the budget, and
+never updates the baseline.
 
 ## Exact allocation
 
@@ -138,7 +140,7 @@ and the reason names why and what to do. Exit 0 (1 under `--strict`).
 
 | reason | meaning | remedy |
 | --- | --- | --- |
-| `wide_interval` | the interval is too wide to call | `--precise` |
+| `wide_interval` | the interval reaches past the budget: the noise exceeds it | `--precise` or a looser budget |
 | `non_positive` | a zero sample — the metric doesn't tick at this batch size, or is genuinely zero per call | budget the exact form of the metric, or drop the budget |
 | `unconfirmed` | the second measurement did not agree | usually noise; re-run |
 | `environment` | the machine was too busy | wait, `--wait-quiet`, or `--strict` |
@@ -177,18 +179,19 @@ schema is frozen; automation may rely on every field below:
 - top-level `overall` (`pass|fail|inconclusive`), `machine`,
   `summary`, `cases`;
 - `summary.<metric-id>.{n_improved, n_regressed, n_equivalent,
-  n_inconclusive, geomean_delta}` — `changed_within_budget` counts in
-  `n_equivalent`; inconclusive relations and new rows count in
-  `n_inconclusive`, so unconfirmed strong verdicts never read as
-  improvements;
+  n_inconclusive, geomean_delta}` — `changed_within_budget` and
+  `within_budget` count in `n_equivalent`; inconclusive relations and new
+  rows count in `n_inconclusive`, so unconfirmed strong verdicts never
+  read as improvements;
 - `cases[].{id, full_name, overall, metrics}` with per-metric
   `{metric, relation, status, reason, delta, lower_delta,
   upper_delta}` plus `confirmed` and `n` (sampled) or `exact` (exact).
   Wire relations: `improved`, `regressed`, `equivalent`,
-  `changed_within_budget`, `inconclusive`; `reason` carries the
-  inconclusive cause with the spellings of the table above. A new row
-  is `relation: null`, `reason: "missing_baseline"`, `status: "pass"`,
-  or `status: "fail"` when its exact count is over an `at_most` cap.
+  `changed_within_budget`, `within_budget`, `inconclusive`; `reason`
+  carries the inconclusive cause with the spellings of the table above.
+  A new row is `relation: null`, `reason: "missing_baseline"`,
+  `status: "pass"`, or `status: "fail"` when its exact count is over an
+  `at_most` cap.
 
 Numeric fields are `null` where they are undefined: the interval bounds
 of exact counts, the deltas of new rows and of inconclusive rows no

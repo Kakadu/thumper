@@ -118,6 +118,7 @@ let rel_name = function
   | Judged (Regressed (Exact_change _)) -> "regressed-exact"
   | Judged (Equivalent None) -> "equivalent-exact"
   | Judged (Equivalent (Some _)) -> "equivalent"
+  | Judged (Changed_within_budget _) -> "changed_within_budget"
   | Judged (Within_budget _) -> "within_budget"
   | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
 
@@ -183,11 +184,11 @@ let table_grid =
     (1.01, 0.05, "equivalent");
     (1.01, 0.2, "equivalent");
     (1.01, 0.0, "regressed-confirmed");
-    (1.03, 0.05, "within_budget");
-    (1.03, 0.2, "within_budget");
+    (1.03, 0.05, "changed_within_budget");
+    (1.03, 0.2, "changed_within_budget");
     (1.03, 0.0, "regressed-confirmed");
     (1.06, 0.05, "regressed-confirmed");
-    (1.06, 0.2, "within_budget");
+    (1.06, 0.2, "changed_within_budget");
     (1.06, 0.0, "regressed-confirmed");
     (1.5, 0.05, "regressed-confirmed");
     (1.5, 0.2, "regressed-confirmed");
@@ -199,6 +200,97 @@ let relation_grid =
     ~name:(fun (cand, r, _) -> Printf.sprintf "candidate %g, r = %g" cand r)
     "relation table cell" table_grid
     (fun (cand, r, expected) -> equal string expected (point_verdict ~r cand))
+
+(* The decision model's rule as its oracle: [decision-model/port.py]'s
+   [judge] with [s2], ported line for line for a quiet host, one batch size
+   and derived bands. A row passes within budget when its interval's upper
+   end is within the budget and nothing stronger holds; a direction the
+   instability test vetoes, and an unconfirmed one, falls back to it. *)
+let port_relation ~r ~baseline ~cand ~conf =
+  let e = Float.min 0.025 (r /. 2.) in
+  let logs a = Array.map log a in
+  let frac alpha c =
+    let s =
+      Stats.shift ~alpha_per_side:alpha ~baseline:(logs baseline)
+        ~candidate:(logs c)
+    in
+    ( expm1 s.Stats.estimate,
+      expm1 s.Stats.interval.Stats.lower,
+      expm1 s.Stats.interval.Stats.upper )
+  in
+  let unstable v = v.(0) >= 0. && Stats.severe_outlier_inflation_sorted v in
+  let est, l, u = frac 0.005 cand in
+  let fallback reason =
+    if u <= r then "within_budget" else "inconclusive:" ^ reason
+  in
+  let near = Float.abs est <= 2. *. e in
+  if u < -.e || l > r || (l > e && u <= r) then
+    if near && unstable baseline then fallback "baseline_unstable"
+    else if near && unstable cand then fallback "candidate_unstable"
+    else if l > e && u <= r && not (u < -.e || l > r) then
+      "changed_within_budget"
+    else
+      let improved = u < -.e in
+      let ce, cl, cu = frac 0.05 conf in
+      let reproduced = if improved then cu < -.e else cl > r in
+      if (not reproduced) || (unstable conf && Float.abs ce <= 2. *. e) then
+        fallback "unconfirmed"
+      else if improved then "improved-confirmed"
+      else "regressed-confirmed"
+  else if -.e <= l && u <= e then "equivalent"
+  else if u <= r then "within_budget"
+  else "inconclusive:wide_interval"
+
+let pp_port ppf (r, (b, c, f)) =
+  let arr a =
+    String.concat "; " (List.map (Printf.sprintf "%h") (Array.to_list a))
+  in
+  Format.fprintf ppf "r=%g baseline=[|%s|] cand=[|%s|] conf=[|%s|]" r (arr b)
+    (arr c) (arr f)
+
+(* Rows of 5 to 20 samples within 1% or 10% of their level, one in four
+   spiked by an outlier at 100x; this run's level is mostly within 8% of the
+   baseline's, else from half to one and a half times it. Every relation and
+   both instability vetoes are reached. *)
+let port_case =
+  let open Gen in
+  let row ~spiked level =
+    let+ w = of_list [ 0.01; 0.1 ]
+    and+ v = array ~size:(int_range 5 20) (float_range (-1.) 1.)
+    and+ spike = map (fun k -> spiked && k = 0) (int_range 0 3) in
+    let v = Array.map (fun x -> level *. (1. +. (w *. x))) v in
+    if spike then v.(0) <- v.(0) *. 100.;
+    Array.sort Float.compare v;
+    v
+  in
+  let level =
+    frequency [ (3, float_range 0.92 1.08); (1, float_range 0.5 1.5) ]
+  in
+  with_pp pp_port
+    (let+ r = of_list [ 0.02; 0.05; 0.1; 0.2 ]
+     and+ b = row ~spiked:true 1.0
+     and+ c = bind level (row ~spiked:true)
+     and+ f = bind level (row ~spiked:false) in
+     (r, (b, c, f)))
+
+let judgment_follows_the_port (r, (baseline, cand, conf)) =
+  let row = wall_row "a" baseline in
+  let file = file_of [ row ] in
+  (* The row stores each sample as its [%.3e] text. *)
+  let baseline =
+    match Baseline.row_evidence row with
+    | Baseline.Sampled { samples; _ } -> samples
+    | Baseline.Exact_int _ -> failf "expected a sampled row"
+  in
+  let t =
+    run_check ~file
+      ~budgets:[ Budget.no_slower_than r ]
+      ~confirm:(fun _ -> Some (wall_trial conf))
+      [ (bcase "a", wall_trial cand) ]
+  in
+  equal string
+    (port_relation ~r ~baseline ~cand ~conf)
+    (rel_name (verdict_of t ~case:"a" ~metric:m_wall))
 
 let spread = [| 0.5; 0.5; 0.5; 2.0; 2.0 |]
 
@@ -217,18 +309,65 @@ let wide_interval_is_inconclusive () =
   equal ~msg:"r=0 chain residual" string "inconclusive:wide_interval"
     (wide_under 0.0)
 
-let within_budget_needs_the_whole_interval_above_the_band () =
-  (* The within_budget clause is L > e, not just U <= r: an interval
-     straddling the band from below ([L;U] = [0%;+5%] against e = 2.5%,
-     r = 20%) demonstrates no direction and must stay inconclusive. *)
+let within_budget_edges () =
+  (* The bound is inclusive: an interval whose upper end is exactly [r] is
+     within budget. Tied samples make the bounds [expm1 (log 1.5)] exactly,
+     the budget's own value, on any libm. *)
+  let d = expm1 (log 1.5) in
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
     run_check
+      ~budgets:
+        [
+          Budget.relative ~metric:m_wall ~equivalent_within:0.01
+            ~max_regression:d ();
+        ]
+      ~file
+      [ (bcase "a", wall_trial [| 0.5; 0.5; 1.5; 1.5; 1.5 |]) ]
+  in
+  check_rel ~msg:"U = r" t ~case:"a" ~metric:m_wall "within_budget";
+  (* A change within budget that instability vetoes, at U = r = 2e. *)
+  let t =
+    run_check
+      ~budgets:
+        [
+          Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
+            ~max_regression:d ();
+        ]
+      ~file
+      [ (bcase "a", wall_trial (spiked 1.5)) ]
+  in
+  check_rel ~msg:"a vetoed change at U = r" t ~case:"a" ~metric:m_wall
+    "within_budget";
+  (* At r = 0 an unchanged row, [L = U = 0], is within budget with no
+     direction to confirm. *)
+  let p =
+    judge
+      ~budgets:[ Budget.no_slower_than 0. ]
+      ~file
+      [ (bcase "a", wall_trial (ties 5 1.0)) ]
+  in
+  equal ~msg:"r = 0: nothing to confirm" (list string) []
+    (Verdict.confirmations p)
+
+let a_change_needs_the_whole_interval_above_the_band () =
+  (* The changed_within_budget clause is L > e, not just U <= r: an interval
+     straddling the band from below ([L;U] = [0%;+5%] against e = 2.5%,
+     r = 20%) demonstrates no direction. It is within budget, and so is an
+     interval reaching below the band ([-50%;+5%]). *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let under_20 samples =
+    run_check
       ~budgets:[ Budget.no_slower_than 0.2 ]
       ~file
-      [ (bcase "a", wall_trial [| 1.0; 1.0; 1.05; 1.05; 1.05 |]) ]
+      [ (bcase "a", wall_trial samples) ]
   in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:wide_interval"
+  check_rel ~msg:"straddling the band"
+    (under_20 [| 1.0; 1.0; 1.05; 1.05; 1.05 |])
+    ~case:"a" ~metric:m_wall "within_budget";
+  check_rel ~msg:"reaching below the band"
+    (under_20 [| 0.5; 0.5; 1.05; 1.05; 1.05 |])
+    ~case:"a" ~metric:m_wall "within_budget"
 
 (* Confirmation *)
 
@@ -357,17 +496,39 @@ let confirmation_is_judged_at_the_wider_alpha () =
   in
   check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed"
 
-let unconfirmed_improvement_is_inconclusive_and_never_ratchets () =
-  (* An unconfirmed improvement is not equivalent and must never
-     advance the baseline — in both directions of the pass. *)
+let unconfirmed_improvement_is_within_budget_and_never_ratchets () =
+  (* An unconfirmed improvement still showed its first interval below the
+     budget: it passes within budget, keeps that interval, and never
+     advances the baseline. Without a confirmation trial it is the same. *)
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
     run_check ~file
       ~confirm:(fun _ -> Some (wall_trial (ties 5 1.0)))
       [ (bcase "a", wall_trial (ties 5 0.5)) ]
   in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed";
-  is_none ~msg:"no candidate" (Verdict.corrected t)
+  check_rel t ~case:"a" ~metric:m_wall "within_budget";
+  check_overall t `Pass;
+  (match verdict_of t ~case:"a" ~metric:m_wall with
+  | Judged (Within_budget sh) ->
+      is_true ~msg:"the first interval"
+        (Float.abs (sh.Verdict.upper +. 0.5) < 1e-9)
+  | v -> failf "expected within budget, got %s" (rel_name v));
+  is_none ~msg:"no candidate" (Verdict.corrected t);
+  let missing =
+    run_check ~file
+      ~confirm:(fun _ -> None)
+      [ (bcase "a", wall_trial (ties 5 0.5)) ]
+  in
+  check_rel ~msg:"no confirmation trial" missing ~case:"a" ~metric:m_wall
+    "within_budget";
+  (* A loaded host at the confirmation sweep is still no pass. *)
+  let loaded =
+    run_check ~file
+      ~decide_load:(Env.Loaded { load = 8.; cores = 8 })
+      [ (bcase "a", wall_trial (ties 5 0.5)) ]
+  in
+  check_rel ~msg:"environment at confirmation" loaded ~case:"a" ~metric:m_wall
+    "inconclusive:environment"
 
 let confirmation_warnings_reach_the_report () =
   (* The confirmation's samples are judged and pooled, so a warning about
@@ -438,8 +599,8 @@ let drifted_candidate_is_vetoed_within_2e () =
   let within =
     run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ]
   in
-  check_rel ~msg:"a shift within 2e" within ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_drifted";
+  check_rel ~msg:"a shift within 2e never falls back to within budget" within
+    ~case:"a" ~metric:m_wall "inconclusive:candidate_drifted";
   (* Beyond 2e drift is no veto, as instability is none: a 2x drifted trial
      queues, confirms, and fails the case. *)
   let strong =
@@ -471,11 +632,25 @@ let unstable_candidate_blocks_demonstrated_directions () =
      [large_shift_on_unstable_evidence_is_judged]. *)
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let strong = run_check ~file [ (bcase "a", wall_trial (spiked 0.96)) ] in
-  check_rel ~msg:"strong within 2e" strong ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_unstable";
+  check_rel ~msg:"an improvement within 2e falls back to within budget" strong
+    ~case:"a" ~metric:m_wall "within_budget";
   let within = run_check ~file [ (bcase "a", wall_trial (spiked 1.03)) ] in
-  check_rel ~msg:"within_budget" within ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_unstable";
+  check_rel ~msg:"so does a change within budget" within ~case:"a"
+    ~metric:m_wall "within_budget";
+  (* At the derived band a regression is beyond 2e; a wider band puts one
+     within it. *)
+  let over =
+    run_check
+      ~budgets:
+        [
+          Budget.relative ~metric:m_wall ~equivalent_within:0.025
+            ~max_regression:0.03 ();
+        ]
+      ~file
+      [ (bcase "a", wall_trial (spiked 1.04)) ]
+  in
+  check_rel ~msg:"a regression within 2e stays vetoed" over ~case:"a"
+    ~metric:m_wall "inconclusive:candidate_unstable";
   let equiv = run_check ~file [ (bcase "a", wall_trial (spiked 1.0)) ] in
   check_rel ~msg:"equivalent survives" equiv ~case:"a" ~metric:m_wall
     "equivalent"
@@ -511,7 +686,16 @@ let baseline_instability_is_recomputed_from_stored_samples () =
   is_true ~msg:"premise: the stored vector is severely outlier-inflated"
     (Stats.severe_outlier_inflation_sorted unstable_baseline);
   let file = file_of [ wall_row "a" unstable_baseline ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 20 1.04)) ] in
+  let t =
+    run_check
+      ~budgets:
+        [
+          Budget.relative ~metric:m_wall ~equivalent_within:0.025
+            ~max_regression:0.03 ();
+        ]
+      ~file
+      [ (bcase "a", wall_trial (ties 20 1.04)) ]
+  in
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:baseline_unstable"
 
 let large_shift_on_unstable_evidence_is_judged () =
@@ -707,7 +891,7 @@ let exact_integer_comparison () =
       ~budgets:[ Budget.no_more_alloc_than 0.10 ]
       ~row:100 ~cand:105 ()
   in
-  equal ~msg:"a budgeted increase" string "within_budget" r;
+  equal ~msg:"a budgeted increase" string "changed_within_budget" r;
   let t, r =
     exact_verdict
       ~budgets:[ Budget.no_more_alloc_than 0.10 ]
@@ -830,7 +1014,7 @@ let absolute_budget_gates_exact_evidence () =
   equal ~msg:"under the cap, below baseline" string "improved-exact" r;
   check_overall t `Pass;
   let _, r = exact_verdict ~budgets ~row:90 ~cand:95 () in
-  equal ~msg:"under the cap, above baseline" string "within_budget" r;
+  equal ~msg:"under the cap, above baseline" string "changed_within_budget" r;
   let _, r = exact_verdict ~budgets ~row:100 ~cand:100 () in
   equal ~msg:"unchanged" string "equivalent-exact" r
 
@@ -1039,7 +1223,7 @@ let case_budgets_override_run_budgets_per_metric () =
           wall_trial (ties 5 1.3) );
       ]
   in
-  check_rel t ~case:"a" ~metric:m_wall "within_budget";
+  check_rel t ~case:"a" ~metric:m_wall "changed_within_budget";
   check_overall t `Pass
 
 let judge_validates_inputs () =
@@ -1615,6 +1799,32 @@ let json_within_budget_wire_relation () =
   is_true ~msg:"counts as equivalent in the summary"
     (contains ~sub:"\"n_equivalent\":1" json)
 
+let json_within_budget_is_a_pass_with_its_interval () =
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let t =
+    run_check
+      ~budgets:[ Budget.no_slower_than 0.2 ]
+      ~file
+      [ (bcase "a", wall_trial [| 0.5; 0.5; 1.05; 1.05; 1.05 |]) ]
+  in
+  let json = Verdict.to_json t in
+  let sh =
+    match verdict_of t ~case:"a" ~metric:m_wall with
+    | Judged (Within_budget sh) -> sh
+    | v -> failf "expected within budget, got %s" (rel_name v)
+  in
+  let f v = Printf.sprintf "%.17g" v in
+  is_true ~msg:"the metric object"
+    (contains
+       ~sub:
+         ("{\"metric\":\"wall_time\",\"relation\":\"within_budget\",\"status\":\"pass\",\"reason\":null,\"confirmed\":false,\"n\":5,\"delta\":"
+        ^ f sh.Verdict.estimate ^ ",\"lower_delta\":" ^ f sh.Verdict.lower
+        ^ ",\"upper_delta\":" ^ f sh.Verdict.upper ^ "}")
+       json);
+  is_true ~msg:"counts as equivalent in the summary"
+    (contains ~sub:"\"n_equivalent\":1,\"n_inconclusive\":0" json);
+  check_overall t `Pass
+
 let json_unconfirmed_counts_inconclusive () =
   let t = regression_scenario ~confirm:(fun _ -> None) () in
   let json = Verdict.to_json t in
@@ -1698,7 +1908,16 @@ let json_candidate_side_reason_wire_strings () =
   in
   is_true ~msg:"drifted wire string"
     (contains ~sub:"\"reason\":\"drifted\"" (Verdict.to_json drifted));
-  let unstable = run_check ~file [ (bcase "a", wall_trial (spiked 0.96)) ] in
+  let unstable =
+    run_check
+      ~budgets:
+        [
+          Budget.relative ~metric:m_wall ~equivalent_within:0.025
+            ~max_regression:0.03 ();
+        ]
+      ~file
+      [ (bcase "a", wall_trial (spiked 1.04)) ]
+  in
   is_true ~msg:"unstable wire string"
     (contains ~sub:"\"reason\":\"unstable\"" (Verdict.to_json unstable))
 
@@ -1737,10 +1956,13 @@ let () =
       group "relation table"
         [
           relation_grid;
+          prop "judgment follows the decision model's port" port_case
+            judgment_follows_the_port;
           test "a straddling interval is inconclusive (wide_interval)"
             wide_interval_is_inconclusive;
-          test "within_budget needs the whole interval above the band"
-            within_budget_needs_the_whole_interval_above_the_band;
+          test "a change needs the whole interval above the band"
+            a_change_needs_the_whole_interval_above_the_band;
+          test "within budget's edges" within_budget_edges;
         ];
       group "confirmation"
         [
@@ -1760,8 +1982,8 @@ let () =
             exact_confirmation_evidence_is_inconclusive;
           test "the confirmation is judged at the wider alpha"
             confirmation_is_judged_at_the_wider_alpha;
-          test "an unconfirmed improvement is inconclusive and never ratchets"
-            unconfirmed_improvement_is_inconclusive_and_never_ratchets;
+          test "an unconfirmed improvement is within budget and never ratchets"
+            unconfirmed_improvement_is_within_budget_and_never_ratchets;
           test "a confirmation's warnings reach the report"
             confirmation_warnings_reach_the_report;
           test "the queue lists sampled strongs in case order"
@@ -1889,6 +2111,8 @@ let () =
             json_confirmed_regression_document;
           test "within_budget wire relation and summary bucket"
             json_within_budget_wire_relation;
+          test "within_budget is a pass with its interval"
+            json_within_budget_is_a_pass_with_its_interval;
           test "unconfirmed strongs count in n_inconclusive"
             json_unconfirmed_counts_inconclusive;
           test "candidate-side reasons use the additive wire strings"
