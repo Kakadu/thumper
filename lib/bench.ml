@@ -29,11 +29,7 @@ type spec = {
 
 type t = Case of spec * (unit -> prepared) | Group of spec * t list
 
-(* Slugging (pinned): a name that is already a valid segment is its own slug —
-   the id is the name verbatim, case preserved. Otherwise every maximal run of
-   non-id characters becomes one '-' separator, and runs at either end are
-   dropped: "1 MiB copy" -> "1-MiB-copy", " (parens) " -> "parens". Literal
-   id characters, including edge hyphens, are always kept. *)
+(* The slug rule is [Thumper]'s id contract (thumper.mli, "Ids"). *)
 let slug name =
   if Baseline.valid_segment name then name
   else begin
@@ -126,11 +122,8 @@ let bench_with_setup ?id ?tags ?metrics ?budgets ~setup ?(teardown = ignore)
     {
       run_batch =
         (fun k ->
-          (* Re-opaque both the closure and the environment each batch: the
-             compiler must never specialize the measured loop on a setup
-             value it can see, and a known pure [f] applied to a
-             loop-invariant [env] would otherwise be inlined and hoisted out
-             of the measured loop. *)
+          (* As in [bench], and [env] too: the loop must not specialize on a
+             setup value the compiler can see. *)
           let f = Sys.opaque_identity f and env = Sys.opaque_identity env in
           for _ = 1 to k do
             ignore (Sys.opaque_identity (f env))
@@ -165,7 +158,6 @@ let rec matches f case =
 
 (* Inheritance *)
 
-(* Set union preserving first occurrence, outer scopes first. *)
 let union_tags outer inner =
   let rec go seen = function
     | [] -> []
@@ -177,11 +169,6 @@ let union_tags outer inner =
 let inherit_metrics ~inner ~outer =
   match inner with Some _ as m -> m | None -> outer
 
-(* Cross-scope budget resolution: budgets merge per
-   metric, nearest scope first — a case budget for wall_time shadows the
-   group's wall_time budget but leaves the group's alloc budget flowing.
-   [Some []] normalizes to [None]: an empty list is the merge identity, so
-   the observed result is [None] or nonempty — never [Some []]. *)
 let merge_budgets ~inner ~outer =
   let norm = function Some [] -> None | b -> b in
   match (norm inner, norm outer) with
@@ -259,10 +246,6 @@ let resolve benches =
   | Some id -> Error (Duplicate_id id)
   | None -> Ok cases
 
-(* A budget must name a metric collected where it is stated: the scope's own
-   [?metrics], else the nearest enclosing ones, else the run's. Budgets a
-   narrower scope inherits on metrics it does not collect are not a
-   contradiction; the judge drops them. *)
 let check_collected ~metrics ~budgets benches =
   let uncollected ~scope ~metrics budgets =
     List.find_map
