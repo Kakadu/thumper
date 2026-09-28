@@ -364,6 +364,14 @@ let judge_metric ~load section ~id ~trial metric measurement budget =
             judge_sampled ~load ~metric ~budget ~row_k ~baseline:samples ~cand
               ~trial_k)
 
+let absent_ids s ~case_ids =
+  List.sort_uniq String.compare
+    (List.filter_map
+       (fun row ->
+         let id = Baseline.row_id row in
+         if List.mem id case_ids then None else Some id)
+       (Baseline.rows s))
+
 (* A stale section is replaced wholesale from the selected cases alone, by
    check's candidate and by bless alike: under a partial selection the
    unselected cases' rows are dropped, and the acceptance prompt is the only
@@ -372,14 +380,7 @@ let judge_metric ~load section ~id ~trial metric measurement budget =
 let stale_partial_notice ~selection ~comparison ~section ~case_ids =
   match (selection, comparison, section) with
   | `Partial, Stale _, Some s ->
-      let dropped =
-        List.sort_uniq String.compare
-          (List.filter_map
-             (fun row ->
-               let id = Baseline.row_id row in
-               if List.mem id case_ids then None else Some id)
-             (Baseline.rows s))
-      in
+      let dropped = absent_ids s ~case_ids in
       let n = List.length dropped in
       if n = 0 then []
       else
@@ -396,22 +397,11 @@ let stale_partial_notice ~selection ~comparison ~section ~case_ids =
 let prune_notices ~selection ~comparison ~section ~case_ids =
   match (selection, comparison, section) with
   | `Full, Compared, Some s ->
-      let dead = Hashtbl.create 8 in
-      let notices = ref [] in
-      List.iter
-        (fun row ->
-          let id = Baseline.row_id row in
-          if (not (List.mem id case_ids)) && not (Hashtbl.mem dead id) then begin
-            Hashtbl.add dead id ();
-            notices :=
-              Printf.sprintf
-                "case %s no longer exists in this binary; its rows will be \
-                 pruned from the corrected file"
-                id
-              :: !notices
-          end)
-        (Baseline.rows s);
-      List.rev !notices
+      List.map
+        (Printf.sprintf
+           "case %s no longer exists in this binary; its rows will be pruned \
+            from the corrected file")
+        (absent_ids s ~case_ids)
   | _ -> []
 
 let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
