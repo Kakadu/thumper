@@ -271,14 +271,14 @@ let parse_section lines i key =
     if String.starts_with ~prefix:machine_prefix line then
       perr lnum "expected a blank line before the next '# machine:' section"
     else if String.starts_with ~prefix:host_prefix line then (
-      if !host <> None then perr lnum "duplicate '# host:' line";
-      if !ocaml_id <> None || !anns <> [] then
+      if Option.is_some !host then perr lnum "duplicate '# host:' line";
+      if Option.is_some !ocaml_id || !anns <> [] then
         perr lnum "misplaced '# host:' line";
       let v = after host_prefix line in
       if v = "" then perr lnum "empty '# host:' value";
       host := Some v)
     else if String.starts_with ~prefix:ocaml_prefix line then (
-      if !ocaml_id <> None then perr lnum "duplicate '# ocaml:' line";
+      if Option.is_some !ocaml_id then perr lnum "duplicate '# ocaml:' line";
       if !anns <> [] then perr lnum "misplaced '# ocaml:' line";
       let v = after ocaml_prefix line in
       if v = "" then perr lnum "empty '# ocaml:' value";
@@ -295,76 +295,83 @@ let parse_section lines i key =
      (baseline-format.md): a host-less section cannot be described to a
      reviewer, and an ocaml-less one could never compare (staleness reads the
      recorded identity verbatim). *)
-  if !host = None then
-    perr entry_lnum "section for machine %s is missing its '# host:' line" key;
-  if !ocaml_id = None then
-    perr entry_lnum "section for machine %s is missing its '# ocaml:' line" key;
+  let host =
+    match !host with
+    | Some v -> v
+    | None ->
+        perr entry_lnum "section for machine %s is missing its '# host:' line"
+          key
+  in
+  let ocaml =
+    match !ocaml_id with
+    | Some v -> v
+    | None ->
+        perr entry_lnum "section for machine %s is missing its '# ocaml:' line"
+          key
+  in
   if !i < n && not (String.equal lines.(!i) "") then
     perr (!i + 1) "expected a blank line before the section's rows";
-  let rows = ref [] and prev = ref None in
-  (if !i < n && String.equal lines.(!i) "" then
-     let next_is_section =
-       !i + 1 < n && String.starts_with ~prefix:machine_prefix lines.(!i + 1)
-     in
-     if not next_is_section then begin
-       let blank_lnum = !i + 1 in
-       incr i;
-       if !i = n then perr blank_lnum "trailing blank line at end of file";
-       if String.equal lines.(!i) "" then perr (!i + 1) "unexpected blank line";
-       while !i < n && not (String.equal lines.(!i) "") do
-         let line = lines.(!i) in
-         let lnum = !i + 1 in
-         if line.[0] = '#' then perr lnum "unexpected comment among rows";
-         let r = parse_row lnum line in
-         (match !prev with
-         | Some prev_key -> (
-             match compare_key prev_key (row_key r) with
-             | 0 -> perr lnum "duplicate row for %s %s" r.r_id r.r_metric
-             | c when c > 0 -> perr lnum "rows are not sorted by (id, metric)"
-             | _ -> ())
-         | None -> ());
-         prev := Some (row_key r);
-         rows := r :: !rows;
-         incr i
-       done
-     end);
+  let rec loop prev acc =
+    if !i = n || String.equal lines.(!i) "" then List.rev acc
+    else begin
+      let line = lines.(!i) in
+      let lnum = !i + 1 in
+      if line.[0] = '#' then perr lnum "unexpected comment among rows";
+      let r = parse_row lnum line in
+      (match prev with
+      | Some prev_key -> (
+          match compare_key prev_key (row_key r) with
+          | 0 -> perr lnum "duplicate row for %s %s" r.r_id r.r_metric
+          | c when c > 0 -> perr lnum "rows are not sorted by (id, metric)"
+          | _ -> ())
+      | None -> ());
+      incr i;
+      loop (Some (row_key r)) (r :: acc)
+    end
+  in
+  let next_is_section =
+    !i + 1 < n && String.starts_with ~prefix:machine_prefix lines.(!i + 1)
+  in
+  let rows =
+    (* [!i] is at the end or on a blank line. *)
+    if !i = n || next_is_section then []
+    else begin
+      let blank_lnum = !i + 1 in
+      incr i;
+      if !i = n then perr blank_lnum "trailing blank line at end of file";
+      if String.equal lines.(!i) "" then perr (!i + 1) "unexpected blank line";
+      loop None []
+    end
+  in
   {
     s_machine = key;
-    s_host = Option.get !host;
-    s_ocaml = Option.get !ocaml_id;
+    s_host = host;
+    s_ocaml = ocaml;
     s_annotations = List.rev !anns;
-    s_rows = List.rev !rows;
+    s_rows = rows;
   }
 
 let parse s =
   if String.equal s "" then { t_suite = None; t_sections = [] }
   else begin
-    let pieces = String.split_on_char '\n' s in
-    let count = List.length pieces in
+    let pieces = Array.of_list (String.split_on_char '\n' s) in
+    let count = Array.length pieces in
     (* A well-formed file ends with a newline, so the final piece is "". *)
-    (match List.nth pieces (count - 1) with
-    | "" -> ()
-    | _ -> perr count "truncated file: missing final newline");
-    let lines =
-      Array.of_list (List.filteri (fun j _ -> j < count - 1) pieces)
-    in
-    let n = Array.length lines in
+    if not (String.equal pieces.(count - 1) "") then
+      perr count "truncated file: missing final newline";
+    let n = count - 1 in
+    let lines = Array.sub pieces 0 n in
     if not (String.equal lines.(0) header_line) then
       perr 1 "expected %s on the first line" (quote header_line);
-    let i = ref 1 in
     (* The grammar requires the suite header on every non-empty file
        (baseline-format.md): a section-bearing file without one would make
        [suite] lie about its "empty-file iff" contract, and the write path
        would have no name to preserve. *)
-    let suite =
-      if !i < n && String.starts_with ~prefix:suite_prefix lines.(!i) then begin
-        let name = after suite_prefix lines.(!i) in
-        if name = "" then perr (!i + 1) "empty suite name";
-        incr i;
-        Some name
-      end
-      else perr 2 "expected a '# suite:' line"
-    in
+    if not (n > 1 && String.starts_with ~prefix:suite_prefix lines.(1)) then
+      perr 2 "expected a '# suite:' line";
+    let suite = after suite_prefix lines.(1) in
+    if suite = "" then perr 2 "empty suite name";
+    let i = ref 2 in
     let sections = ref [] and prev_key = ref None in
     while !i < n do
       if not (String.equal lines.(!i) "") then
@@ -391,7 +398,7 @@ let parse s =
       incr i;
       sections := parse_section lines i key :: !sections
     done;
-    { t_suite = suite; t_sections = List.rev !sections }
+    { t_suite = Some suite; t_sections = List.rev !sections }
   end
 
 let of_string s =
@@ -520,7 +527,7 @@ let check_annotations fname annotations =
 
 let set_section ?(annotations = []) t identity row_list =
   let fname = "Baseline.set_section" in
-  if t.t_suite = None then
+  if Option.is_none t.t_suite then
     invalid_arg
       (fname
      ^ ": baseline has no suite header; start from Baseline.empty ~suite");
