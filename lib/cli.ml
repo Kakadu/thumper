@@ -874,6 +874,13 @@ let render_check r v =
             (Printf.sprintf " — no baseline for machine %s (%s)"
                ident.Baseline.machine r.cpu_model)
       | Verdict.Stale (Verdict.Ocaml_mismatch { section; current }) ->
+          (* The recorded identity is text from the file: quoted when it
+             holds a control byte, as it could write to the terminal. *)
+          let section =
+            if String.exists (fun c -> c < ' ' || c = '\x7f') section then
+              Baseline.quote section
+            else section
+          in
           header_line ~color ~suite
             (Printf.sprintf
                " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
@@ -1162,10 +1169,10 @@ let read_baseline ~suite path =
       match Baseline.suite f with
       | Some s when not (String.equal s suite) ->
           fail2
-            "%s: baseline is for suite '%s', not '%s'; pass this suite's \
-             file with --baseline, or update the '# suite:' header if the \
-             suite was renamed"
-            path s suite
+            "%s: baseline is for suite %s, not %s; pass this suite's file with \
+             --baseline, or update the '# suite:' header if the suite was \
+             renamed"
+            path (Baseline.quote s) (Baseline.quote suite)
       | _ -> Some f)
   | Ok None -> None
   | Error e -> fail2 "%s" (baseline_error path e)

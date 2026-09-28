@@ -77,6 +77,25 @@ let with_quiet_stderr f =
       Unix.close saved)
     f
 
+(* [f ()] with stderr sent to a file, and what it wrote there. *)
+let capturing_stderr f =
+  let path = Filename.temp_file "thumper-test" ".err" in
+  let saved = Unix.dup Unix.stderr in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0 in
+  Unix.dup2 fd Unix.stderr;
+  Unix.close fd;
+  let v =
+    Fun.protect
+      ~finally:(fun () ->
+        flush stderr;
+        Unix.dup2 saved Unix.stderr;
+        Unix.close saved)
+      f
+  in
+  let err = In_channel.with_open_bin path In_channel.input_all in
+  Sys.remove path;
+  (v, err)
+
 (* Fixtures *)
 
 let m_wall = Metric.wall_time
@@ -1195,6 +1214,49 @@ let empty_selection_exits_2 () =
   in
   equal int 2 code
 
+let a_wrong_suite_name_is_quoted () =
+  (* The file's suite name is text from disk: a control byte in it prints
+     escaped, never raw to the terminal. *)
+  Unix.putenv "THUMPER_MACHINE" "testkey";
+  let dir = temp_dir () in
+  let bl = Filename.concat dir "digest.thumper" in
+  write_file bl "# thumper baseline v1\n# suite: x\027]0;owned\007\n";
+  let code, err =
+    capturing_stderr (fun () ->
+        Cli.main
+          ~argv:[| "bench.exe"; "check"; "--baseline"; bl |]
+          ~name:"digest" benches)
+  in
+  equal ~msg:"refused" int 2 code;
+  is_true ~msg:"no raw escape" (not (String.contains err '\027'));
+  assert_contains err
+    "baseline is for suite 'x\\x1b]0;owned\\x07', not 'digest'"
+
+let a_stale_identity_with_a_control_byte_is_quoted () =
+  let header recorded =
+    let file =
+      Baseline.set_section
+        (Baseline.empty ~suite:"digest")
+        { ident with Baseline.ocaml = recorded }
+        [ wall_row "alpha" (ties 5 1e-6) ]
+    in
+    let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
+    List.hd (String.split_on_char '\n' (Cli.render_check (ctx ()) v))
+  in
+  let current = ident.Baseline.ocaml in
+  equal ~msg:"an escape" string
+    ("thumper: digest — stale baseline for machine testkey (ocaml \
+      '5.4.0\\x1b[2J' \xe2\x86\x92 " ^ current ^ ")")
+    (header "5.4.0\027[2J");
+  equal ~msg:"a DEL byte" string
+    ("thumper: digest — stale baseline for machine testkey (ocaml '5.4\\x7f' \
+      \xe2\x86\x92 " ^ current ^ ")")
+    (header "5.4\127");
+  equal ~msg:"plain text stays bare" string
+    ("thumper: digest — stale baseline for machine testkey (ocaml 5.4.0 · \
+      64-bit \xe2\x86\x92 " ^ current ^ ")")
+    (header "5.4.0 · 64-bit")
+
 let startup_unlinks_both_owned_artifacts () =
   let dir = temp_dir () in
   let bl = Filename.concat dir "digest.thumper" in
@@ -1623,6 +1685,9 @@ let () =
           test "usage errors exit 2" usage_errors_exit_2;
           test "list prints resolved ids" list_prints_resolved_ids;
           test "list honors the selection" list_honors_the_selection;
+          test "a wrong suite name is quoted" a_wrong_suite_name_is_quoted;
+          test "a stale identity with a control byte is quoted"
+            a_stale_identity_with_a_control_byte_is_quoted;
           test "empty selection exits 2" empty_selection_exits_2;
           test "startup unlinks both owned artifacts"
             startup_unlinks_both_owned_artifacts;
