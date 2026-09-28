@@ -224,8 +224,8 @@ module Lease = struct
   let pp_error ppf = function
     | Timeout { path; wait_s } ->
         Format.fprintf ppf
-          "timed out after %.0f s waiting for measurement lease %s" wait_s path
-    | Unusable msg -> Format.fprintf ppf "measurement lease unusable: %s" msg
+          "timed out after %gs waiting for the measurement lock %s" wait_s path
+    | Unusable msg -> Format.fprintf ppf "measurement lock unusable: %s" msg
 
   (* The lease wait bounds one holder at 10 min; the deadline restarts
      when the lease changes owner. *)
@@ -341,11 +341,10 @@ module Lease = struct
      would leave us locking an orphaned inode), and stamp the acquisition. *)
   let acquire_fd ~path ~wait_s ~on_wait =
     match open_lock ~attempts:8 path with
-    | exception Unix.Unix_error (e, op, _) ->
+    | exception Unix.Unix_error (e, _, _) ->
         Error
           (Unusable
-             (Printf.sprintf "cannot open %s: %s (%s)" path
-                (Unix.error_message e) op))
+             (Printf.sprintf "cannot open %s: %s" path (Unix.error_message e)))
     | fd -> (
         let checked =
           try
@@ -381,11 +380,10 @@ module Lease = struct
                     write_stamp fd;
                     Ok ()
                   end
-          with Unix.Unix_error (e, op, _) ->
+          with Unix.Unix_error (e, _, _) ->
             Error
               (Unusable
-                 (Printf.sprintf "cannot use %s: %s (%s)" path
-                    (Unix.error_message e) op))
+                 (Printf.sprintf "cannot use %s: %s" path (Unix.error_message e)))
         in
         match checked with
         | Ok () -> Ok fd

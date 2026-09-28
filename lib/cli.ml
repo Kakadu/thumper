@@ -1020,14 +1020,14 @@ let with_lease_progress f =
   let on_wait ~owner_changed =
     if not !waiting then begin
       Printf.eprintf
-        "thumper: waiting for the measurement lease (another run is measuring) \
+        "thumper: waiting for the measurement lock (another run is measuring) \
          ...\n\
          %!";
       waiting := true
     end
     else if owner_changed then
       Printf.eprintf
-        "thumper: the measurement lease changed owner; waiting on the new \
+        "thumper: the measurement lock changed owner; waiting on the new \
          holder ...\n\
          %!"
   in
@@ -1365,7 +1365,7 @@ let help_text exe =
       "  -h, --help         show this help";
       "  -V, --version      print the version";
       "";
-      "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lease";
+      "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock";
       "directory), NO_COLOR; INSIDE_DUNE selects the dune hints.";
       "";
     ]

@@ -29,7 +29,7 @@ Unusable lock, mode broader than 0600: refused, exit 2.
   $ chmod 0666 "locks/thumper-$(id -u).lock"
   $ $FIX check --quick -f busy/spin > out.log 2>&1
   [2]
-  $ grep -q 'measurement lease unusable' out.log && echo refused
+  $ grep -q 'measurement lock unusable' out.log && echo refused
   refused
 
 Unusable lock, a directory at the lock path: refused, exit 2.
@@ -38,7 +38,7 @@ Unusable lock, a directory at the lock path: refused, exit 2.
   $ mkdir "locks/thumper-$(id -u).lock"
   $ $FIX check --quick -f busy/spin > out2.log 2>&1
   [2]
-  $ grep -q 'measurement lease unusable' out2.log && echo refused
+  $ grep -q 'measurement lock unusable' out2.log && echo refused
   refused
 
 Unusable lock, a symlinked path: refused and never created through — in a
@@ -49,7 +49,7 @@ file.
   $ ln -s "$PWD/elsewhere" "locks/thumper-$(id -u).lock"
   $ $FIX check --quick -f busy/spin > out3.log 2>&1
   [2]
-  $ grep -q 'measurement lease unusable' out3.log && echo refused
+  $ grep -q 'measurement lock unusable' out3.log && echo refused
   refused
   $ test ! -e "$PWD/elsewhere" && echo not-created-through
   not-created-through
@@ -66,9 +66,9 @@ the holder exits only after the release file does.
   $ while [ ! -e held ]; do sleep 0.02; done
   $ $FIX check --quick -f busy/spin > wout.log 2>werr.log &
   $ WPID=$!
-  $ while ! grep -q 'waiting for the measurement lease' werr.log; do sleep 0.02; done
+  $ while ! grep -q 'waiting for the measurement lock' werr.log; do sleep 0.02; done
   $ touch release
   $ wait $WPID
-  $ grep -q 'waiting for the measurement lease (another run is measuring)' werr.log && echo waited-loudly
+  $ grep -q 'waiting for the measurement lock (another run is measuring)' werr.log && echo waited-loudly
   waited-loudly
   $ wait

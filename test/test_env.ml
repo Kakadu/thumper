@@ -481,10 +481,10 @@ let with_lease_rejects_negative_wait () =
 
 let pp_error_pins () =
   equal ~msg:"Timeout" string
-    "timed out after 600 s waiting for measurement lease /t/x.lock"
+    "timed out after 600s waiting for the measurement lock /t/x.lock"
     (Format.asprintf "%a" Env.Lease.pp_error
        (Env.Lease.Timeout { path = "/t/x.lock"; wait_s = 600. }));
-  equal ~msg:"Unusable" string "measurement lease unusable: boom"
+  equal ~msg:"Unusable" string "measurement lock unusable: boom"
     (Format.asprintf "%a" Env.Lease.pp_error (Env.Lease.Unusable "boom"))
 
 let () =
