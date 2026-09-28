@@ -3,10 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The measurement protocol: one case in, one trial out.
-   Everything protocol-shaped runs against the [instruments] seam so tests
-   script the clock and the counters; only the fork machinery and the GC
-   discipline touch the real OS. *)
+(* Every clock and counter read of the protocol goes through [instruments],
+   so tests can script it; only the fork machinery and the GC discipline
+   touch the operating system directly. *)
 
 type instruments = {
   now_ns : unit -> int;
@@ -49,32 +48,25 @@ let pp_failure ppf = function
 
 (* Constants *)
 
-(* A frozen batch size is reused iff its observed batch time lands
-   within [0.2x, 5x] of the batch floor — below, the clock-read law no longer
-   holds at 1 ms; above, 5x times n = 20 exhausts the ~0.5 s case budget
-  . *)
+(* Below 0.2 times the default floor, 1 ms, a clock read is more than 0.01%
+   of a batch; at 5 times, 20 samples take the whole 0.5 s case budget
+   ([Config.default_deadline]). *)
 let frozen_k_window_low = 0.2
 let frozen_k_window_high = 5.0
-
-(* The collection-order drift check runs at alpha = 0.01. The flag
-   is computed here because its input — collection order — dies when the
-   vector is sorted. *)
 let drift_alpha = 0.01
 
-(* A per-call median under 1 ns is indistinguishable from a
-   constant-folded body; detected and warned, never judged. *)
+(* A per-call median under 1 ns is indistinguishable from a constant-folded
+   body. *)
 let fold_threshold_s = 1e-9
 
-(* Defensive bound on calibration doubling: 2^30 calls per batch is five
-   orders of magnitude past the sub-nanosecond design edge, so reaching it
-   means the clock is not advancing (a broken instrument); proceeding at this
-   k keeps the protocol total instead of looping forever. *)
+(* A batch of 2^30 calls under the default 5 ms floor is under 5 ps a call,
+   far below [fold_threshold_s], so reaching it means the clock is not
+   advancing; stopping there keeps calibration from looping forever. *)
 let max_calibration_k = 1 lsl 30
 
-(* Bound on the worker's pipe output. A trial is a few KB (n <= 40 samples
-   per metric, a handful of metrics); three orders of magnitude of headroom
-   still keeps a runaway child from exhausting the parent (worker containment
-   lesson: bounded reads). *)
+(* A trial is a few KB at the presets' sample counts, so the worker's output
+   has three orders of magnitude of headroom, and a runaway child still
+   cannot exhaust the parent's memory. *)
 let parent_read_bound = 16 * 1024 * 1024
 
 (* How long the parent waits to reap a worker it killed. A stopped traced
@@ -83,15 +75,12 @@ let parent_read_bound = 16 * 1024 * 1024
    worker dies when thumper exits. Elsewhere the reap is immediate. *)
 let reap_bound_s = 1.0
 
-(* Internal control flow
-
-   [Deadline] is raised by the in-process protocol driver at batch
-   boundaries (a forked child never checks: its deadline is the parent's);
-   [Case_error] wraps exceptions escaping the case's own code (setup, the
-   measured closure, teardown) — and nothing else, so harness bugs propagate
-   loudly instead of being blamed on the case. *)
-
+(* Raised by the in-process driver at a batch boundary past the deadline. *)
 exception Deadline
+
+(* Wraps an exception from the case's own code (setup, the measured function,
+   teardown) and nothing else, so a bug in thumper propagates instead of being
+   blamed on the case. *)
 exception Case_error of exn
 
 let seconds_of_ns ns = float_of_int ns *. 1e-9
@@ -180,7 +169,7 @@ module Protocol = struct
           (m, Run.Samples s)
       | _ -> malformed "unparseable line %S" line
     in
-    (* Metric lines, then warning lines, then [end] — the pinned order. *)
+    (* Metric lines, then warning lines, then [end]. *)
     let rec body lines ms ws ~in_warnings =
       match lines with
       | [] -> malformed "truncated output: missing end"
@@ -234,8 +223,6 @@ end
 
 (* The protocol driver *)
 
-(* GC parameters are snapshotted at case start and any mutation by the case is
-   warned with the parameter's name. *)
 let gc_param_warnings (before : Gc.control) (after : Gc.control) =
   let changed name proj =
     if proj before <> proj after then
@@ -263,7 +250,7 @@ let gc_param_warnings (before : Gc.control) (after : Gc.control) =
           c.custom_minor_max_size);
     ]
 
-(* What the measured phases collect before any judgment-side derivation. *)
+(* The readings of the measured phases, before any derivation. *)
 type raw = {
   raw_k : int;
   raw_wall : float array; (* per-call seconds, collection order *)
@@ -315,8 +302,6 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       run_batch k;
       seconds_of_ns (now () - t0)
     in
-    (* 1. Calibration: double k until one batch meets the floor; reuse a
-       frozen k iff its observed batch time lands inside the window. *)
     let calibrate () =
       let rec go k =
         if batch_seconds k >= floor_s || k >= max_calibration_k then k
@@ -335,8 +320,6 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
           else calibrate ()
       | None -> calibrate ()
     in
-    (* 2. Warmup: discarded batches until both arms are met — the timed arm
-       and the batch-count arm (max of both; fixed, never adaptive). *)
     let warmup_start = now () in
     let rec warm batches =
       let timed_arm_met =
@@ -348,9 +331,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
         warm (batches + 1))
     in
     warm 0;
-    (* 3. GC discipline: one full major after warmup, then free-running. *)
     Gc.full_major ();
-    (* 4. Sampling: n fixed batches, collection order retained. *)
     let kf = float_of_int k in
     let wall = Array.make n 0. in
     let cpu = if need_cpu then Array.make n 0. else [||] in
@@ -365,14 +346,15 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
     in
     let gc0 = if need_gc then Array.make n dummy else [||] in
     let gc1 = if need_gc then Array.make n dummy else [||] in
-    (* Read order is timed-region hygiene: the wall-clock reads straddle only
-       [run_batch k] (the batch's constant overhead — one closure entry, the
-       env re-opaque — is amortized under the floor law); the cpu reads sit
-       just outside them; the counter reads are outermost. The clock reads
-       allocate nothing, so only the [c1] read's [Unix.times] record and the
-       counter reads' own constant tail sit inside a counter interval — a
-       per-batch constant, identical at the same frozen k on both sides of any
-       comparison. All derived arithmetic runs after the last read. *)
+    (* The read order keeps the timed region clean. The wall-clock reads
+       straddle only [run_batch k], whose constant overhead (one closure
+       entry, the [Sys.opaque_identity] of the closure and its environment)
+       the batch floor amortizes; the cpu reads sit just outside them, and the
+       counter reads are outermost. The clock reads allocate nothing, so a
+       counter interval holds only the [c1] read's [Unix.times] record and the
+       counter reads' own constant tail: a per-batch constant, the same at the
+       same frozen k on both sides of a comparison. All derived arithmetic
+       runs after the last read. *)
     for i = 0 to n - 1 do
       check_deadline ();
       let c0 = if need_cpu then instruments.cpu_ns () else 0 in
@@ -386,14 +368,14 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       if need_cpu then cpu.(i) <- seconds_of_ns (c1 - c0) /. kf
     done;
     check_deadline ();
-    (* 5. Exactness probe: counters diffed around batches of k and 2k calls
-       (differencing form — the harness constant cancels). Differencing
-       hygiene: between the [a] and [c] reads nothing allocates but the two
-       batches and the counter reads themselves. A few words landing in one
-       interval but not the other is an asymmetry the differencing cannot
-       cancel — it fails the probe for every deterministic case at k >= 4 and
-       silently inflates the proven count at k <= 3. The deadline check
-       allocates nothing, so it runs before each batch here too. *)
+    (* The exactness probe diffs the counters around batches of k and 2k
+       calls, so the harness constant cancels. Between the [a] and [c] reads
+       nothing may allocate but the two batches and the counter reads
+       themselves: a few words landing in one interval and not the other are
+       an asymmetry the differencing cannot cancel, which fails the probe for
+       every deterministic case at k >= 4 and silently inflates the exact
+       count at k <= 3. The deadline check allocates nothing, so it runs
+       around these batches too. *)
     let probe =
       if need_gc then (
         let a = instruments.gc () in
@@ -447,8 +429,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       let kf = float_of_int raw.raw_k in
       let warnings = ref [] in
       let warn w = warnings := w :: !warnings in
-      (* Constant-fold suspicion, from the batch times themselves (present
-         whether or not wall_time is collected). *)
+      (* The fold check reads the batch times, which exist whether or not
+         wall_time is collected. *)
       let sorted_wall = Array.copy raw.raw_wall in
       Array.sort Float.compare sorted_wall;
       let wall_median = Stats.median_sorted sorted_wall in
@@ -467,9 +449,6 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
         Array.sort Float.compare sorted;
         Run.sampled ~sorted ~drifted
       in
-      (* The k/2k differencing probe: per-call words
-         a = (d2k - dk) / k, exact iff the division has residue < 1 word and
-         dk - k*a = d2k - 2k*a with one consistent h >= 0. *)
       let probe_exact m proj =
         match raw.raw_probe with
         | None -> None
@@ -477,10 +456,9 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
             let dk = proj sb -. proj sa and d2k = proj sc -. proj sb in
             (* Every built-in projection is a non-decreasing function of
                non-decreasing counters, so a negative interval is a broken
-               instrument, not data — reject it loudly (the seam contract in
-               the .mli) before the differencing can launder it: dk = 3,
-               d2k = 2 at k = 1 would otherwise "prove" Exact (-1) with a
-               perfectly consistent h. *)
+               instrument, not data. Refuse it before the differencing hides
+               it: dk = 3, d2k = 2 at k = 1 would give an exact -1 with a
+               consistent h. *)
             if dk < 0. || d2k < 0. then
               invalid_arg
                 (Printf.sprintf
@@ -494,12 +472,10 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
             let residue = diff -. (kf *. quotient) in
             let a = quotient in
             let h = dk -. (kf *. a) and h2 = d2k -. (2. *. kf *. a) in
-            (* Pass conditions: residue < 1 word, one consistent
-               h >= 0 — plus a >= 0: per-call allocation cannot be negative,
-               yet monotone counters can produce a consistent negative slope
-               (a 2k batch allocating less in total than the k batch — an
-               allocator with warm-up or phase behavior), which is
-               nondeterminism, i.e. the downgrade path. *)
+            (* Monotone counters can still give a consistent negative slope
+               (a 2k batch allocating less in total than the k batch, as an
+               allocator with warm-up or phase behavior does): that is
+               nondeterminism, so [a < 0.] stays sampled. *)
             if residue < 1. && residue >= 0. && a >= 0. && h = h2 && h >= 0.
             then Some (int_of_float a)
             else (
@@ -566,10 +542,8 @@ let signal_name s =
   | Some n -> n
   | None -> Printf.sprintf "signal %d" s
 
-(* The child: null stdin, run the whole protocol — setup, batches, counter
-   reads, probes, teardown — then report over the pipe and [_exit] (no
-   at_exit, no shared-channel flushing). Harness bugs escape to stderr and a
-   nonzero exit, which the parent classifies as [Worker_died]. *)
+(* [Unix._exit], not [exit]: the child runs no [at_exit] and flushes no
+   channel it shares with the parent. *)
 let run_child ~instruments ~config ~frozen_k bcase w =
   let code =
     try
@@ -590,12 +564,8 @@ let run_child ~instruments ~config ~frozen_k bcase w =
   in
   Unix._exit code
 
-(* The parent: drain the pipe with blocking reads bounded in size and — under
-   a finite deadline — in time, then reap and classify. Abnormal exit,
-   malformed output, or an overrun is [Worker_died]; a wait past the deadline
-   kills the child and is [Deadline_exceeded] (a hung call must not wedge the
-   run). A forked case's deadline is the parent's alone: the child never
-   checks it. *)
+(* The reads are bounded in size, and in time under a finite deadline, so a
+   runaway or hung worker cannot wedge the run. *)
 let parent_collect ~deadline_s ~case pid r =
   let chunk = Bytes.create 65536 in
   let buf = Buffer.create 4096 in
@@ -684,9 +654,9 @@ let case_forked ~instruments ~config ~frozen_k bcase =
   let r, w = Unix.pipe () in
   match Unix.fork () with
   | exception e -> (
-      (* No child exists: close both pipe ends, or a fork-bombed run leaks two
-         fds per failed case. The runtime refuses to fork once the process
-         has spawned a domain; its message states the rule. *)
+      (* No child exists: close both pipe ends, or a run that cannot fork
+         leaks two fds per failed case. The runtime refuses to fork once the
+         process has spawned a domain; its message states the rule. *)
       (try Unix.close r with Unix.Unix_error _ -> ());
       (try Unix.close w with Unix.Unix_error _ -> ());
       match e with
