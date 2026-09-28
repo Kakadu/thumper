@@ -241,9 +241,13 @@ let confirmed_regression_carries_evidence () =
     regression_scenario ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0))) ()
   in
   (match verdict_of t ~case:"a" ~metric:m_wall with
-  | Judged (Regressed (Confirmed { first; confirmation; pooled; k })) ->
+  | Judged (Regressed (Confirmed { first; confirmation; pooled; k } as strong))
+    ->
       is_true ~msg:"first delta ~ +1.0"
         (Float.abs (first.Verdict.estimate -. 1.0) < 1e-9);
+      equal ~msg:"its estimate is the first pass's" (option float_exact)
+        (Some first.Verdict.estimate)
+        (Verdict.strong_estimate strong);
       is_true ~msg:"confirmation delta ~ +1.0"
         (Float.abs (confirmation.Verdict.estimate -. 1.0) < 1e-9);
       equal ~msg:"pooled has both passes" (array float_exact) (ties 10 2.0)

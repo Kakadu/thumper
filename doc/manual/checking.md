@@ -219,7 +219,7 @@ Under `GITHUB_ACTIONS`, confirmed regressions additionally emit
 annotations in every output mode:
 
 ```
-::error::Benchmark "sha256/string-64" regressed: wall_time +31.2%
+::error::sha256/string-64 regressed: wall_time +31.4% [+30.0, +32.9], budget +5%
 ```
 
 The terminal report, the annotations, and the exit code always agree.

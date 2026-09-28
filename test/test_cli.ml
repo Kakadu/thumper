@@ -990,7 +990,10 @@ let github_annotations_on_confirmed_regressions () =
   let v = fail_fixture () in
   let out = Cli.render_check (ctx ~github:true ()) v in
   assert_contains out
-    "::error::Benchmark \"alpha\" regressed: wall_time +100.0%"
+    "::error::alpha regressed: wall_time +100.0% [+100.0, +100.0], budget +5%\n";
+  assert_contains ~msg:"exact"
+    (Cli.render_check (ctx ~github:true ()) (exact_alloc_fail_fixture ()))
+    "::error::alpha regressed: alloc_words 54 \xe2\x86\x92 71 w (exact)\n"
 
 let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
   let v = absolute_cap_fixture () in

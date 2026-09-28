@@ -353,8 +353,6 @@ let reason_short = function
   | Verdict.Candidate_unstable -> "unstable"
   | Verdict.Candidate_drifted -> "drifted"
 
-let strong_delta = Verdict.strong_estimate
-
 (* Path resolution *)
 
 (* [under_dir dir path]: [path] lies strictly under directory [dir]. *)
@@ -981,17 +979,27 @@ let render_check r v =
               else
                 match mr.verdict with
                 | Verdict.Judged (Verdict.Regressed strong) ->
+                    (* The row's own facts: the id [-f] selects by, the
+                       shift with its interval and budget, or the exact
+                       integers. *)
                     let detail =
-                      match (strong_delta strong, strong) with
-                      | Some d, _ -> pct d
-                      | None, Verdict.Exact_change { baseline; candidate } ->
-                          Printf.sprintf "%d -> %d %s" baseline candidate
-                            (Metric.units mr.metric)
-                      | None, Verdict.Confirmed _ -> "regressed"
+                      match strong with
+                      | Verdict.Confirmed { first; _ } -> (
+                          match relative_budget mr with
+                          | Some b -> interval first ^ ", " ^ b
+                          | None -> interval first)
+                      | Verdict.Exact_change { baseline; candidate } ->
+                          let unit =
+                            match Metric.kind mr.metric with
+                            | `Allocation -> "w"
+                            | `Time | `Other -> Metric.units mr.metric
+                          in
+                          Printf.sprintf "%d \xe2\x86\x92 %d %s (exact)"
+                            baseline candidate unit
                     in
                     Some
-                      (Printf.sprintf "::error::Benchmark %S regressed: %s %s"
-                         c.full_name (Metric.id mr.metric) detail)
+                      (Printf.sprintf "::error::%s regressed: %s %s" c.id
+                         (Metric.id mr.metric) detail)
                 | _ -> None)
             c.reports)
         cases
