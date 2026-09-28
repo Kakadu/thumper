@@ -742,20 +742,13 @@ let json_metric buf case_report report =
 
 (* The per-case ratio a report contributes to the geomean, v1's guard: only
    finite, strictly positive ratios participate. *)
-let ratio_of_verdict = function
-  | Proposed | Judged (Inconclusive { shift = None; _ }) -> None
-  | Judged (Equivalent None) -> Some 1.0
-  | ( Judged (Equivalent (Some _))
-    | Judged (Within_budget _)
-    | Judged (Inconclusive { shift = Some _; _ })
-    | Judged (Improved _)
-    | Judged (Regressed _) ) as v -> (
-      (* Only the point delta matters; the [exact] flag shapes bounds only. *)
-      match deltas_of_verdict ~exact:false v with
-      | Some d, _, _ ->
-          let ratio = 1.0 +. d in
-          if Float.is_finite ratio && ratio > 0.0 then Some ratio else None
-      | None, _, _ -> None)
+let ratio_of_verdict v =
+  (* Only the point delta matters; the [exact] flag shapes bounds only. *)
+  match deltas_of_verdict ~exact:false v with
+  | Some d, _, _ ->
+      let ratio = 1.0 +. d in
+      if Float.is_finite ratio && ratio > 0.0 then Some ratio else None
+  | None, _, _ -> None
 
 (* Summary metrics in first-appearance order across the cases' reports —
    v1's ordering, inherited by the frozen schema. A run measures a handful
