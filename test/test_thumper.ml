@@ -311,46 +311,45 @@ let candidate_over_headerless_file_takes_the_name () =
 
 (* Published-surface pins — compile-only
 
-   [Gate_example] is the facade's gate example verbatim (free variables bound locally;
-   its top-level [let run : Run.t = measure ...] becomes a thunk so loading
-   the test does not measure). Never executed — [gate] prints and exits — but
-   it must always compile: it pins the published surface, labels and all,
-   including that [Check.run] needs no [~config] and [bench] no [~note]. *)
+   [Facade_examples] holds the facade's two examples verbatim (the check
+   example's free variable bound locally), and pins the labels they leave out
+   beside them. Never executed: the examples measure and exit. They must always
+   compile: they pin the published surface, labels and all, including that
+   [Check.run] needs no [~config] and [bench] no [~note]. *)
 
-module Gate_example : sig end = struct
+module Facade_examples : sig end = struct
   open Thumper
 
-  let _compile_only () =
+  (* {!Thumper}'s module doc. *)
+  let _landing_example () =
+    let module _ = struct
+      let input = List.init 1_000 Fun.id
+
+      let () =
+        exit
+          (Thumper.run "hello"
+             [ Thumper.bench "list-rev" (fun () -> List.rev input) ])
+    end in
+    ()
+
+  (* {!Thumper.Check.run}'s doc. *)
+  let _check_example () =
+    let suite = [ bench "rev" (fun () -> List.rev [ 1; 2; 3 ]) ] in
+    let v = Check.run ?baseline:(Baseline.read_exn "nx.thumper") "nx" suite in
+    Option.iter (Baseline.write "nx.thumper.corrected") (Verdict.corrected v);
+    exit (Verdict.exit_code v)
+
+  (* The labels the examples above leave out. *)
+  let _labels () =
     let input = [ 1; 2; 3 ] in
     let budgets = [ Budget.no_slower_than 0.05 ] in
-    let suite = [ bench "rev" (fun () -> List.rev input) ] in
-    (* Measure without the CLI or any file. *)
-    let run : Run.t =
-      measure ~config:Config.quick [ bench "rev" (fun () -> List.rev input) ]
-    in
-    let _samples = Run.samples run ~case:"rev" Metric.wall_time in
-    let _alloc = Run.exact run ~case:"rev" Metric.alloc_words in
-    (* A CI gate, as a program. *)
-    let gate () =
-      let baseline = Baseline.read_exn "nx.thumper" in
-      let v = Check.run ~budgets ~filter:(`Tag "lab") ?baseline "nx" suite in
-      (match Verdict.corrected v with
-      | Some f -> Baseline.write "nx.thumper.corrected" f
-      | None -> ());
-      print_string (Verdict.to_json v);
-      exit (Verdict.exit_code v)
-    in
-    gate ()
-
-  (* The landing example ({!Thumper}'s module doc): pins [run]'s labels. *)
-  let _landing_example () =
-    let input = String.make 64 'x' in
-    exit
-      (Thumper.run "digest"
-         ~budgets:[ Budget.no_slower_than 0.05 ]
-         [
-           group "sha256" [ bench "string-64" (fun () -> Digest.string input) ];
-         ])
+    let suite = [ group "g" [ bench "rev" (fun () -> List.rev input) ] ] in
+    let run : Run.t = measure ~config:Config.quick suite in
+    let _samples = Run.samples run ~case:"g/rev" Metric.wall_time in
+    let _alloc = Run.exact run ~case:"g/rev" Metric.alloc_words in
+    let v = Check.run ~budgets ~filter:(`Tag "lab") "nx" suite in
+    print_string (Verdict.to_json v);
+    exit (Thumper.run ~budgets "nx" suite)
 end
 
 (* Deleted v1 surface — compile-only
