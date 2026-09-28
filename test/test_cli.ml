@@ -217,7 +217,8 @@ let e2e_env dir =
 
 let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
-    ?(rerun_flags = "") ?(strict = false) ?(cpu_model = "Test CPU") () =
+    ?(rerun_flags = []) ?(rerun_patterns = []) ?(strict = false)
+    ?(cpu_model = "Test CPU") () =
   {
     Cli.color;
     accept;
@@ -227,6 +228,7 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     corrected_path = baseline ^ ".corrected";
     wrote_corrected = wrote;
     rerun_flags;
+    rerun_patterns;
     strict;
     cpu_model;
   }
@@ -560,17 +562,80 @@ let rerun_hint_reproduces_the_invocation () =
   let out =
     Cli.render_check
       (ctx ~exe:(Some "my dir/bench.exe") ~baseline:"alt/base.thumper"
-         ~rerun_flags:" --quick --baseline alt/base.thumper --tag lab" ())
+         ~rerun_flags:[ "--quick"; "--baseline alt/base.thumper"; "--tag lab" ]
+         ())
       v
   in
   assert_contains out
     "rerun:   'my dir/bench.exe' --quick --baseline alt/base.thumper --tag lab \
-     -f alpha";
+     \\\n\
+    \           -f alpha\n";
   let staged = Cli.render_check (ctx ~exe:None ()) v in
   is_true ~msg:"no rerun line under a rule action"
     (not (contains staged "rerun:"));
   assert_contains ~msg:"the failing id stays in the table" staged
     "REGRESSED  1.00 us  \xc2\xb10.0%  71 w  alpha"
+
+(* [n] cases failing on their exact allocation, ids [case-01]... *)
+let failing_cases n =
+  let ids = List.init n (fun i -> Printf.sprintf "case-%02d" (i + 1)) in
+  let file =
+    file_of
+      (List.concat_map
+         (fun id -> [ wall_row id (ties 5 1e-6); alloc_row id 54 ])
+         ids)
+  in
+  verdict_of_cases ~file
+    (List.map
+       (fun id ->
+         ( bcase_budgeted ~budgets:[ Budget.no_more_alloc_than 0.0 ] id,
+           trial ~alloc:(Some 71) (ties 5 1e-6) ))
+       ids)
+
+let rerun_hint_wraps_within_80_columns () =
+  (* One pasteable command: an item that would pass column 80 starts the
+     next line behind a backslash, indented under the executable. *)
+  let out =
+    Cli.render_check
+      (ctx ~exe:(Some "./_build/default/bench/bench_digest.exe")
+         ~rerun_flags:[ "--quick"; "--baseline bench/digest.thumper" ]
+         ())
+      (failing_cases 4)
+  in
+  assert_contains out
+    "  rerun:   ./_build/default/bench/bench_digest.exe --quick \\\n\
+    \           --baseline bench/digest.thumper -f case-01 -f case-02 -f \
+     case-03 \\\n\
+    \           -f case-04\n"
+
+let rerun_hint_wraps_at_exactly_80_columns () =
+  (* The bound counts the continuation: an item that ends the line at column
+     80, backslash included, stays; one column more moves it down. *)
+  let exe n = "./" ^ String.make n 'x' in
+  let first_line n =
+    let out = Cli.render_check (ctx ~exe:(Some (exe n)) ()) (failing_cases 2) in
+    List.find (fun l -> contains l "rerun:") (String.split_on_char '\n' out)
+  in
+  equal ~msg:"80 columns: the item stays" string
+    ("  rerun:   " ^ exe 54 ^ " -f case-01 \\")
+    (first_line 54);
+  equal ~msg:"81 columns: the item moves" string
+    ("  rerun:   " ^ exe 55 ^ " \\")
+    (first_line 55)
+
+let rerun_hint_names_at_most_ten_cases () =
+  (* Ten failing cases are named; an eleventh turns the hint into the run's
+     own selection. *)
+  let ten = Cli.render_check (ctx ()) (failing_cases 10) in
+  assert_contains ~msg:"ten named" ten "-f case-10\n";
+  let eleven =
+    Cli.render_check
+      (ctx ~rerun_patterns:[ "case"; "my case" ] ())
+      (failing_cases 11)
+  in
+  assert_contains ~msg:"the run's own selection" eleven
+    "  rerun:   bench.exe -f case -f 'my case'\n";
+  is_true ~msg:"no failing id named" (not (contains eleven "-f case-01"))
 
 (* The default baseline path
 
@@ -1390,6 +1455,12 @@ let () =
             accept_command_quotes_hostile_paths;
           test "rerun hint reproduces the invocation"
             rerun_hint_reproduces_the_invocation;
+          test "rerun hint wraps within 80 columns"
+            rerun_hint_wraps_within_80_columns;
+          test "rerun hint wraps at exactly 80 columns"
+            rerun_hint_wraps_at_exactly_80_columns;
+          test "rerun hint names at most ten cases"
+            rerun_hint_names_at_most_ten_cases;
         ];
       group "baseline path"
         [

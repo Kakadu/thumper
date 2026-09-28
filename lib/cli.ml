@@ -458,7 +458,8 @@ type render = {
   baseline_path : string;
   corrected_path : string;
   wrote_corrected : bool;
-  rerun_flags : string;
+  rerun_flags : string list;
+  rerun_patterns : string list;
   strict : bool;
   cpu_model : string;
 }
@@ -753,6 +754,33 @@ let check_cell (c : Verdict.case_report) =
 
 (* The report *)
 
+(* The rerun hint names at most this many failing cases; past it, the
+   command re-measures the run's own selection. *)
+let rerun_cap = 10
+
+(* Display columns of a UTF-8 string: its bytes that start a code point. *)
+let columns s =
+  let n = ref 0 in
+  String.iter (fun c -> if Char.code c land 0xC0 <> 0x80 then incr n) s;
+  !n
+
+(* One pasteable command over as many lines as it takes to stay within 80
+   columns: [label] and [head] open the first line, each item (never split)
+   joins the current line or starts the next behind a backslash continuation,
+   indented under [head]. *)
+let wrap_command ~label head items =
+  let indent = String.make (columns label) ' ' in
+  let lines, last =
+    List.fold_left
+      (fun (lines, cur) item ->
+        if columns cur + 1 + columns item + 2 > 80 then
+          ((cur ^ " \\") :: lines, indent ^ item)
+        else (lines, cur ^ " " ^ item))
+      ([], label ^ head)
+      items
+  in
+  List.rev (last :: lines)
+
 let report_of_blocks blocks =
   let blocks = List.filter (fun b -> b <> []) blocks in
   String.concat "\n\n" (List.map (String.concat "\n") blocks) ^ "\n"
@@ -846,13 +874,13 @@ let render_check r v =
       match (failing, r.exe) with
       | [], _ | _, None -> []
       | _, Some exe ->
-          [
-            Printf.sprintf "  rerun:   %s%s%s" (shell_arg exe) r.rerun_flags
-              (String.concat ""
-                 (List.map
-                    (fun (c : Verdict.case_report) -> " -f " ^ c.id)
-                    failing));
-          ]
+          let selection =
+            if List.length failing <= rerun_cap then
+              List.map (fun (c : Verdict.case_report) -> "-f " ^ c.id) failing
+            else List.map (fun p -> "-f " ^ shell_arg p) r.rerun_patterns
+          in
+          wrap_command ~label:"  rerun:   " (shell_arg exe)
+            (r.rerun_flags @ selection)
     in
     let prompt =
       if not r.wrote_corrected then []
@@ -1155,13 +1183,14 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
          re-resolves identically from the exe path, so it stays unspelled. *)
       rerun_flags =
         (match o.preset with
-          | `Default -> ""
-          | `Quick -> " --quick"
-          | `Precise -> " --precise")
-        ^ (match o.baseline with
-          | Some p -> " --baseline " ^ shell_arg p
-          | None -> "")
-        ^ String.concat "" (List.map (fun t -> " --tag " ^ shell_arg t) o.tags);
+          | `Default -> []
+          | `Quick -> [ "--quick" ]
+          | `Precise -> [ "--precise" ])
+        @ (match o.baseline with
+          | Some p -> [ "--baseline " ^ shell_arg p ]
+          | None -> [])
+        @ List.map (fun t -> "--tag " ^ shell_arg t) o.tags;
+      rerun_patterns = o.patterns;
       strict = o.strict;
       cpu_model = Env.cpu_model ();
     }

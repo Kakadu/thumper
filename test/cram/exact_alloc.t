@@ -52,8 +52,9 @@ file.
   $ mv fixture.thumper.corrected alt.thumper
   $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out4.log 2>&1
   [1]
-  $ grep -q 'rerun:.*bench_fixture.exe --quick --baseline alt.thumper -f alloc/list$' out4.log && echo hint-carries-preset-and-baseline
-  hint-carries-preset-and-baseline
+  $ grep -A1 'rerun:' out4.log
+    rerun:   ./fixture/bench_fixture.exe --quick --baseline alt.thumper \
+             -f alloc/list
 
 Under a dune rule action (INSIDE_DUNE set and the cwd in the build tree,
 as cram's is) there is no rerun line: its exe path is relative to the

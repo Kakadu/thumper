@@ -211,12 +211,15 @@ type render = {
   baseline_path : string;  (** The resolved baseline path, for the header. *)
   corrected_path : string;  (** The candidate path, for the prompts. *)
   wrote_corrected : bool;  (** Whether the candidate was written. *)
-  rerun_flags : string;
-      (** Rendered flags the rerun hint must reproduce beyond selection — the
-          [--quick]/[--precise] preset, an explicit [--baseline] and every
-          [--tag], shell-quoted, each with a leading space; [""] when the run
-          used only defaults (the default baseline re-resolves identically from
-          the exe path). *)
+  rerun_flags : string list;
+      (** The flags the rerun hint must reproduce beyond selection, one item per
+          flag with its argument — the [--quick]/[--precise] preset, an explicit
+          [--baseline] and every [--tag], shell-quoted; [[]] when the run used
+          only defaults (the default baseline re-resolves identically from the
+          exe path). *)
+  rerun_patterns : string list;
+      (** The run's own [-f] patterns, which the rerun hint selects by when more
+          cases failed than it names. *)
   strict : bool;
       (** The run's [--strict], which decides the summary's colour. *)
   cpu_model : string;
@@ -275,11 +278,14 @@ val render_check : render -> Verdict.t -> string
       reassurance exception: when the cell is otherwise non-pass, an
       {e exact}-equal allocation shows as [equivalent (alloc exact)] — under a
       degraded run the exact gate's verdict is still earned and stays visible.
-    - {b Actions.} [rerun:   <exe><rerun_flags> -f <id>...] iff any case failed
+    - {b Actions.} [rerun:   <exe> <rerun_flags> -f <id>...] iff any case failed
       and [r.exe] is given — the exact command that re-measures the failing
-      cases, preset, explicit [--baseline] and [--tag]s included; under a rule
-      action there is no rerun line, and the failing ids stay in the table; the
-      acceptance prompt iff a candidate was written — [accept:  <cmd>] for
+      cases, preset, explicit [--baseline] and [--tag]s included. It names at
+      most 10 failing cases; with more, it re-measures the run's own selection
+      ([-f] over [r.rerun_patterns]). One command, wrapped with backslash
+      continuations to stay within 80 columns (an item is never split); under a
+      rule action there is no rerun line, and the failing ids stay in the table;
+      the acceptance prompt iff a candidate was written — [accept:  <cmd>] for
       NEW/stale, [ratchet the baseline:  <cmd>] for improvements, [<cmd>] being
       [r.accept]; the acceptance-state load message
       ([measured under load (L/C) — prefer a quiet host before accepting],
