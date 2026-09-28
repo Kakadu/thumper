@@ -15,10 +15,8 @@ type gc_snapshot = {
 
 type source = Wall_clock | Cpu_clock | Gc_counter of (gc_snapshot -> float)
 
-(* Identity is [id] alone: baseline rows and JSON key on it, and [equal]/
-   [compare] must agree with row lookup. Everything else is presentation
-   ([name], [units], [kind]), or the
-   measurement seam's instruction ([source]). *)
+(* Only [id] is identity: [equal] and [compare] must agree with a baseline
+   row's lookup, which keys on it. *)
 type t = {
   id : string;
   name : string;
@@ -39,10 +37,6 @@ let is_counter m =
 let equal a b = String.equal a.id b.id
 let compare a b = String.compare a.id b.id
 let pp ppf m = Format.pp_print_string ppf m.id
-
-(* Built-in metrics. The [id] spellings are wire format (v1's, frozen); see
-   the interface for each quantity's contract. *)
-
 let make ~id ~name ~units ~kind ~source = { id; name; units; kind; source }
 
 let wall_time =
