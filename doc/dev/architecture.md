@@ -26,7 +26,7 @@ reading; the **adapters** own paths, argv, and rendering.
 | `measure` | OS edge | one case → one trial: calibration with frozen-k reuse, warmup, GC discipline, fixed-n sampling, the k/2k exactness probe, the fork worker and its pipe `Protocol`; the `instruments` seam |
 | `check` | OS edge | the orchestrator: lease → gate → measure → judge → gate → confirm → decide. Thin by design — anything longer means policy leaked out of `verdict` |
 | `cli` | adapter | subcommand grammar, startup unlinks, baseline I/O, terminal + GitHub rendering, `--json`, exit mapping |
-| `thumper` | facade | re-exports exactly the public surface; everything else stays a private module |
+| `thumper` | facade | re-exports exactly the public surface; the tests reach the internal modules through `Thumper.Private` |
 
 ¹ `baseline` is a pure codec plus its reader and one call to
 `Os.write_atomic`.

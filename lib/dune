@@ -1,18 +1,9 @@
+; No (private_modules ...): the tests reach the internal modules through
+; [Thumper.Private], and dune >= 3.21 hands them the private .cmi files with
+; -H without making their compile rules depend on those files, so an edit
+; to an internal .mli would leave the tests stale.
+
 (library
  (name thumper)
  (public_name thumper)
- (libraries unix thumper_clock)
- (private_modules
-  baseline
-  bench
-  budget
-  check
-  cli
-  config
-  env
-  measure
-  metric
-  os
-  run
-  stats
-  verdict))
+ (libraries unix thumper_clock))
