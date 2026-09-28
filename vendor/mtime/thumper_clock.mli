@@ -17,18 +17,23 @@
 
     See [vendor/mtime/LICENSE.md] for the original license. *)
 
-val now_ns : unit -> int64
-(** [now_ns ()] is an {e unsigned} 64-bit integer nanosecond timestamp on the
-    raw monotonic clock: on Darwin and Linux it excludes time the system spent
-    suspended and is not adjusted by NTP. Other POSIX systems fall back to
-    [CLOCK_MONOTONIC], whose suspend and NTP-slew behavior is platform-defined.
-    Reads are non-decreasing; the origin is unspecified, so only differences are
-    meaningful, and only within a single program run.
+val now_ns : unit -> int
+(** [now_ns ()] is a nanosecond timestamp on the raw monotonic clock: on Darwin
+    and Linux it excludes time the system spent suspended and is not adjusted by
+    NTP. Other POSIX systems fall back to [CLOCK_MONOTONIC], whose suspend and
+    NTP-slew behavior is platform-defined. Reads are non-decreasing; the origin
+    is unspecified, so only differences are meaningful, and only within a single
+    program run.
+
+    The timestamp is an immediate [int], so a read allocates nothing and may sit
+    inside an allocation-counter interval. This needs 63-bit ints, which hold
+    146 years of nanoseconds; a 32-bit platform is not supported.
 
     This is the clock thumper times measured regions and deadlines with.
 
     Raises [Sys_error] if the operating system clock is unavailable, which on
-    supported platforms (Darwin, Linux, POSIX) does not happen in practice. *)
+    supported platforms (Darwin, Linux, POSIX, Windows) does not happen in
+    practice. *)
 
 val load_average : unit -> float option
 (** [load_average ()] is [Some l] with [l] the system's 1-minute load average,

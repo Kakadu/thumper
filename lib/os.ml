@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let monotonic_s () = Int64.to_float (Thumper_clock.now_ns ()) *. 1e-9
+let monotonic_s () = float_of_int (Thumper_clock.now_ns ()) *. 1e-9
 
 let write_all fd s =
   let rec loop off len =

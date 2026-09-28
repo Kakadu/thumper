@@ -270,7 +270,7 @@ module Lease = struct
 
   let write_stamp fd =
     let stamp =
-      Printf.sprintf "%d:%Ld\n" (Unix.getpid ()) (Thumper_clock.now_ns ())
+      Printf.sprintf "%d:%d\n" (Unix.getpid ()) (Thumper_clock.now_ns ())
     in
     Unix.ftruncate fd 0;
     ignore (Unix.lseek fd 0 Unix.SEEK_SET);

@@ -17,9 +17,11 @@
    thumper and the real mtime, and identical C symbols in two archives are
    a hard link error. Upstream's period_ns stub, elapsed clock and start
    latch are dropped: nothing bound them or read them, and thumper reads
-   one clock, [now_ns]. The Windows tier keeps upstream's [now_ns]
-   verbatim; it converts ticks through a double-valued frequency and needs
-   review before any Windows work. */
+   one clock, [now_ns]. [now_ns] returns an immediate OCaml int instead of
+   upstream's boxed int64, so a read allocates nothing and can sit inside
+   an allocation-counter interval; this needs 63-bit ints. The Windows
+   tier converts counter ticks to nanoseconds in integer arithmetic,
+   where upstream multiplies by a double-valued period. */
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
 #endif
@@ -82,10 +84,10 @@ void ocaml_thumper_clock_init_scale (void)
 
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
-  CAMLparam1 (unit);
+  (void) unit;
   if (scale.denom == 0) { ocaml_thumper_clock_init_scale (); }
   uint64_t now = mach_absolute_time ();
-  CAMLreturn (caml_copy_int64 ((now * scale.numer) / scale.denom));
+  return Val_long ((now * scale.numer) / scale.denom);
 }
 
 /* POSIX */
@@ -104,9 +106,9 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
-  CAMLparam1 (unit);
   struct timespec now;
   clockid_t clockid;
+  (void) unit;
 
 /* Headers too old to know CLOCK_MONOTONIC_RAW (pre-2.6.28, 2008) fall
    back to the generic POSIX clock rather than failing to compile. */
@@ -119,9 +121,8 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
   if (clock_gettime (clockid, &now))
     OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
 
-  CAMLreturn (caml_copy_int64 ((uint64_t)(now.tv_sec) *
-                               (uint64_t)1000000000 +
-                               (uint64_t)(now.tv_nsec)));
+  return Val_long ((uint64_t)(now.tv_sec) * (uint64_t)1000000000 +
+                   (uint64_t)(now.tv_nsec));
 }
 
 /* Windows */
@@ -130,28 +131,35 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-static double performance_frequency;
+/* Ticks per second, fixed at boot. */
+static uint64_t performance_frequency = 0;
 static void set_performance_frequency(void)
 {
   LARGE_INTEGER t_freq;
-  if (!QueryPerformanceFrequency(&t_freq)) {
+  if (!QueryPerformanceFrequency(&t_freq) || t_freq.QuadPart <= 0) {
     OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
   }
-  performance_frequency = (1000000000.0 / t_freq.QuadPart);
+  performance_frequency = (uint64_t)t_freq.QuadPart;
 }
 
+/* ticks * 10^9 would overflow 64 bits after about half an hour at the usual
+   10 MHz, so whole seconds and the remainder convert separately:
+   s * 10^9 stays below 2^62 for 146 years of uptime, and
+   r * 10^9 < f * 10^9, below 2^64 for any frequency under 18 GHz. */
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 {
+  LARGE_INTEGER now;
   (void) unit;
-  if (performance_frequency == 0.0) {
+  if (performance_frequency == 0) {
     set_performance_frequency();
   }
-  static LARGE_INTEGER now;
-  if ( !QueryPerformanceCounter(&now)) {
+  if (!QueryPerformanceCounter(&now)) {
     OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
   }
-  uint64_t ret = now.QuadPart * performance_frequency;
-  return caml_copy_int64(ret);
+  uint64_t ticks = (uint64_t)now.QuadPart;
+  uint64_t f = performance_frequency;
+  return Val_long ((ticks / f) * (uint64_t)1000000000 +
+                   ((ticks % f) * (uint64_t)1000000000) / f);
 }
 
 /* Unsupported */

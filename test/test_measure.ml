@@ -24,13 +24,13 @@ module Run = Thumper.Private.Run
 (* The scripted world *)
 
 type world = {
-  mutable now : int64; (* fake monotonic clock, ns *)
-  mutable cpu : int64; (* fake process CPU clock, ns *)
+  mutable now : int; (* fake monotonic clock, ns *)
+  mutable cpu : int; (* fake process CPU clock, ns *)
   mutable words : float; (* fake cumulative minor-heap words *)
   mutable calls : int; (* case-closure invocations so far *)
 }
 
-let world () = { now = 0L; cpu = 0L; words = 0.; calls = 0 }
+let world () = { now = 0; cpu = 0; words = 0.; calls = 0 }
 
 (* Scripted instruments over [w]. [h] is the planted harness constant: every
    counter read allocates [h] words visible to the next read — the model the differencing probe must cancel. *)
@@ -58,7 +58,7 @@ let scripted ?(h = 0.) w =
 let stepper w step () =
   w.calls <- w.calls + 1;
   let dt_ns, words = step w.calls in
-  w.now <- Int64.add w.now (Int64.of_int dt_ns);
+  w.now <- w.now + dt_ns;
   w.words <- w.words +. words
 
 let constant_ns dt_ns _call = (dt_ns, 0.)
@@ -488,8 +488,8 @@ let cpu_time_is_sampled () =
     resolved
       (Bench.bench "cpu" (fun () ->
            w.calls <- w.calls + 1;
-           w.now <- Int64.add w.now 5_000_000L;
-           w.cpu <- Int64.add w.cpu 2_000_000L))
+           w.now <- w.now + 5_000_000;
+           w.cpu <- w.cpu + 2_000_000))
   in
   let config =
     Config.(base |> warmup 0. |> metrics [ Metric.wall_time; Metric.cpu_time ])

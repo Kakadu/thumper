@@ -9,8 +9,8 @@
    discipline touch the real OS. *)
 
 type instruments = {
-  now_ns : unit -> int64;
-  cpu_ns : unit -> int64;
+  now_ns : unit -> int;
+  cpu_ns : unit -> int;
   gc : unit -> Metric.gc_snapshot;
 }
 
@@ -20,7 +20,7 @@ let default_instruments =
     cpu_ns =
       (fun () ->
         let t = Unix.times () in
-        Int64.of_float ((t.Unix.tms_utime +. t.Unix.tms_stime) *. 1e9));
+        int_of_float ((t.Unix.tms_utime +. t.Unix.tms_stime) *. 1e9));
     gc =
       (fun () ->
         let minor_words, promoted_words, major_words = Gc.counters () in
@@ -88,7 +88,7 @@ let parent_read_bound = 16 * 1024 * 1024
 exception Deadline
 exception Case_error of exn
 
-let seconds_of_ns ns = Int64.to_float ns *. 1e-9
+let seconds_of_ns ns = float_of_int ns *. 1e-9
 
 let effective_metrics ~config bcase =
   match Bench.metrics bcase with Some ms -> ms | None -> config.Config.metrics
@@ -278,16 +278,14 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
   let start_ns = now () in
   let deadline_at =
     let d = deadline in
-    (* 9e18 ns keeps the addition inside int64; anything larger is
-       operationally uncapped. *)
-    if Float.is_finite d && d *. 1e9 < 9e18 then
-      Some (Int64.add start_ns (Int64.of_float (d *. 1e9)))
+    (* 2^61 ns (73 years) keeps the addition inside a 63-bit int; anything
+       larger is operationally uncapped. *)
+    if Float.is_finite d && d *. 1e9 < 0x1p61 then
+      Some (start_ns + int_of_float (d *. 1e9))
     else None
   in
   let check_deadline () =
-    match deadline_at with
-    | Some d when Int64.compare (now ()) d > 0 -> raise Deadline
-    | _ -> ()
+    match deadline_at with Some d when now () > d -> raise Deadline | _ -> ()
   in
   let need_cpu =
     List.exists
@@ -308,7 +306,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       check_deadline ();
       let t0 = now () in
       run_batch k;
-      seconds_of_ns (Int64.sub (now ()) t0)
+      seconds_of_ns (now () - t0)
     in
     (* 1. Calibration: double k until one batch meets the floor; reuse a
        frozen k iff its observed batch time lands inside the window. *)
@@ -335,8 +333,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
     let warmup_start = now () in
     let rec warm batches =
       let timed_arm_met =
-        seconds_of_ns (Int64.sub (now ()) warmup_start)
-        >= config.Config.warmup_time
+        seconds_of_ns (now () - warmup_start) >= config.Config.warmup_time
       in
       if batches < config.Config.warmup_batches || not timed_arm_met then (
         check_deadline ();
@@ -362,43 +359,40 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
     let gc0 = if need_gc then Array.make n dummy else [||] in
     let gc1 = if need_gc then Array.make n dummy else [||] in
     (* Read order is timed-region hygiene: the wall-clock reads straddle only
-       [run_batch k] (the boxed [t0] and the batch's constant overhead — one
-       closure entry, the env re-opaque — are amortized under the floor law);
-       the cpu reads sit just outside them; the counter reads are outermost,
-       so the cpu reads' allocations land before [gc0]'s capture, and only
-       the clock boxes and the counter reads' own constant tail sit inside a
-       counter interval — a per-batch constant, identical at the same frozen
-       k on both sides of any comparison. All derived arithmetic runs after
-       the last read. *)
+       [run_batch k] (the batch's constant overhead — one closure entry, the
+       env re-opaque — is amortized under the floor law); the cpu reads sit
+       just outside them; the counter reads are outermost. The clock reads
+       allocate nothing, so only the [c1] read's [Unix.times] record and the
+       counter reads' own constant tail sit inside a counter interval — a
+       per-batch constant, identical at the same frozen k on both sides of any
+       comparison. All derived arithmetic runs after the last read. *)
     for i = 0 to n - 1 do
       check_deadline ();
-      let c0 = if need_cpu then instruments.cpu_ns () else 0L in
+      let c0 = if need_cpu then instruments.cpu_ns () else 0 in
       if need_gc then gc0.(i) <- instruments.gc ();
       let t0 = now () in
       run_batch k;
       let t1 = now () in
-      let c1 = if need_cpu then instruments.cpu_ns () else 0L in
+      let c1 = if need_cpu then instruments.cpu_ns () else 0 in
       if need_gc then gc1.(i) <- instruments.gc ();
-      wall.(i) <- seconds_of_ns (Int64.sub t1 t0) /. kf;
-      if need_cpu then cpu.(i) <- seconds_of_ns (Int64.sub c1 c0) /. kf
+      wall.(i) <- seconds_of_ns (t1 - t0) /. kf;
+      if need_cpu then cpu.(i) <- seconds_of_ns (c1 - c0) /. kf
     done;
     check_deadline ();
     (* 5. Exactness probe: counters diffed around batches of k and 2k calls
        (differencing form — the harness constant cancels). Differencing
-       hygiene: between the [a] and [c] reads nothing runs but the two batches
-       and the counter reads themselves. In particular no deadline check: its
-       clock read allocates a boxed int64, and even a few words landing in one
+       hygiene: between the [a] and [c] reads nothing allocates but the two
+       batches and the counter reads themselves. A few words landing in one
        interval but not the other is an asymmetry the differencing cannot
        cancel — it fails the probe for every deterministic case at k >= 4 and
-       silently inflates the proven count at k <= 3. The deadline is instead
-       checked on entry (above) and after the last read; the at most one
-       unchecked 2k batch this admits is bounded by the batches the protocol
-       just ran. *)
+       silently inflates the proven count at k <= 3. The deadline check
+       allocates nothing, so it runs before each batch here too. *)
     let probe =
       if need_gc then (
         let a = instruments.gc () in
         run_batch k;
         let b = instruments.gc () in
+        check_deadline ();
         run_batch (2 * k);
         let c = instruments.gc () in
         check_deadline ();

@@ -55,12 +55,12 @@ let () =
 (* The scripted world *)
 
 type world = {
-  mutable now : int64; (* fake monotonic clock, ns *)
-  mutable cpu : int64; (* fake process CPU clock, ns *)
+  mutable now : int; (* fake monotonic clock, ns *)
+  mutable cpu : int; (* fake process CPU clock, ns *)
   mutable calls : int; (* case-closure invocations so far *)
 }
 
-let world () = { now = 0L; cpu = 0L; calls = 0 }
+let world () = { now = 0; cpu = 0; calls = 0 }
 
 (* Scripted instruments over [w]. The GC counters never move: the configs
    below measure clock metrics only, so the exactness probe never runs. *)
@@ -83,9 +83,9 @@ let scripted w =
    ns; the wall and cpu clocks move together. *)
 let stepper w step () =
   w.calls <- w.calls + 1;
-  let dt = Int64.of_int (step w.calls) in
-  w.now <- Int64.add w.now dt;
-  w.cpu <- Int64.add w.cpu dt
+  let dt = step w.calls in
+  w.now <- w.now + dt;
+  w.cpu <- w.cpu + dt
 
 let constant_ns dt _call = dt
 let ms_ns = 1_000_000

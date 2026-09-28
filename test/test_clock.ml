@@ -14,8 +14,8 @@ let now_non_decreasing () =
   let prev = ref (Thumper_clock.now_ns ()) in
   for i = 1 to reads do
     let now = Thumper_clock.now_ns () in
-    if Int64.compare now !prev < 0 then
-      failf "now_ns went backwards at read %d: %Ld then %Ld" i !prev now;
+    if now < !prev then
+      failf "now_ns went backwards at read %d: %d then %d" i !prev now;
     prev := now
   done
 
@@ -29,15 +29,14 @@ let load_average_some_non_negative () =
    batches. A single pair could be descheduled between the reads, so take
    the minimum over many pairs. *)
 let resolution_below_1ms () =
-  let min_delta = ref Int64.max_int in
+  let min_delta = ref max_int in
   for _ = 1 to 1_000 do
     let a = Thumper_clock.now_ns () in
     let b = Thumper_clock.now_ns () in
-    let d = Int64.sub b a in
-    if Int64.compare d !min_delta < 0 then min_delta := d
+    min_delta := min (b - a) !min_delta
   done;
-  if Int64.compare !min_delta 1_000_000L >= 0 then
-    failf "consecutive now_ns reads are %Ld ns apart (>= 1 ms)" !min_delta
+  if !min_delta >= 1_000_000 then
+    failf "consecutive now_ns reads are %d ns apart (>= 1 ms)" !min_delta
 
 (* A ticks-vs-nanoseconds confusion in the stubs (e.g. dropping the mach
    timebase conversion on Apple Silicon, where raw ticks run at 24 MHz, so
@@ -50,7 +49,7 @@ let tracks_sleep () =
   let t0 = Thumper_clock.now_ns () in
   Unix.sleepf 0.05;
   let t1 = Thumper_clock.now_ns () in
-  let s = Int64.to_float (Int64.sub t1 t0) /. 1e9 in
+  let s = float_of_int (t1 - t0) /. 1e9 in
   if s < 0.04 || s > 0.5 then
     failf "now_ns measured %.6f s across a 50 ms sleep (unit error?)" s
 

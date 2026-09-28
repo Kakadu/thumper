@@ -21,8 +21,8 @@
 (** {1:instruments Instruments} *)
 
 type instruments = {
-  now_ns : unit -> int64;  (** Monotonic-raw clock (vendored). *)
-  cpu_ns : unit -> int64;  (** Process CPU time ([Unix.times]). *)
+  now_ns : unit -> int;  (** Monotonic-raw clock (vendored), nanoseconds. *)
+  cpu_ns : unit -> int;  (** Process CPU time ([Unix.times]), nanoseconds. *)
   gc : unit -> Metric.gc_snapshot;  (** Allocation counters. *)
 }
 (** The injectable seam: scripted instruments make calibration, the
