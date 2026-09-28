@@ -28,9 +28,13 @@ let default_batch_floor = 5e-3
 let default_warmup_time = 0.1
 let default_warmup_batches = 3
 
-(* Derived from the frozen-k window's 0.5 s case budget and the protocol's
-   0.25–0.4 s/case arithmetic: ×20 the budget = v1's worst per-case cost.
-   Argued in the interface. *)
+(* Deadline: 20x the default protocol's case budget of 0.5 s (20 samples,
+   each a batch at the frozen-k window's ceiling of 5 x 5 ms). It admits
+   every path the protocol takes, single-call batches included: at k = 1 a
+   default trial makes 27 calls (1 calibration, 3 warmup, 20 samples, 1 + 2
+   probe), so 10 s holds calls of up to 0.37 s, setup and teardown aside.
+   The bound does not scale with n: under [precise] (47 calls) it is 0.21 s
+   per call. *)
 let default_deadline = 10.
 
 (* Default quantities: wall_time (sampled) and alloc_words (exact when
