@@ -3,73 +3,44 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Benchmark authoring: cases, groups, selection.
+(** Benchmark trees: cases, groups, selection.
 
-    A benchmark {e case} is a named measured closure; a {e group} shares an id
-    prefix, tags, metrics, and budgets with its children. {!resolve} flattens a
-    tree of both into the validated case list a suite is; {!prepare} turns one
-    resolved case into the batch closure the measurement engine drives. Nothing
-    here measures, forks, or reads baselines.
+    The constructors build a tree ({!type:t}); {!resolve} flattens it into the
+    suite's {{!type:case}cases}, with every case id and inherited setting
+    computed; {!prepare} turns one case into the batch closure [Measure] drives.
+    Nothing here measures, forks or reads a file.
 
-    {b Ids.} Every case has a stable id: the ['/']-joined segments of its group
-    path, each segment a nonempty run of [[A-Za-z0-9._-]] characters. Ids are
-    wire format — baseline rows, JSON reports, and [-f] selection key on them —
-    and the whitespace-free charset is what keeps the baseline grammar
-    escape-free. A node's segment is [?id] when given, else the {e slug} of
-    its display name: a name that is already a valid segment is used verbatim
-    (case preserved); otherwise every maximal run of other characters becomes
-    one ['-'], and runs at either end are dropped — [bench "1 MiB copy"] has id
-    ["1-MiB-copy"], [bench " (parens) "] has id ["parens"]. An invalid [?id] or
-    an underivable name raises [Invalid_argument] at construction: a bad id is a
-    programmer error, never a measurement outcome.
-
-    {b Inheritance.} A group's [?tags], [?metrics], and [?budgets] flow to its
-    children, with three deliberate granularities:
-    - {e tags accumulate}: set union, outer scopes first — a tag can be added,
-      never removed;
-    - {e metrics override wholesale}: the nearest scope naming [?metrics]
-      chooses exactly what is measured (a metric list is a selection, not a
-      keyed map — merging lists has no meaning);
-    - {e budgets merge per metric}: the nearest scope with a budget for a metric
-      wins {e for that metric}; budgets for other metrics keep flowing from
-      outer scopes. A case that relaxes its [wall_time] budget therefore still
-      inherits the group's allocation pin — wholesale replacement would silently
-      drop it. Two budgets for one metric {e within a single} list are ambiguous
-      author intent and raise [Invalid_argument] at construction, so
-      nearest-scope-wins is the only duplicate-budget semantics that exists. The
-      same per-metric rule extends outward: a metric with no budget in
-      {!budgets} falls through to the run's budget list (resolution above the
-      case level is the judge's job, not this module's). A budget binds only a
-      metric the case collects: a case that narrows its metrics drops the
-      inherited budgets on the others, and a case left with no budget once the
-      uncollected ones are dropped gets [Budget.defaults], which binds only a
-      case that collects [wall_time]. A budget stated where its metric is not
-      collected is a contradiction ({!check_collected}). *)
+    [Thumper] re-exports {!type:t}, {!type:filter}, the constructors and
+    {!black_box}, with the id and inheritance rules as their user contract. This
+    module implements those rules. A segment's characters are
+    {!Baseline.valid_segment}'s, so changing them changes the baseline format.
+    Inheritance here stops at the case: the run's budgets, dropping the budgets
+    on uncollected metrics, and the default budget are [Verdict]'s. *)
 
 (** {1:types Types} *)
 
 type t
-(** The type for benchmark trees: a case or a group of them. Values are
-    immutable; the measured closures inside are touched only by {!prepare}. *)
+(** The type for benchmark trees: a case or a group. Only {!prepare} calls the
+    closures inside. *)
 
 type case
-(** The type for resolved cases: stable id, display names, effective
-    tags/metrics/budgets after inheritance, and the prepared measurement
-    closure. Constructed only by {!resolve}. *)
+(** The type for resolved cases: a case id, display names, the tags, metrics and
+    budgets after inheritance, and the setup that {!prepare} runs. Only
+    {!resolve} builds one. *)
 
 (** {1:constructors Constructors}
 
-    All constructors raise [Invalid_argument] — at construction, a bad suite is
-    a programmer error — if:
-    - [name] is empty (the display name always renders, even under an explicit
-      [id]);
-    - [id] is not one valid segment (nonempty, only [[A-Za-z0-9._-]]; a ['/'] is
-      invalid: groups provide the path);
-    - [id] is absent and [name] slugs to nothing (no [[A-Za-z0-9._-]] characters
-      at all);
-    - [metrics] is [[]] (a case must measure something; omit the argument to
-      inherit) or names the same metric twice ({!Metric.equal});
-    - [budgets] has two budgets for one metric (see the module doc). *)
+    A constructor raises [Invalid_argument] on a malformed node, with a message
+    that opens with the name the user called: [Thumper.bench],
+    [Thumper.bench_with_setup] or [Thumper.group]. The checks run in this order,
+    and the first that fails raises:
+    + [name] is empty.
+    + [id] is not one segment.
+    + [id] is absent and [name] holds no character a segment allows.
+    + [metrics] is empty or names one metric twice.
+    + [budgets] holds two budgets for one metric ({!Budget.check_distinct}).
+
+    [tags] are not checked. *)
 
 val bench :
   ?id:string ->
@@ -79,14 +50,10 @@ val bench :
   string ->
   (unit -> 'a) ->
   t
-(** [bench name f] is a case measuring [f]: {!prepare}'s [run_batch k] calls [f]
-    [k] times, sinking every result through [Sys.opaque_identity] so no work is
-    dead-code eliminated. Wrap {e inputs} that risk constant folding in
-    {!black_box} — results are already sunk.
-    - [id] is the identity segment. Default: the slug of [name] (module doc).
-    - [tags] label the case for [`Tag] selection. Default [[]].
-    - [metrics] and [budgets] override inherited scopes per the module-doc
-      inheritance rules. Default: inherit. *)
+(** [bench name f] is the case [name] whose batch of [k] calls applies [f] [k]
+    times ({!prepared}). [id] defaults to the slug of [name], and [tags] to
+    [[]]. Without [metrics] or [budgets] the case inherits its groups'; an empty
+    [budgets] list inherits the same way. *)
 
 val bench_with_setup :
   ?id:string ->
@@ -98,14 +65,11 @@ val bench_with_setup :
   string ->
   ('env -> 'a) ->
   t
-(** [bench_with_setup ~setup name f] is like {!bench} except each batch calls
-    [f env] where [env] is produced by [setup]. [setup] runs once per {!prepare}
-    — in the measuring worker, outside the timed region — and [teardown env]
-    (default: nothing) runs once, after the last batch. The environment is
-    re-read through [Sys.opaque_identity] at every batch so the compiler cannot
-    specialize the measured loop on a value it can see. Large
-    OCaml-heap fixtures belong in [setup]: only the forked worker that measures
-    them pays for them. *)
+(** [bench_with_setup ~setup name f] is like {!val:bench} except that each
+    {!prepare} runs [setup], and each batch applies [f] to the environment it
+    returned. [teardown] defaults to [ignore]. Where and when setup and teardown
+    run is {!Measure.case}'s rule: in a forked worker, only the worker holds the
+    environment. *)
 
 val group :
   ?id:string ->
@@ -115,121 +79,121 @@ val group :
   string ->
   t list ->
   t
-(** [group name children] namespaces [children]: their id segments are prefixed
-    with the group's segment (from [id], default the slug of [name]) and ['/'],
-    their display names with [name ^ "/"], and [tags], [metrics], and [budgets]
-    flow to them per the module-doc inheritance rules. Groups nest arbitrarily;
-    an empty [children] list is legal and resolves to no cases. *)
-
-val black_box : 'a -> 'a
-(** [black_box x] is [x], opaque to the compiler ([Sys.opaque_identity]). Wrap
-    benchmark {e inputs} to prevent constant folding; results are already sunk
-    by the harness. *)
+(** [group name children] is the group [name] over [children]. Each child's id
+    is prefixed with the group's segment and ['/'], its display name with [name]
+    and ['/'], and it inherits the group's tags, metrics and budgets. An empty
+    [children] resolves to no case. *)
 
 (** {1:selection Selection} *)
 
 type filter =
-  [ `Id of string  (** Id substring match. *)
-  | `Tag of string  (** Exact tag match. *)
+  [ `Id of string
+    (** The cases whose id contains the string, compared byte for byte; [`Id ""]
+        selects every case. *)
+  | `Tag of string  (** The cases whose tags include the string. *)
   | `And of filter list
-  | `Or of filter list ]
-(** The selection algebra. The CLI's "[-f] patterns are OR'd, [--tag]s are
-    AND'd" composes as [`And [`Or ids; `And tags]]. *)
+    (** The cases every filter selects; [`And []] selects every case. *)
+  | `Or of filter list
+    (** The cases some filter selects; [`Or []] selects none. *) ]
+(** The type for case selections. *)
 
 val matches : filter -> case -> bool
-(** [matches f c] is whether [f] selects [c]: [`Id sub] is case-sensitive
-    substring match on {!id} ([`Id ""] matches every case); [`Tag t] is exact
-    membership in {!tags}; [`And fs] and [`Or fs] are conjunction and
-    disjunction — [`And []] selects every case, [`Or []] selects none (the
-    representable empty selection). *)
+(** [matches f c] is [true] iff [f] selects [c]. *)
 
 (** {1:resolving Resolving} *)
 
-(** The type for suite validation errors. [Duplicate_id]: two cases resolved to
-    the same id; baseline rows and trials key on the id, so a duplicate would
-    shadow evidence. [Uncollected_budget]: see {!check_collected}. *)
+(** The type for invalid suites. *)
 type error =
   | Duplicate_id of string
+      (** Two cases have this id, the first repeated in authoring order. *)
   | Uncollected_budget of { scope : string; metric : string }
-      (** A budget on [metric] stated at [scope] (a group or case id, [""] for
-          the run), where that metric is not collected. *)
+      (** A budget on the metric with id [metric] is stated at [scope], a
+          group's or case's id ([""] for the run's list), where [metric] is not
+          collected. *)
 
 val pp_error : Format.formatter -> error -> unit
-(** [pp_error ppf e] formats [e] for users, with its remedy. *)
+(** [pp_error ppf e] formats [e] with its remedy:
+    [duplicate case id '<id>' (rename the case or pass ~id)],
+    [the run has a budget on <metric> but does not collect it (add it to
+     Config.metrics or drop the budget)], or
+    ['<scope>' has a budget on <metric> but does not collect it (add it to
+     ~metrics or drop the budget)]. The command line prints it on stderr after
+    [thumper: ] and exits 2, for [check], [bless] and [list] alike. *)
 
 val resolve : t list -> (case list, error) result
-(** [resolve benches] flattens groups, applies inheritance, and validates id
-    uniqueness over the whole suite: the cases in authoring order. Selection
-    ({!matches}) narrows the result afterwards, so a narrowed selection never
-    masks a broken suite ([Check.select] is the one place that does both). An
-    empty result is not an error here. No case closure is run. *)
+(** [resolve benches] is the cases of [benches] in authoring order, depth first,
+    with inheritance applied, or [Error (Duplicate_id id)] if two share an id.
+    An empty result is [Ok []]. No closure runs, and budgets on uncollected
+    metrics are not checked ({!check_collected}).
+
+    A selection must narrow the result of [resolve], never its input: a narrowed
+    input could hide a duplicate id. *)
 
 val check_collected :
   metrics:Metric.t list ->
   budgets:Budget.t list ->
   t list ->
   (unit, error) result
-(** [check_collected ~metrics ~budgets benches] checks that every budget names a
-    metric collected at the scope that states it: the scope's own [?metrics],
-    else the nearest enclosing scope's, else the run's [metrics] (the config's
-    list). [budgets] are the run's own, checked against [metrics]. The first
-    contradiction in authoring order, the run's budgets first, is
-    [Error (Uncollected_budget _)]. A budget a scope {e inherits} on a metric it
-    does not collect is not an error: the judge drops it for the cases that do
-    not collect it. *)
+(** [check_collected ~metrics ~budgets benches] is [Ok ()] iff every budget
+    names a metric collected where it is stated: at the scope's own [metrics],
+    else at the nearest enclosing scope's, else in [metrics], the run's list.
+    Otherwise it is [Error (Uncollected_budget _)] for the first contradiction,
+    the run's budgets first and then the tree in authoring order. [budgets] is
+    the run's own list, checked against [metrics]. A budget that a scope
+    inherits on a metric it does not collect is valid; judgment drops it for
+    that scope's cases. *)
 
 (** {1:observers Case observers} *)
 
 val id : case -> string
-(** [id c] is [c]'s stable identity: the ['/']-joined segments of its group
-    path. Wire format (module doc). *)
+(** [id c] is [c]'s case id: the ['/']-joined segments of its groups and its
+    own. Baseline rows, the JSON document and [`Id] selections key on it. *)
 
 val name : case -> string
-(** [name c] is [c]'s display name, exactly as authored. Not wire format. *)
+(** [name c] is [c]'s display name, as written. *)
 
 val full_name : case -> string
-(** [full_name c] is the ['/']-joined display names of [c]'s group path, for
-    report rendering. Not wire format ({!id} is the stable key). *)
+(** [full_name c] is the ['/']-joined display names of [c]'s groups and [c]. The
+    JSON document carries it, but nothing keys on it: a name that contains ['/']
+    can make two cases' full names equal. *)
 
 val tags : case -> string list
-(** [tags c] is [c]'s effective tag set: the union of its own and its groups'
-    tags, outer scopes first, duplicates removed. *)
+(** [tags c] is the tags of [c] and its groups, outer scopes first, each once.
+*)
 
 val metrics : case -> Metric.t list option
-(** [metrics c] is the effective metric-list override: the nearest enclosing
-    [?metrics], or [None] when no scope gave one (measure the config's list). *)
+(** [metrics c] is the [metrics] of the nearest scope that gave one, or [None]
+    when no scope did and the config's list applies. It is never [Some []]. *)
 
 val budgets : case -> Budget.t list option
-(** [budgets c] is the per-metric merge of [c]'s and its groups' [?budgets] —
-    nearest scope first, at most one budget per metric — or [None] when no scope
-    contributes any budget (empty [?budgets] lists contribute nothing: the
-    result is never [Some []]). Metrics absent from the list (and [None]
-    entirely) fall through to the run's budgets, then [Budget.defaults] (module
-    doc). *)
+(** [budgets c] is the budgets of [c] and its groups merged per metric, the
+    nearest scope's first, or [None] when no scope gave a non-empty list. It may
+    hold budgets on metrics [c] does not collect. *)
 
 (** {1:running Running} *)
 
 type prepared = {
   run_batch : int -> unit;
-      (** [run_batch k] calls the case closure exactly [k] times, sinking every
-          result through [Sys.opaque_identity]. The closure — and, for setup
-          cases, the environment — is re-read through [Sys.opaque_identity] once
-          per batch, so the compiler can neither eliminate a call's body nor
-          hoist a pure body out of the measured loop. *)
+      (** [run_batch k] calls the case's function [k] times and passes each
+          result through [Sys.opaque_identity]. It re-reads the function, and
+          the environment of a case with setup, through [Sys.opaque_identity]
+          once per batch, so the compiler can neither drop a call nor hoist its
+          body out of the loop. *)
   teardown : unit -> unit;
-      (** Releases what setup acquired. Call it once, after the last batch; for
-          setup-less cases it does nothing. *)
+      (** Releases what setup acquired; [ignore] for a case without setup. It
+          must be called once, after the last batch. *)
 }
-(** The type for prepared cases: what the measurement engine drives. *)
+(** The type for a case ready to measure. *)
 
 val prepare : case -> prepared
-(** [prepare c] runs [c]'s setup and is the only function that touches [c]'s
-    closures. Call it in the measuring worker, outside the timed region; call
-    the result's [teardown] when done. Each call runs setup again and yields an
-    independent environment.
+(** [prepare c] runs [c]'s setup, if any, and is the batch closure and teardown
+    over the environment it returned. Each call runs setup again. It must be
+    called outside the timed region.
 
-    Exceptions from setup — and, later, from the measured closure inside
-    [run_batch] or from teardown — propagate to the caller unchanged, and a
-    raising [run_batch] does not invoke teardown behind the caller's back:
-    containment is the measuring worker's job ({!Measure}), not this module's.
-*)
+    Exceptions from setup, and later from [run_batch] or [teardown], propagate
+    unchanged: containing them, and running the teardown after a failure, is
+    {!Measure.case}'s job. *)
+
+val black_box : 'a -> 'a
+(** [black_box x] is [Sys.opaque_identity x], the barrier [run_batch] puts
+    around each result. *)
