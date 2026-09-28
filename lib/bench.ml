@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type prepared = { run_batch : int -> unit; teardown : unit -> unit }
 
 type case = {
@@ -52,12 +54,12 @@ let slug name =
 let segment ~ctor ~id ~name =
   (* The display name always renders (reports, full_name): an empty one is a
      programmer error even when [?id] supplies the identity segment. *)
-  if name = "" then invalid_arg (Printf.sprintf "%s: empty name" ctor);
+  if name = "" then invalid_arg (strf "%s: empty name" ctor);
   match id with
   | Some id ->
       if not (Baseline.valid_segment id) then
         invalid_arg
-          (Printf.sprintf
+          (strf
              "%s: invalid id %S: an id is one segment of [A-Za-z0-9._-]+ \
               (groups join segments with '/')"
              ctor id);
@@ -66,7 +68,7 @@ let segment ~ctor ~id ~name =
       let s = slug name in
       if s = "" then
         invalid_arg
-          (Printf.sprintf
+          (strf
              "%s: name %S has no [A-Za-z0-9._-] characters to slug into an id; \
               pass ~id"
              ctor name);
@@ -75,16 +77,14 @@ let segment ~ctor ~id ~name =
 let check_metrics ~ctor = function
   | None -> ()
   | Some [] ->
-      invalid_arg
-        (Printf.sprintf "%s: empty ~metrics list (omit it to inherit)" ctor)
+      invalid_arg (strf "%s: empty ~metrics list (omit it to inherit)" ctor)
   | Some ms ->
       let rec go seen = function
         | [] -> ()
         | m :: rest ->
             if List.exists (Metric.equal m) seen then
               invalid_arg
-                (Printf.sprintf "%s: duplicate metric %s in ~metrics" ctor
-                   (Metric.id m))
+                (strf "%s: duplicate metric %s in ~metrics" ctor (Metric.id m))
             else go (m :: seen) rest
       in
       go [] ms
@@ -198,25 +198,27 @@ let merge_budgets ~inner ~outer =
 let join prefix seg = if prefix = "" then seg else prefix ^ "/" ^ seg
 
 let flatten benches =
-  let rec walk ~id_path ~name_path ~tags ~metrics ~budgets = function
-    | Case (s, prepare) ->
+  let rec walk ~id_path ~name_path ~tags ~metrics ~budgets node =
+    let s = match node with Case (s, _) | Group (s, _) -> s in
+    let id_path = join id_path s.seg in
+    let name_path = join name_path s.name in
+    let tags = union_tags tags s.tags in
+    let metrics = inherit_metrics ~inner:s.metrics ~outer:metrics in
+    let budgets = merge_budgets ~inner:s.budgets ~outer:budgets in
+    match node with
+    | Case (_, prepare) ->
         [
           {
-            id = join id_path s.seg;
+            id = id_path;
             name = s.name;
-            full_name = join name_path s.name;
-            tags = union_tags tags s.tags;
-            metrics = inherit_metrics ~inner:s.metrics ~outer:metrics;
-            budgets = merge_budgets ~inner:s.budgets ~outer:budgets;
+            full_name = name_path;
+            tags;
+            metrics;
+            budgets;
             prepare;
           };
         ]
-    | Group (s, children) ->
-        let id_path = join id_path s.seg in
-        let name_path = join name_path s.name in
-        let tags = union_tags tags s.tags in
-        let metrics = inherit_metrics ~inner:s.metrics ~outer:metrics in
-        let budgets = merge_budgets ~inner:s.budgets ~outer:budgets in
+    | Group (_, children) ->
         List.concat_map
           (walk ~id_path ~name_path ~tags ~metrics ~budgets)
           children
