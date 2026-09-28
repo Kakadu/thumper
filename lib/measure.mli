@@ -96,13 +96,14 @@ val case :
       per-call sample, its interval over the batch divided by [k]. Each vector
       is tested for drift in collection order ({!Stats.drifted} at [0.01]), then
       sorted.
-    + The exactness probe, when a counter metric is collected. The counters are
-      read around one batch of [k] calls and one of [2k], with deltas [dk] and
-      [d2k]. A metric is exact with [a] per call iff [d2k -. dk = float k *. a]
-      for a whole [a >= 0.] and [dk -. float k *. a >= 0.]. The differencing
-      cancels [dk -. float k *. a], a batch's constant overhead, so [k = 1]
-      proves a deterministic case exact. A metric whose probe fails stays
-      sampled, from its sampling batches.
+    + The exactness probe, when a counter metric is collected. Its batch size,
+      [k] in this step, is {!probe_k}'s: the frozen one while it is at most 16
+      times the sampling batch size. The counters are read around one batch of
+      [k] calls and one of [2k], with deltas [dk] and [d2k]. A metric is exact
+      with [a] per call iff [d2k -. dk = float k *. a] for a whole [a >= 0.] and
+      [dk -. float k *. a >= 0.]. The differencing cancels [dk -. float k *. a],
+      a batch's constant overhead, so [k = 1] proves a deterministic case exact.
+      A metric whose probe fails stays sampled, from its sampling batches.
 
     The trial's warnings are, in order: a median wall time under 1 ns per call
     ([possibly folded]), each failed probe in metric order, and each GC
@@ -133,6 +134,15 @@ val case :
     own code escapes too; forked, it ends the child with exit code 125 after the
     child prints [thumper: worker: <exception>] on stderr. Raises
     [Unix.Unix_error] if the pipe to a forked worker cannot be created. *)
+
+val probe_k : frozen_k:int option -> k:int -> int
+(** [probe_k ~frozen_k ~k] is the batch size of the exactness probe of a trial
+    whose samples are at batch size [k]. It is [k0] when [frozen_k] is [Some k0]
+    and [k0 <= 16 * k], so that an exact count is measured at the baseline's
+    batch size even when calibration chose another for the samples, and [k]
+    otherwise. A frozen batch size more than 16 times [k] means a case about
+    that many times slower than its baseline, which its timing shows, and a
+    probe at [k0] would cost more than 48 batches of [k]. *)
 
 (** {1:protocol The worker pipe protocol}
 

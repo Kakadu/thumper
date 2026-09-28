@@ -205,6 +205,67 @@ let probe_exact_at_k8192 () =
   equal ~msg:"k" int 8192 (Run.Trial.k t);
   equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
 
+(* At 6.5 ms per call the frozen k = 4 batch takes 26 ms, past the window,
+   so the timing recalibrates to k = 1: 4 calls for the frozen batch, 1 to
+   calibrate, 3 of warmup and 20 samples. The probe still runs at k = 4, 4
+   and 8 calls, so the exact count is the one the baseline's batch size
+   gives. *)
+let probe_runs_at_the_frozen_k () =
+  let w = world () in
+  let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
+  let config = Config.(base |> warmup 0.) in
+  let t = trial_ok (measure ~h:10. ~frozen_k:(Some 4) ~config w case) in
+  equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
+  equal ~msg:"calls = 4 + 1 + 3 + 20 + (4 + 8)" int 40 w.calls;
+  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
+
+(* An allocator that takes 100 more words every 4th call reads 54 words a
+   call at k = 1 and 79 at k = 4. After the recalibration to k = 1 the probe
+   covers calls 29 to 40 at k = 4, and proves the count of k = 4. *)
+let probe_at_the_frozen_k_proves_its_count () =
+  let w = world () in
+  let case =
+    bench_stepping w (fun call ->
+        (6_500_000, if call mod 4 = 0 then 154. else 54.))
+  in
+  let config = Config.(base |> warmup 0.) in
+  let t = trial_ok (measure ~frozen_k:(Some 4) ~config w case) in
+  equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
+  equal ~msg:"alloc at k = 4" int 79 (exact_of t Metric.alloc_words)
+
+(* The bound on the probe's batch size, at 6.5 ms per call: a frozen k of
+   16 or 17 recalibrates the samples to k = 1. At 16 = 16 x 1 the probe runs
+   at the frozen k, 16 and 32 calls; at 17 it runs at k = 1, 1 and 2 calls.
+   The rest is the frozen batch, 1 calibration, 3 of warmup and 20
+   samples. *)
+let probe_k_bound =
+  [
+    ("probes at a frozen k of 16 times the new k", 16, 16 + 24 + 48);
+    ("probes at the new k past 16 times it", 17, 17 + 24 + 3);
+  ]
+  |> List.map (fun (name, frozen, calls) ->
+      test name (fun () ->
+          let w = world () in
+          let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
+          let config = Config.(base |> warmup 0.) in
+          let t =
+            trial_ok (measure ~h:10. ~frozen_k:(Some frozen) ~config w case)
+          in
+          equal ~msg:"the timing recalibrated" int 1 (Run.Trial.k t);
+          equal ~msg:"calls" int calls w.calls;
+          equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)))
+
+(* Without a frozen k the probe runs at the calibrated k, as before: 1
+   calibration call, 3 of warmup, 20 samples, then 1 and 2 probe calls. *)
+let probe_without_a_frozen_k_runs_at_the_calibrated_k () =
+  let w = world () in
+  let case = bench_stepping w (fun _ -> (6_500_000, 54.)) in
+  let config = Config.(base |> warmup 0.) in
+  let t = trial_ok (measure ~h:10. ~config w case) in
+  equal ~msg:"k" int 1 (Run.Trial.k t);
+  equal ~msg:"calls = 1 + 3 + 20 + (1 + 2)" int 27 w.calls;
+  equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words)
+
 let probe_downgrades_nondeterministic_counters () =
   let w = world () in
   (* 54/55 words alternating: at k = 8 the k/2k deltas differ by 436, whose
@@ -829,6 +890,13 @@ let () =
         [
           test "proves a planted count at k = 1" probe_exact_at_k1;
           test "proves a planted count at k = 8192" probe_exact_at_k8192;
+          test "runs at the frozen k when the timing recalibrates"
+            probe_runs_at_the_frozen_k;
+          test "proves the frozen k's count after a recalibration"
+            probe_at_the_frozen_k_proves_its_count;
+          test "runs at the calibrated k without a frozen k"
+            probe_without_a_frozen_k_runs_at_the_calibrated_k;
+          group "bound on the frozen k" probe_k_bound;
           test "downgrades nondeterministic counters with a warning"
             probe_downgrades_nondeterministic_counters;
           test "downgrades when the 2k batch underallocates"

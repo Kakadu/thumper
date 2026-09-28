@@ -56,6 +56,13 @@ let frozen_k_window_low = 0.2
 let frozen_k_window_high = 5.0
 let drift_alpha = 0.01
 
+(* A frozen k past 16 times the recalibrated one means a case about 16
+   times slower than its baseline, a timing regression the report shows on
+   its own. Probing at the frozen k would then cost 48 recalibrated batches
+   or more, and a slowdown of a few hundred times would end the case at its
+   deadline instead of in a report. *)
+let max_probe_k_ratio = 16
+
 (* A per-call median under 1 ns is indistinguishable from a constant-folded
    body. *)
 let fold_threshold_s = 1e-9
@@ -85,6 +92,11 @@ exception Deadline
 exception Case_error of exn
 
 let seconds_of_ns ns = float_of_int ns *. 1e-9
+
+let probe_k ~frozen_k ~k =
+  match frozen_k with
+  | Some k0 when k0 <= max_probe_k_ratio * k -> k0
+  | Some _ | None -> k
 
 let effective_metrics ~config bcase =
   match Bench.metrics bcase with Some ms -> ms | None -> config.Config.metrics
@@ -254,6 +266,7 @@ type raw = {
   raw_cpu : float array; (* per-call seconds; [||] unless Cpu_clock asked *)
   raw_gc0 : Metric.gc_snapshot array; (* per-batch counter reads, before *)
   raw_gc1 : Metric.gc_snapshot array; (* per-batch counter reads, after *)
+  raw_probe_k : int; (* the probe's batch size, [probe_k] *)
   raw_probe :
     (Metric.gc_snapshot * Metric.gc_snapshot * Metric.gc_snapshot) option;
 }
@@ -361,6 +374,10 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       if need_cpu then cpu.(i) <- seconds_of_ns (c1 - c0) /. kf
     done;
     check_deadline ();
+    (* An exact count is compared with the baseline's as an integer, so the
+       probe runs at the frozen batch size even when the timing recalibrated:
+       an allocator can amortize differently at another batch size. *)
+    let probe_k = probe_k ~frozen_k ~k in
     (* The exactness probe diffs the counters around batches of k and 2k
        calls, so the harness constant cancels. Between the [a] and [c] reads
        nothing may allocate but the two batches and the counter reads
@@ -372,10 +389,10 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
     let probe =
       if need_gc then (
         let a = instruments.gc () in
-        run_batch k;
+        run_batch probe_k;
         let b = instruments.gc () in
         check_deadline ();
-        run_batch (2 * k);
+        run_batch (2 * probe_k);
         let c = instruments.gc () in
         check_deadline ();
         Some (a, b, c))
@@ -387,6 +404,7 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
       raw_cpu = cpu;
       raw_gc0 = gc0;
       raw_gc1 = gc1;
+      raw_probe_k = probe_k;
       raw_probe = probe;
     }
   in
@@ -460,10 +478,11 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
                    (Metric.id m) dk d2k);
             (* The counters are floats holding whole numbers, exact below
                2^53, so these differences are exact. *)
+            let pk = float_of_int raw.raw_probe_k in
             let diff = d2k -. dk in
-            let a = Float.floor (diff /. kf) in
-            let residue = diff -. (kf *. a) in
-            let h = dk -. (kf *. a) and h2 = d2k -. (2. *. kf *. a) in
+            let a = Float.floor (diff /. pk) in
+            let residue = diff -. (pk *. a) in
+            let h = dk -. (pk *. a) and h2 = d2k -. (2. *. pk *. a) in
             (* Monotone counters can still give a consistent negative slope
                (a 2k batch allocating less in total than the k batch, as an
                allocator with warm-up or phase behavior does): that is
@@ -476,8 +495,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
                    "%s: exactness probe failed: batch deltas %g (k=%d) and %g \
                     (2k=%d) give per-call %g words with harness h %g vs %g; \
                     treating as sampled"
-                   (Metric.id m) dk raw.raw_k d2k (2 * raw.raw_k) (diff /. kf) h
-                   h2);
+                   (Metric.id m) dk raw.raw_probe_k d2k (2 * raw.raw_probe_k)
+                   (diff /. pk) h h2);
               None)
       in
       let measurements =

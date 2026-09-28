@@ -34,7 +34,13 @@ let default_warmup_batches = 3
    default trial makes 27 calls (1 calibration, 3 warmup, 20 samples, 1 + 2
    probe), so 10 s holds calls of up to 0.37 s, setup and teardown aside.
    The bound does not scale with n: under [precise] (47 calls) it is 0.21 s
-   per call. *)
+   per call. A recalibration from a frozen k runs one batch at the frozen k,
+   and probes at it only while it is at most 16 times the new k
+   ([Measure.probe_k]): those four batches take at most as long as 64 new
+   ones, at k = 1 the trial makes at most 16 + 24 + 48 = 88 calls, and 10 s
+   holds calls of up to 0.11 s. Past 16 times, the one batch at the frozen k
+   takes the slowdown times its baseline time of 1 to 25 ms, so only a case
+   slowed by several hundred times can reach the deadline there. *)
 let default_deadline = 10.
 
 (* Default quantities: wall_time (sampled) and alloc_words (exact when
