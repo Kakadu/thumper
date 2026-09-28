@@ -109,15 +109,16 @@ val run :
     + {b Gate.} The environment gate is sampled and fed to [Verdict.judge]
       (sampled at run start and again before the confirmation queue).
     + {b Measurement sweep.} Each selected case is measured by {!Measure.case}
-      with [frozen_k] read from this machine's section: the k of the case's
-      first sampled row
-      in the section's canonical (id, metric) order — the same row [Verdict]
-      reads when it annotates exact evidence with batch drift, so the k frozen
-      here and the k judgment compares against agree. A case's rows normally
-      share one k (they come from one trial); they can disagree only where the
-      ratchet advanced a single row at a recalibrated confirmation k, and the
-      first sampled row then still pins one deterministic choice. No section, or
-      no sampled row for the case, means free calibration ([frozen_k = None]).
+      with [frozen_k] read from this machine's section when it is current
+      ({!Verdict.compared_section}): the k of the case's first sampled row in
+      the section's canonical (id, metric) order — the same row [Verdict] reads
+      when it annotates exact evidence with batch drift, so the k frozen here
+      and the k judgment compares against agree. A case's rows normally share
+      one k (they come from one trial); they can disagree only where the ratchet
+      advanced a single row at a recalibrated confirmation k, and the first
+      sampled row then still pins one deterministic choice. No section, a stale
+      one, or no sampled row for the case, means free calibration
+      ([frozen_k = None]).
     + {b Judgment and confirmation.} [Verdict.judge], then, when the
       confirmation queue is nonempty, the gate is re-sampled. Under a [Quiet]
       re-sample each queued case is measured again — a fresh worker, fresh

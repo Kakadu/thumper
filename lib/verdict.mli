@@ -152,6 +152,13 @@ type comparison =
           metric is a [New_row], as with [No_baseline]. *)
   | Compared
 
+val compared_section :
+  identity:Baseline.identity -> Baseline.t -> Baseline.section option
+(** [compared_section ~identity file] is the section {!judge} compares against:
+    [identity.machine]'s section of [file] when it records [identity.ocaml], and
+    [None] when that section is missing or stale. [Check] freezes batch sizes
+    from it, so a section judgment will not compare freezes none. *)
+
 type t
 (** A decided verdict. *)
 

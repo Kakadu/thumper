@@ -389,6 +389,27 @@ let sweep_freezes_the_rows_k () =
   check_rel ~msg:"equal evidence is equivalent" v ~case:"a" ~metric:m_wall
     "equivalent"
 
+let a_stale_section_freezes_nothing () =
+  let w = world () in
+  (* A section recorded under another compiler is never compared, so its
+     k = 4 (a 4 ms batch, inside the reuse window) must not freeze the
+     sweep: the trial calibrates freely to k = 8 at 1 ms/call. *)
+  let stale =
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
+      { (test_identity ()) with Baseline.ocaml = "4.14.0 64-bit release" }
+      [ wall_row ~k:4 "a" (ties 1.0e-3) ]
+  in
+  let v =
+    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      ~baseline:stale "digest"
+      [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
+  in
+  is_true ~msg:"premise: the section is stale"
+    (match Verdict.comparison v with Verdict.Stale _ -> true | _ -> false);
+  equal ~msg:"k calibrated freely" int 8
+    (Run.Trial.k (case_report v "a").Verdict.trial)
+
 let freeze_reads_the_first_sampled_row () =
   let w = world () in
   (* Two sampled rows for one case disagreeing on k (a per-row ratchet
@@ -778,6 +799,7 @@ let () =
       group "frozen k"
         [
           test "the sweep freezes the baseline row's k" sweep_freezes_the_rows_k;
+          test "a stale section freezes nothing" a_stale_section_freezes_nothing;
           test "the freeze reads the first sampled row"
             freeze_reads_the_first_sampled_row;
           test "the freeze skips exact rows" freeze_skips_exact_rows;

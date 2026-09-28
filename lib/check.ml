@@ -123,7 +123,9 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
             file, or update its '# suite:' header if the suite was renamed"
            s name)
   | _ -> ());
-  let section = Baseline.section file identity.Baseline.machine in
+  (* Batch sizes are frozen from the section judgment compares against: a
+     stale one is re-recorded from this run, so it pins nothing. *)
+  let section = Verdict.compared_section ~identity file in
   under_lease (fun () ->
       let start_gate = sample_gate () in
       let total = List.length selected in

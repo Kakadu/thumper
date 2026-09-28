@@ -668,12 +668,13 @@ module Check : sig
       machine's evidence is unrepresentable: measure every case, judge,
       re-measure provisional strong relations in fresh workers at each
       provisional trial's batch size (spaced to the end of the suite), and
-      decide. First-pass batch sizes are frozen from the section's rows; without
-      [baseline] (or on a machine with no section yet) every case is NEW and the
-      verdict's candidate proposes this machine's first section. The environment
-      gate is sampled at run start and again before the confirmation queue: on a
-      loaded host, sampled-metric comparisons degrade to inconclusive
-      ([environment]) rather than failing — exact comparisons still gate.
+      decide. First-pass batch sizes are frozen from a current section's rows;
+      without [baseline] (or on a machine with no section yet) every case is NEW
+      and the verdict's candidate proposes this machine's first section. The
+      environment gate is sampled at run start and again before the confirmation
+      queue: on a loaded host, sampled-metric comparisons degrade to
+      inconclusive ([environment]) rather than failing — exact comparisons still
+      gate.
 
       [config] defaults to {!Config.default}. [budgets] are the suite-level
       budgets (default: none — cases without their own get {!Budget}'s default);

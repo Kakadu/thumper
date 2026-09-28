@@ -320,6 +320,12 @@ let classify_comparison identity section =
           (Ocaml_mismatch
              { section = recorded; current = identity.Baseline.ocaml })
 
+let compared_section ~identity file =
+  let section = Baseline.section file identity.Baseline.machine in
+  match classify_comparison identity section with
+  | Compared -> section
+  | No_baseline | Stale _ -> None
+
 let judge_metric ~gate section ~id ~trial metric measurement budget =
   match Baseline.find_row section ~id ~metric:(Metric.id metric) with
   | None -> Settled New_row
@@ -395,9 +401,7 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
   let comparison = classify_comparison identity section in
   (* Only a current section is compared; a missing or stale one makes every
      row NEW, and the candidate re-records the section wholesale. *)
-  let comparable =
-    match comparison with Compared -> section | No_baseline | Stale _ -> None
-  in
+  let comparable = compared_section ~identity file in
   let p_cases =
     List.map
       (fun (bench_case, trial) ->
