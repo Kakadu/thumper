@@ -12,8 +12,8 @@ kill9 mode SIGKILLs the measuring worker mid-protocol.
 
   $ THUMPER_FIXTURE_MODE=kill9 $FIX check --quick -f err/kill9 --json out.json > out.log 2>&1
   [2]
-  $ grep -q 'worker for err/kill9 died' out.log && echo worker-death-named
-  worker-death-named
+  $ grep -o 'worker for err/kill9 died: .*' out.log
+  worker for err/kill9 died: killed by SIGKILL
 
 No candidate, no JSON, no temp files — the run aborted before any artifact
 could be published.
@@ -44,7 +44,7 @@ assertion is termination and classification, never a timing.
 
   $ THUMPER_FIXTURE_MODE=hang $FIX check --quick -f err/raise > hang.log 2>&1
   [2]
-  $ grep -q 'exceeded its deadline' hang.log && echo deadline-named
-  deadline-named
+  $ grep -o 'case err/raise exceeded its deadline.*' hang.log
+  case err/raise exceeded its deadline of 1s
   $ test ! -e fixture.thumper.corrected && echo no-candidate
   no-candidate

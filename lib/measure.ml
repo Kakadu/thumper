@@ -37,15 +37,15 @@ let default_instruments =
 type failure =
   | Worker_died of { case : string; detail : string }
   | Case_raised of { case : string; exn : string }
-  | Deadline_exceeded of { case : string }
+  | Deadline_exceeded of { case : string; deadline : float }
 
 let pp_failure ppf = function
   | Worker_died { case; detail } ->
       Format.fprintf ppf "worker for %s died: %s" case detail
   | Case_raised { case; exn } ->
       Format.fprintf ppf "case %s raised: %s" case exn
-  | Deadline_exceeded { case } ->
-      Format.fprintf ppf "case %s exceeded its deadline" case
+  | Deadline_exceeded { case; deadline } ->
+      Format.fprintf ppf "case %s exceeded its deadline of %gs" case deadline
 
 (* Constants *)
 
@@ -428,7 +428,8 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
           raise e
     with
     | raw -> Ok raw
-    | exception Deadline -> Error (Deadline_exceeded { case = case_id })
+    | exception Deadline ->
+        Error (Deadline_exceeded { case = case_id; deadline })
     | exception Case_error e ->
         Error (Case_raised { case = case_id; exn = Printexc.to_string e })
   in
@@ -627,7 +628,9 @@ let parent_collect ~deadline_s ~case pid r =
   match result with
   | `Timeout ->
       kill_and_reap ();
-      `Failure (Deadline_exceeded { case })
+      `Failure
+        (Deadline_exceeded
+           { case; deadline = Option.value deadline_s ~default:infinity })
   | `Oversized ->
       kill_and_reap ();
       `Failure
@@ -635,8 +638,7 @@ let parent_collect ~deadline_s ~case pid r =
            {
              case;
              detail =
-               Printf.sprintf "worker output exceeded %d bytes"
-                 parent_read_bound;
+               Printf.sprintf "output exceeded %d bytes" parent_read_bound;
            })
   | `Eof -> (
       match waitpid_retry pid with
@@ -644,21 +646,16 @@ let parent_collect ~deadline_s ~case pid r =
       | Unix.WEXITED c ->
           `Failure
             (Worker_died
-               { case; detail = Printf.sprintf "worker exited with code %d" c })
+               { case; detail = Printf.sprintf "exited with code %d" c })
       | Unix.WSIGNALED s ->
           `Failure
             (Worker_died
-               {
-                 case;
-                 detail = Printf.sprintf "worker killed by %s" (signal_name s);
-               })
+               { case; detail = Printf.sprintf "killed by %s" (signal_name s) })
       | Unix.WSTOPPED s ->
           `Failure
             (Worker_died
-               {
-                 case;
-                 detail = Printf.sprintf "worker stopped by %s" (signal_name s);
-               }))
+               { case; detail = Printf.sprintf "stopped by %s" (signal_name s) })
+      )
 
 let case_forked ~instruments ~config ~frozen_k bcase =
   let case = Bench.id bcase in

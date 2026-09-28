@@ -614,7 +614,9 @@ let unreadable_is_io_never_absent () =
   (* A directory at the baseline path exists but cannot be read: Io, and
      emphatically not absent. *)
   match Baseline.read "fixtures" with
-  | Error (Baseline.Io _) -> ()
+  | Error (Baseline.Io msg) ->
+      equal ~msg:"names the path and the reason" string
+        "cannot read fixtures: Is a directory" msg
   | Ok (Some _) -> fail "read a directory as a baseline"
   | Ok None -> fail "an unreadable path was reported absent"
   | Error (Baseline.Corrupt _) -> fail "expected Io for a directory"
@@ -895,7 +897,11 @@ let write_skips_leftover_temporary_files () =
 
 let write_failure_raises_io () =
   raises_match
-    (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
+    (function
+      | Baseline.Error (Baseline.Io msg) ->
+          String.starts_with
+            ~prefix:"cannot write definitely/missing/dir/suite.thumper: " msg
+      | _ -> false)
     (fun () ->
       Baseline.write "definitely/missing/dir/suite.thumper" (base_two_rows ()))
 

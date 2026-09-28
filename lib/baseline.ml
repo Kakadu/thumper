@@ -39,7 +39,7 @@ exception Error of error
 let pp_error ppf = function
   | Corrupt { line; reason } ->
       Format.fprintf ppf "corrupt baseline (line %d): %s" line reason
-  | Io msg -> Format.fprintf ppf "baseline i/o error: %s" msg
+  | Io msg -> Format.pp_print_string ppf msg
 
 (* An error that escapes a program prints as the facade names it, with its
    text, not as the internal constructor. *)
@@ -460,11 +460,9 @@ let read path =
   in
   match open_read () with
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
-  | exception Unix.Unix_error (e, op, _) ->
+  | exception Unix.Unix_error (e, _, _) ->
       Stdlib.Error
-        (Io
-           (Printf.sprintf "cannot read %S: %s (%s)" path (Unix.error_message e)
-              op))
+        (Io (Printf.sprintf "cannot read %s: %s" path (Unix.error_message e)))
   | fd -> (
       (* Drain with [Unix.read] directly: a channel over the descriptor
          ([in_channel_of_descr]) rejects non-regular files (a directory at
@@ -484,12 +482,12 @@ let read path =
       | () ->
           close ();
           Result.map Option.some (of_string (Buffer.contents buf))
-      | exception Unix.Unix_error (e, op, _) ->
+      | exception Unix.Unix_error (e, _, _) ->
           close ();
           Stdlib.Error
             (Io
-               (Printf.sprintf "cannot read %S: %s (%s)" path
-                  (Unix.error_message e) op)))
+               (Printf.sprintf "cannot read %s: %s" path (Unix.error_message e)))
+      )
 
 let read_exn path =
   match read path with Ok t -> t | Stdlib.Error e -> raise (Error e)
@@ -498,12 +496,10 @@ let read_exn path =
    serializes measurement, not writes, so concurrent writers are last-wins. *)
 let write path t =
   try Os.write_atomic path (to_string t)
-  with Unix.Unix_error (e, op, _) ->
+  with Unix.Unix_error (e, _, _) ->
     raise
       (Error
-         (Io
-            (Printf.sprintf "cannot write %S: %s (%s)" path
-               (Unix.error_message e) op)))
+         (Io (Printf.sprintf "cannot write %s: %s" path (Unix.error_message e))))
 
 (* File and section observers *)
 

@@ -355,7 +355,7 @@ let deadline_exceeded_on_clock_jump () =
   let w = world () in
   let config = Config.(wall_only |> warmup 0.) in
   equal failure
-    (Measure.Deadline_exceeded { case = "jump" })
+    (Measure.Deadline_exceeded { case = "jump"; deadline = 10. })
     (the_failure (measure ~config w (jump_case w)))
 
 let deadline_infinity_removes_the_cap () =
@@ -412,7 +412,7 @@ let teardown_runs_when_the_deadline_fires () =
   in
   let config = Config.(wall_only |> warmup 0.) in
   equal failure
-    (Measure.Deadline_exceeded { case = "jump" })
+    (Measure.Deadline_exceeded { case = "jump"; deadline = 10. })
     (the_failure (measure ~config w case));
   equal ~msg:"teardown ran once" int 1 !torn
 
@@ -564,7 +564,7 @@ let write_rejects_parent_side_failures () =
         (fun () -> Measure.Protocol.write (Buffer.create 16) (Error f)))
     [
       Measure.Worker_died { case = "c"; detail = "d" };
-      Measure.Deadline_exceeded { case = "c" };
+      Measure.Deadline_exceeded { case = "c"; deadline = 1. };
     ]
 
 let valid_wire =
@@ -718,7 +718,7 @@ let parent_kills_a_hung_worker_at_the_deadline () =
   in
   let config = Config.(default |> deadline 0.2) in
   equal failure
-    (Measure.Deadline_exceeded { case = "hang" })
+    (Measure.Deadline_exceeded { case = "hang"; deadline = 0.2 })
     (the_failure (Measure.case ~config ~frozen_k:None case))
 
 (* OCaml refuses [Unix.fork] once the process has spawned a domain, even a

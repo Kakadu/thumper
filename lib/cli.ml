@@ -1054,6 +1054,12 @@ let with_status f =
 let machine_key () =
   try Env.machine_key () with Invalid_argument msg -> fail2 "%s" msg
 
+(* A baseline error as a stop line: a content error is anchored on its file,
+   an I/O error names the file itself ([cannot read <path>: <reason>]). *)
+let baseline_error path = function
+  | Baseline.Io _ as e -> pp_str Baseline.pp_error e
+  | Baseline.Corrupt _ as e -> path ^ ": " ^ pp_str Baseline.pp_error e
+
 (* An absent file is the ordinary first-run state, [None]. Io and
    Corrupt are exit 2, never treated as absent. A file whose
    header names another suite is refused the same way cross-machine
@@ -1071,11 +1077,11 @@ let read_baseline ~suite path =
             path s suite
       | _ -> Some f)
   | Ok None -> None
-  | Error e -> fail2 "%s: %s" path (pp_str Baseline.pp_error e)
+  | Error e -> fail2 "%s" (baseline_error path e)
 
 let write_baseline path file =
   try Baseline.write path file
-  with Baseline.Error e -> fail2 "%s: %s" path (pp_str Baseline.pp_error e)
+  with Baseline.Error e -> fail2 "%s" (baseline_error path e)
 
 (* Selection preflight, before the lease: a broken suite or filter must fail
    without waiting on a holder (and [list] is exactly this). The empty
@@ -1209,7 +1215,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   | Error e ->
       (* The report first, on a terminal too, where stderr is unbuffered. *)
       flush stdout;
-      fail2 "%s: %s" corrected_path (pp_str Baseline.pp_error e)
+      fail2 "%s" (baseline_error corrected_path e)
 
 let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept benches =

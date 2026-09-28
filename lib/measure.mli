@@ -65,15 +65,16 @@ type failure =
       (** The case's closure, setup, or teardown raised; [exn] is the
           [Printexc.to_string] rendering. Teardown has run (or was itself the
           raiser) — a raising case is a measurement failure, never a leak. *)
-  | Deadline_exceeded of { case : string }
-      (** The case could not complete its protocol within [config.deadline]:
-          forked, the parent killed the worker, whose teardown did not run;
-          in-process, the driver stopped at a batch boundary. No partial trial
-          is produced: n is protocol identity, so evidence from fewer batches
-          would silently compare a different protocol against the baseline's.
-          (the [wide_interval] remedy table describes a {e completed} fixed
-          budget on a noisy case, not a truncated one; its remedies —
-          [--precise], a raised {!Config.deadline} — apply here too.) *)
+  | Deadline_exceeded of { case : string; deadline : float }
+      (** The case could not complete its protocol within [deadline], the
+          [config.deadline] in seconds: forked, the parent killed the worker,
+          whose teardown did not run; in-process, the driver stopped at a batch
+          boundary. No partial trial is produced: n is protocol identity, so
+          evidence from fewer batches would silently compare a different
+          protocol against the baseline's. (the [wide_interval] remedy table
+          describes a {e completed} fixed budget on a noisy case, not a
+          truncated one; its remedies — [--precise], a raised {!Config.deadline}
+          — apply here too.) *)
 
 val pp_failure : Format.formatter -> failure -> unit
 (** [pp_failure ppf f] formats [f] for users, naming the case. *)
