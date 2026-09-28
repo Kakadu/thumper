@@ -28,6 +28,7 @@ module Cli = Thumper.Private.Cli
 module Config = Thumper.Private.Config
 module Env = Thumper.Private.Env
 module Metric = Thumper.Private.Metric
+module Report = Thumper.Private.Report
 module Run = Thumper.Private.Run
 module Verdict = Thumper.Private.Verdict
 
@@ -238,7 +239,7 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     ?(rerun_flags = []) ?(rerun_patterns = []) ?(strict = false)
     ?(cpu_model = "Test CPU") () =
   {
-    Cli.color;
+    Report.color;
     accept;
     exe;
     github;
@@ -536,10 +537,10 @@ let use_color_resolution () =
 
 let status_line_formats () =
   equal ~msg:"measuring" string "thumper: measuring 3/6 — busy/spin"
-    (Cli.status_line
+    (Report.status_line
        { Check.phase = `Measuring; index = 3; total = 6; case = "busy/spin" });
   equal ~msg:"confirming" string "thumper: confirming 1/2 — alloc/list"
-    (Cli.status_line
+    (Report.status_line
        { Check.phase = `Confirming; index = 1; total = 2; case = "alloc/list" })
 
 (* The acceptance-hint fork *)
@@ -597,7 +598,7 @@ let rerun_hint_reproduces_the_invocation () =
         trial ~alloc:(Some 71) (ties 5 1e-6) )
   in
   let out =
-    Cli.render_check
+    Report.check
       (ctx ~exe:(Some "my dir/bench.exe") ~baseline:"alt/base.thumper"
          ~rerun_flags:[ "--quick"; "--baseline alt/base.thumper"; "--tag lab" ]
          ())
@@ -607,7 +608,7 @@ let rerun_hint_reproduces_the_invocation () =
     "rerun:   'my dir/bench.exe' --quick --baseline alt/base.thumper --tag lab \
      \\\n\
     \           -f alpha\n";
-  let staged = Cli.render_check (ctx ~exe:None ()) v in
+  let staged = Report.check (ctx ~exe:None ()) v in
   is_true ~msg:"no rerun line under a rule action"
     (not (contains staged "rerun:"));
   assert_contains ~msg:"the failing id stays in the table" staged
@@ -633,7 +634,7 @@ let rerun_hint_wraps_within_80_columns () =
   (* One pasteable command: an item that would pass column 80 starts the
      next line behind a backslash, indented under the executable. *)
   let out =
-    Cli.render_check
+    Report.check
       (ctx ~exe:(Some "./_build/default/bench/bench_digest.exe")
          ~rerun_flags:[ "--quick"; "--baseline bench/digest.thumper" ]
          ())
@@ -650,7 +651,7 @@ let rerun_hint_wraps_at_exactly_80_columns () =
      80, backslash included, stays; one column more moves it down. *)
   let exe n = "./" ^ String.make n 'x' in
   let first_line n =
-    let out = Cli.render_check (ctx ~exe:(Some (exe n)) ()) (failing_cases 2) in
+    let out = Report.check (ctx ~exe:(Some (exe n)) ()) (failing_cases 2) in
     List.find (fun l -> contains l "rerun:") (String.split_on_char '\n' out)
   in
   equal ~msg:"80 columns: the item stays" string
@@ -663,10 +664,10 @@ let rerun_hint_wraps_at_exactly_80_columns () =
 let rerun_hint_names_at_most_ten_cases () =
   (* Ten failing cases are named; an eleventh turns the hint into the run's
      own selection. *)
-  let ten = Cli.render_check (ctx ()) (failing_cases 10) in
+  let ten = Report.check (ctx ()) (failing_cases 10) in
   assert_contains ~msg:"ten named" ten "-f case-10\n";
   let eleven =
-    Cli.render_check
+    Report.check
       (ctx ~rerun_patterns:[ "case"; "my case" ] ())
       (failing_cases 11)
   in
@@ -808,7 +809,7 @@ let mixed_run_renders_all_four_blocks () =
         (bcase "gamma", trial_for "gamma");
       ]
   in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 3 cases vs digest.thumper for machine testkey
@@ -829,7 +830,7 @@ let pass_run_renders_header_table_summary () =
   (* The report always prints — the silence-on-pass era is over. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -841,7 +842,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 
 let new_run_renders_proposed_rows_and_the_accept_prompt () =
   let v = new_fixture () in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
@@ -857,7 +858,7 @@ let a_proposed_metric_reads_as_proposed () =
      is proposed. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
   let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -873,7 +874,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 let mv_hint_replaces_promote_outside_dune () =
   let v = new_fixture () in
   let out =
-    Cli.render_check
+    Report.check
       (ctx ~wrote:true ~accept:"mv digest.thumper.corrected digest.thumper" ())
       v
   in
@@ -890,7 +891,7 @@ let loaded_run_warns_under_the_header () =
     verdict_of ~load:loaded ~decide_load:loaded ~file
       (bcase "alpha", trial (ties 5 2e-6))
   in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -910,7 +911,7 @@ let loaded_new_run_warns_beside_the_prompt () =
     verdict_of ~load:loaded ~decide_load:loaded
       (bcase "alpha", trial (ties 5 1e-6))
   in
-  let out = Cli.render_check (ctx ~wrote:true ()) v in
+  let out = Report.check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"prompt kept" out "accept:  dune promote";
   assert_contains ~msg:"load message beside the prompt" out
     "  warning: load 7.9 on 8 cores; prefer a quiet host before accepting";
@@ -919,7 +920,7 @@ let loaded_new_run_warns_beside_the_prompt () =
 
 let improvement_only_renders_the_accept_line () =
   let v = improved_fixture () in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -952,7 +953,7 @@ let within_budget_prints_its_interval () =
         (bcase "beta", trial (ties 5 1.03e-6));
       ]
   in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 2 cases vs digest.thumper for machine testkey
@@ -970,7 +971,7 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
      confirmation list in, and the cell names the reason — there is no -v. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let v = verdict_of ~file (bcase "alpha", trial (ties 5 2e-6)) in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -985,7 +986,7 @@ let exact_alloc_failure_names_the_alloc_side () =
   (* A case failing on alloc alone: the alloc-side detail carries the cell
      (the "REGRESSED alloc" form), integers with no interval. *)
   let v = exact_alloc_fail_fixture () in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -1017,7 +1018,7 @@ let per_column_time_unit_scaling () =
         (bcase "slow", trial ~k:1 (ties 5 3.3e-2));
       ]
   in
-  let out = Cli.render_check (ctx ()) v in
+  let out = Report.check (ctx ()) v in
   assert_contains ~msg:"fast cell in us" out "1.40 us";
   assert_contains ~msg:"slow cell in the same unit" out "33000.00 us";
   is_true ~msg:"no ms cell" (not (contains out " ms"))
@@ -1032,7 +1033,7 @@ let exact_alloc_prints_whole_words () =
         (bcase "beta", trial ~alloc:(Some 32730) (ties 5 1e-6));
       ]
   in
-  let out = Cli.render_check (ctx ~wrote:true ()) v in
+  let out = Report.check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"whole words" out "3,000 w";
   assert_contains ~msg:"grouped" out "32,730 w";
   let v =
@@ -1042,7 +1043,7 @@ let exact_alloc_prints_whole_words () =
         (bcase "beta", trial ~alloc:(Some 32730) (ties 5 1e-6));
       ]
   in
-  let out = Cli.render_check (ctx ~wrote:true ()) v in
+  let out = Report.check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"small counts" out "54 w";
   assert_contains ~msg:"the same cell beside a small count" out "32,730 w"
 
@@ -1069,7 +1070,7 @@ let sampled_alloc_scales_per_column () =
         (bcase "g", sampled 999_500.);
       ]
   in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
@@ -1090,7 +1091,7 @@ thumper: digest — no baseline for machine testkey (Test CPU)
         (bcase "b", sampled 1234.5);
       ]
   in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
@@ -1113,7 +1114,7 @@ let sampled_alloc_renders_approximate () =
       ]
   in
   let v = verdict_of (bcase "alpha", t) in
-  let out = Cli.render_check (ctx ~wrote:true ()) v in
+  let out = Report.check (ctx ~wrote:true ()) v in
   assert_contains ~msg:"approximate, scaled" out "~2.1 kw";
   is_true ~msg:"no alloc-side ci%" (not (contains out "kw \xc2\xb1"))
 
@@ -1125,7 +1126,7 @@ let measurement_warnings_render_after_the_table () =
       [ (m_wall, Run.Samples (sam (ties 5 1e-6))); (m_alloc, Run.Exact 54) ]
   in
   let v = verdict_of ~file (bcase "alpha", warned) in
-  expect (Cli.render_check (ctx ()) v)
+  expect (Report.check (ctx ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -1143,19 +1144,19 @@ let absent_columns_leave_no_gap () =
   in
   let alloc_only = Run.Trial.make ~k:8 [ (m_alloc, Run.Exact 54) ] in
   assert_contains ~msg:"no alloc column"
-    (Cli.render_check (ctx ()) (verdict_of (bcase "alpha", wall_only)))
+    (Report.check (ctx ()) (verdict_of (bcase "alpha", wall_only)))
     "\n  proposed  1.00 us  \xc2\xb10.0%  alpha\n";
   assert_contains ~msg:"no time column"
-    (Cli.render_check (ctx ()) (verdict_of (bcase "alpha", alloc_only)))
+    (Report.check (ctx ()) (verdict_of (bcase "alpha", alloc_only)))
     "\n  proposed  54 w  alpha\n"
 
 let github_annotations_on_confirmed_regressions () =
   let v = fail_fixture () in
-  let out = Cli.render_check (ctx ~github:true ()) v in
+  let out = Report.check (ctx ~github:true ()) v in
   assert_contains out
     "::error::alpha regressed: wall_time +100.0% [+100.0, +100.0], budget +5%\n";
   assert_contains ~msg:"exact"
-    (Cli.render_check (ctx ~github:true ()) (exact_alloc_fail_fixture ()))
+    (Report.check (ctx ~github:true ()) (exact_alloc_fail_fixture ()))
     "::error::alpha regressed: alloc_words 54 \xe2\x86\x92 71 w (exact)\n"
 
 let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
@@ -1166,7 +1167,7 @@ let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
     "\"relation\":\"regressed\"";
   equal ~msg:"exit code is 0 (absolute caps gate exact evidence only)" int 0
     (Verdict.exit_code v);
-  let out = Cli.render_check (ctx ~github:true ()) v in
+  let out = Report.check (ctx ~github:true ()) v in
   is_true ~msg:"no capital REGRESSED on an exit-0 run"
     (not (contains out "REGRESSED"));
   assert_contains ~msg:"the demonstrated relation stays visible" out
@@ -1184,7 +1185,7 @@ let cap_without_a_row_fixture ?file ?(cap = 64.) ?(count = 71) () =
 
 let a_cap_fails_a_first_run () =
   let v = cap_without_a_row_fixture () in
-  expect (Cli.render_check (ctx ~wrote:true ~github:true ()) v)
+  expect (Report.check (ctx ~wrote:true ~github:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — no baseline for machine testkey (Test CPU)
@@ -1202,7 +1203,7 @@ thumper: digest — no baseline for machine testkey (Test CPU)
 let a_cap_fails_a_new_row () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
   let v = cap_without_a_row_fixture ~file () in
-  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  expect (Report.check (ctx ~wrote:true ()) v)
   @@ __POS_OF__
        {|
 thumper: digest — 1 case vs digest.thumper for machine testkey
@@ -1217,21 +1218,20 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 |};
   equal ~msg:"exit 1" int 1 (Verdict.exit_code v);
   assert_contains ~msg:"a fractional cap"
-    (Cli.render_check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.5 ()))
+    (Report.check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.5 ()))
     "alloc 71 w, over its 64.5 w cap (exact)";
   assert_contains ~msg:"a fraction below six decimals"
-    (Cli.render_check (ctx ())
-       (cap_without_a_row_fixture ~file ~cap:64.0000001 ()))
+    (Report.check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.0000001 ()))
     "alloc 71 w, over its 64 w cap (exact)";
   (* Large counts and caps print grouped, never in exponent notation. *)
   let big cap = cap_without_a_row_fixture ~file ~cap ~count:1_234_568 () in
-  let out = Cli.render_check (ctx ~github:true ()) (big 1e6) in
+  let out = Report.check (ctx ~github:true ()) (big 1e6) in
   assert_contains ~msg:"cell, integral cap" out
     "alloc 1,234,568 w, over its 1,000,000 w cap (exact)";
   assert_contains ~msg:"annotation, integral cap" out
     "::error::alpha regressed: alloc_words 1,234,568 w, over its 1,000,000 w \
      cap (exact)";
-  let out = Cli.render_check (ctx ~github:true ()) (big 1234567.5) in
+  let out = Report.check (ctx ~github:true ()) (big 1234567.5) in
   assert_contains ~msg:"cell, fractional cap" out
     "alloc 1,234,568 w, over its 1,234,567.5 w cap (exact)";
   assert_contains ~msg:"annotation, fractional cap" out
@@ -1240,8 +1240,8 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 
 let color_uses_ansi_only_when_enabled () =
   let v = fail_fixture () in
-  let plain = Cli.render_check (ctx ()) v in
-  let colored = Cli.render_check (ctx ~color:true ()) v in
+  let plain = Report.check (ctx ()) v in
+  let colored = Report.check (ctx ~color:true ()) v in
   is_true ~msg:"no escapes when off" (not (contains plain "\027["));
   assert_contains ~msg:"red REGRESSED when on" colored "\027[31m";
   assert_contains ~msg:"red summary line" colored "\027[31m1 case:";
@@ -1249,7 +1249,7 @@ let color_uses_ansi_only_when_enabled () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
   assert_contains ~msg:"faint equivalent cell when on"
-    (Cli.render_check (ctx ~color:true ()) pass)
+    (Report.check (ctx ~color:true ()) pass)
     "\027[2mequivalent\027[0m"
 
 let summary_color_follows_the_exit_code () =
@@ -1264,13 +1264,13 @@ let summary_color_follows_the_exit_code () =
   equal ~msg:"strict exits 1" int 1 (Verdict.exit_code ~strict:true v);
   let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
   assert_contains ~msg:"green when every case passes"
-    (Cli.render_check (ctx ~color:true ()) pass)
+    (Report.check (ctx ~color:true ()) pass)
     "\027[32m1 case: 1 passed.\027[0m";
   assert_contains ~msg:"yellow without --strict"
-    (Cli.render_check (ctx ~color:true ()) v)
+    (Report.check (ctx ~color:true ()) v)
     "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m";
   assert_contains ~msg:"red under --strict, which the words say"
-    (Cli.render_check (ctx ~color:true ~strict:true ()) v)
+    (Report.check (ctx ~color:true ~strict:true ()) v)
     "\027[31m1 case: 0 passed, 1 inconclusive; failed under --strict.\027[0m"
 
 let summary_counts_proposed_cases () =
@@ -1283,11 +1283,9 @@ let summary_counts_proposed_cases () =
         (bcase "alpha", trial (ties 5 1e-6)); (bcase "beta", trial (ties 5 1e-6));
       ]
   in
-  assert_contains
-    (Cli.render_check (ctx ()) v)
-    "  2 cases: 1 passed, 1 proposed.\n";
+  assert_contains (Report.check (ctx ()) v) "  2 cases: 1 passed, 1 proposed.\n";
   assert_contains ~msg:"strict"
-    (Cli.render_check (ctx ~strict:true ()) v)
+    (Report.check (ctx ~strict:true ()) v)
     "  2 cases: 1 passed, 1 proposed; failed under --strict.\n"
 
 (* Main: validation, unlinks, list, exits *)
@@ -1383,7 +1381,7 @@ let a_stale_identity_with_a_control_byte_is_quoted () =
         [ wall_row "alpha" (ties 5 1e-6) ]
     in
     let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-    List.hd (String.split_on_char '\n' (Cli.render_check (ctx ()) v))
+    List.hd (String.split_on_char '\n' (Report.check (ctx ()) v))
   in
   let current = ident.Baseline.ocaml in
   equal ~msg:"an escape" string

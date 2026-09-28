@@ -826,6 +826,7 @@ module Private : sig
   module Env = Env
   module Measure = Measure
   module Metric = Metric'
+  module Report = Report
   module Run = Run'
   module Stats = Stats
   module Verdict = Verdict'

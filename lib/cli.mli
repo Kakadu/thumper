@@ -7,18 +7,19 @@
 
     {!main} reads the command line, the environment, the terminal and the file
     system, and composes {!Check}, {!Verdict}, {!Baseline} and {!Env} around
-    them. Every other value is a pure function that decides one thing {!main}
-    needs: {!parse} reads the command line; {!filter_of} and {!config_of} turn
-    the options into a selection and a configuration; {!use_color},
-    {!default_baseline_dir} and {!promotion_staged} interpret the environment;
-    {!status_line}, {!accept_command} and {!render_check} build printed text.
+    them, and prints the reports {!Report} builds. Every other value is a pure
+    function that decides one thing {!main} needs: {!parse} reads the command
+    line; {!filter_of} and {!config_of} turn the options into a selection and a
+    configuration; {!use_color}, {!default_baseline_dir} and {!promotion_staged}
+    interpret the environment; {!accept_command} builds the command of the
+    [accept:] line.
 
     The facade re-exports none of these values: [Thumper.run] calls {!main}, and
     the module is otherwise visible only as [Thumper.Private.Cli], outside the
     API. [Thumper.run]'s documentation in the facade is the user contract of the
     command line: its grammar, its report, its files, its streams and its exit
     codes. What it states is stable, and so is the summary's colour, which
-    follows the exit code ({!render_check}). What it leaves unstated may change:
+    follows the exit code ({!Report.check}). What it leaves unstated may change:
     the text of each message, the report's column widths, its other colours, and
     the wrapping of its [rerun:] line. *)
 
@@ -110,13 +111,6 @@ val use_color :
     action ({!promotion_staged}), and [no_color] whether [NO_COLOR] is set and
     non-empty. *)
 
-val status_line : Check.progress -> string
-(** [status_line p] is the text of the progress tick [p],
-    [thumper: <verb> <index>/<total> — <id>], where [<verb>] is [measuring] or
-    [confirming] for [p]'s phase. It holds no carriage return and no escape
-    sequence. {!main} prints it on stderr at each tick while [check] and [bless]
-    measure, when stderr is a terminal. *)
-
 (** {1:paths Paths and dune rule actions} *)
 
 val default_baseline_dir :
@@ -162,60 +156,6 @@ val accept_command :
     stays bare when it is non-empty and each of its bytes is an ASCII letter, a
     digit or one of [_ . / : @ % + = , -]; any other path is quoted by
     [Filename.quote]. *)
-
-(** {1:rendering Rendering the report} *)
-
-type render = {
-  color : bool;
-      (** Whether to style the report with ANSI escapes. Removing the escapes
-          from a styled report gives the unstyled one. *)
-  accept : string;
-      (** The command of the [accept:] line ({!accept_command}). *)
-  exe : string option;
-      (** The program the [rerun:] line runs, which {!render_check} quotes as
-          {!accept_command} quotes a path; [None] for no [rerun:] line. *)
-  github : bool;
-      (** Whether the report ends with one [::error::] line per metric that
-          fails its case. *)
-  baseline_path : string;
-      (** The baseline's path, which the header of a run against a current
-          section prints. *)
-  corrected_path : string;
-      (** The corrected file's path. {!render_check} does not read it; the path
-          it prints is the one in [accept]. *)
-  wrote_corrected : bool;
-      (** Whether the corrected file was written. The [accept:] line prints iff
-          it was. The load warning beside it prints when it was, the section is
-          missing or stale, and [Verdict.load] is loaded. *)
-  rerun_flags : string list;
-      (** The [rerun:] line's arguments before its selection, one item per flag
-          with its argument. {!render_check} prints them as given, so each
-          argument must already be quoted as {!accept_command} quotes a path. *)
-  rerun_patterns : string list;
-      (** The run's patterns. The [rerun:] line selects by them, quoted, in
-          place of the failing ids when more than 10 cases fail. *)
-  strict : bool;
-      (** Whether the run was given [--strict]. The summary's colour follows it,
-          and the summary ends with [; failed under --strict] when [--strict]
-          alone makes the exit code [1]. *)
-  cpu_model : string;
-      (** The host's CPU model, which the header names when this machine has no
-          section in the baseline. *)
-}
-(** The type for what {!render_check} needs besides the verdict. *)
-
-val render_check : render -> Verdict.t -> string
-(** [render_check r v] is the report of the [check] run judged as [v], ending in
-    a newline. Its load warning reports [Verdict.load v], the sample [v] was
-    judged under, and prints only when that sample is loaded.
-
-    The report and {!Verdict.exit_code} share one predicate,
-    {!Verdict.report_fails}. A metric reads [REGRESSED] iff it fails its case,
-    and then has an [::error::] line when [r.github]. A case counts as regressed
-    in the summary iff one of its metrics fails it. The [rerun:] line prints iff
-    [r.exe] is [Some _] and some case fails. The summary, which only a run
-    against a current section prints, is red iff
-    [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
 
 (** {1:running Running a command line} *)
 
@@ -267,10 +207,10 @@ val main :
     host under [--wait-quiet]. It then holds the measurement lock
     ({!Env.Lock.with_lock}) around {!Check.run_with}, whose own acquisition
     nests. It writes the [--json] file, then the corrected file when
-    {!Verdict.corrected} is [Some], prints {!render_check}'s report on stdout
-    and returns [Verdict.exit_code ~strict]. Its {!type:render} has [exe] set to
-    [argv.(0)], or [None] in a dune rule action; a path [argv.(0)] is made
-    absolute against the working directory, its directory is resolved with
+    {!Verdict.corrected} is [Some], prints {!Report.check}'s report on stdout
+    and returns [Verdict.exit_code ~strict]. Its {!type:Report.render} has [exe]
+    set to [argv.(0)], or [None] in a dune rule action; a path [argv.(0)] is
+    made absolute against the working directory, its directory is resolved with
     [Unix.realpath], and it is written [./<rel>] when it lies under the working
     directory, absolute otherwise. Its [rerun_flags] hold [--quick] or
     [--precise] when given, [--baseline] when [argv] gave one, and one [--tag]
@@ -283,5 +223,5 @@ val main :
     lock, samples the load, and stops on a loaded host unless [--force] is
     given, and then records the load through {!Verdict.bless}'s [annotations].
     It measures with {!Check.measure}, writes {!Verdict.bless}'s file as the
-    corrected file, prints its own report on stdout, built without
-    {!render_check}, and returns [0]. *)
+    corrected file, prints {!Report.bless}'s report on stdout, and returns [0].
+*)
