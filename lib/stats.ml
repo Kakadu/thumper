@@ -190,11 +190,8 @@ let u2_statistic x y =
     x;
   !u2
 
-(* Smaller exact tail of the null distribution at the observed U, as
-   (tail count, total count). The null's support is the integers, so a
-   half-integral (midrank) U has unambiguous tails: P(U <= u) = P(U <= floor u)
-   and P(U >= u) = P(U >= ceil u). Under ties this no-tie-correction
-   convention is the standard one, but only approximately level. *)
+(* The smaller exact tail at the observed U, as (tail count, total count).
+   [u2] is 2U, so [u2 / 2] is floor U and [(u2 + 1) / 2] is ceil U. *)
 let mw_tails x y =
   let m = Array.length x and n = Array.length y in
   let cum = mw_cum m n in
@@ -207,8 +204,8 @@ let mw_tails x y =
   in
   ((if Nat.compare lower upper <= 0 then lower else upper), total)
 
-(* Argument validation. Loud [Invalid_argument]s: a bad vector here is a bug
-   in the caller (measurement guarantees n >= 3 and finite samples). *)
+(* Argument validation. A bad vector is a bug in the caller: measurement
+   produces at least 3 finite samples. *)
 
 let check_length fn ~min_n v =
   let n = Array.length v in
@@ -239,9 +236,6 @@ let check_alpha fn ~max_ alpha =
   if not (alpha > 0. && alpha < max_) then
     invalid_arg (strf "Stats.%s: alpha %g not in ]0;%g[" fn alpha max_)
 
-(* Median of an already-sorted vector: central sample, or the midpoint of the
-   two central samples (same midpoint rule as the baseline file's stored
-   median). *)
 let median_of_sorted v =
   let n = Array.length v in
   if n land 1 = 1 then v.(n / 2) else (v.((n / 2) - 1) +. v.(n / 2)) /. 2.
@@ -266,16 +260,14 @@ let median_ci_sorted ~alpha v =
       if cmp_scaled sum ~alpha:half_alpha total <= 0 then largest (l + 1) sum
       else l
   in
-  let l =
-    max 1 (largest 0 Nat.zero)
-    (* l = 0: full range, coverage short *)
-  in
+  (* [largest] is 0 when no order statistic reaches the level, and [max 1]
+     then takes the full range. *)
+  let l = max 1 (largest 0 Nat.zero) in
   { lower = v.(l - 1); upper = v.(n - l) }
 
-(* Criterion's outlier-variance measure (ported from Brent Boyer's "Robust
-   Java benchmarking" via criterion): the minimal fraction of the sample
-   variance explainable by outlier contamination, computed from the sample
-   mean and (Bessel-corrected) standard deviation alone. Severe iff >= 0.5. *)
+(* Ported from Brent Boyer's "Robust Java benchmarking" via criterion, and
+   computed from the sample mean and the Bessel-corrected standard deviation
+   alone. *)
 let severe_outlier_inflation_sorted v =
   check_sorted "severe_outlier_inflation_sorted" ~min_n:3 v;
   if v.(0) < 0. then
@@ -351,10 +343,9 @@ let shift ~alpha_per_side ~baseline ~candidate =
   done;
   Array.sort Float.compare d;
   let estimate = median_of_sorted d in
-  (* Moses cutoff: k - 1 is the largest value at which the exact null CDF is
-     at most alpha_per_side, so each side misses with probability <= alpha.
-     [smallest_over 0] is the first index where the CDF exceeds it, which is
-     exactly k; clamp to 1 (full range) when even the extremes fall short. *)
+  (* The Moses cutoff [k] is the first count at which the exact null CDF
+     exceeds [alpha_per_side]; it is 0 when no order statistic reaches the
+     level, and [max 1] then takes the full range. *)
   let k =
     let cum = mw_cum m n in
     let total = cum.(mn) in
