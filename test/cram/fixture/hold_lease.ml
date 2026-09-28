@@ -22,7 +22,7 @@ let () =
         exit 2
   in
   match
-    Thumper.Private.Env.Lease.with_lease (fun () ->
+    Thumper.Private.Env.Lock.with_lock (fun () ->
         Out_channel.with_open_bin sentinel (fun _ -> ());
         while not (Sys.file_exists release) do
           Unix.sleepf 0.02
@@ -30,5 +30,5 @@ let () =
   with
   | Ok () -> ()
   | Error e ->
-      Format.eprintf "hold_lease: %a@." Thumper.Private.Env.Lease.pp_error e;
+      Format.eprintf "hold_lease: %a@." Thumper.Private.Env.Lock.pp_error e;
       exit 1

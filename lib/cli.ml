@@ -1140,8 +1140,8 @@ let write_json path doc =
     fail2 "cannot write %s: %s" path (Unix.error_message e)
 
 (* All measurement runs under the CLI's lease acquisition so the progress line
-   is ours; [Check]'s inner acquisition is reentrant (Env.Lease). *)
-let with_lease_progress f =
+   is ours; [Check]'s inner acquisition is reentrant (Env.Lock). *)
+let with_lock_progress f =
   let waiting = ref false in
   let on_wait ~owner_changed =
     if not !waiting then begin
@@ -1157,9 +1157,9 @@ let with_lease_progress f =
          holder ...\n\
          %!"
   in
-  match Env.Lease.with_lease ~on_wait f with
+  match Env.Lock.with_lock ~on_wait f with
   | Ok v -> v
-  | Error e -> fail2 "%s" (pp_str Env.Lease.pp_error e)
+  | Error e -> fail2 "%s" (pp_str Env.Lock.pp_error e)
 
 let checked f =
   try f () with Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
@@ -1292,7 +1292,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   let verdict =
     checked (fun () ->
         with_status (fun tick ->
-            with_lease_progress (fun () ->
+            with_lock_progress (fun () ->
                 Check.run_with ~on_progress:tick ~config ?budgets ?filter
                   ?baseline:file name benches)))
   in
@@ -1402,7 +1402,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   let run =
     checked (fun () ->
         with_status (fun tick ->
-            with_lease_progress (fun () ->
+            with_lock_progress (fun () ->
                 refuse_or_force ();
                 Check.measure ~on_progress:tick ~config ?filter benches)))
   in

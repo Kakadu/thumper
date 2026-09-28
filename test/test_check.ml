@@ -622,7 +622,7 @@ let selection_plumbs_full_vs_partial () =
 
 let lease_failure_surfaces_as_error () =
   (* An unusable lock file is the deterministic in-process lease failure: a
-     held lock cannot be planted from this process ([Env.Lease.with_lease] is
+     held lock cannot be planted from this process ([Env.Lock.with_lock] is
      reentrant regardless of directory), so [Timeout] needs a second process
      — the CLI cram suite's territory. Here the lock path is a directory:
      opening it can never succeed. *)
@@ -638,7 +638,7 @@ let lease_failure_surfaces_as_error () =
       let w = world () in
       let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
       let is_unusable = function
-        | Check.Lease (Env.Lease.Unusable _) -> true
+        | Check.Lock (Env.Lock.Unusable _) -> true
         | _ -> false
       in
       check_error is_unusable (fun () ->

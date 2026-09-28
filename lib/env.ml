@@ -216,7 +216,7 @@ let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?gate:(sample = gate) () =
 
 (* The measurement lease *)
 
-module Lease = struct
+module Lock = struct
   type error =
     | Timeout of { path : string; wait_s : float }
     | Unusable of string
@@ -398,12 +398,12 @@ module Lease = struct
      with Unix.Unix_error _ -> ());
     try Unix.close fd with Unix.Unix_error _ -> ()
 
-  let with_lease ?dir ?(wait_s = default_wait_s) ?on_wait f =
+  let with_lock ?dir ?(wait_s = default_wait_s) ?on_wait f =
     if not (wait_s >= 0.) then
       invalid_arg
         (Printf.sprintf
-           "Thumper.Env.Lease.with_lease: wait_s %g (need a non-negative wait \
-            in seconds)"
+           "Thumper.Env.Lock.with_lock: wait_s %g (need a non-negative wait in \
+            seconds)"
            wait_s);
     if !held then (* Reentrant: this process holds the lease (.mli). *)
       Ok (f ())

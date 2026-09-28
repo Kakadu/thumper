@@ -20,7 +20,7 @@
     run. The CLI maps every case to exit 2. *)
 
 type error =
-  | Lease of Env.Lease.error
+  | Lock of Env.Lock.error
       (** The measurement lease timed out or its lock file is unusable. *)
   | Measurement of Measure.failure
       (** A case could not be measured — dead worker, raising closure, or blown
@@ -104,8 +104,8 @@ val run :
       {!Error} [(Invalid_suite _)], an empty selection {!Error}
       [Empty_selection]. A selection covering every resolved case is judged
       [`Full] (licensing [Verdict]'s prune rule), anything narrower [`Partial].
-    + {b Lease.} Everything below runs under {!Env.Lease.with_lease};
-      acquisition failure is {!Error} [(Lease _)].
+    + {b Lock.} Everything below runs under {!Env.Lock.with_lock}; acquisition
+      failure is {!Error} [(Lock _)].
     + {b Gate.} The environment gate is sampled and fed to [Verdict.judge]
       (sampled at run start and again before the confirmation queue).
     + {b Measurement sweep.} Each selected case is measured by {!Measure.case}

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 type error =
-  | Lease of Env.Lease.error
+  | Lock of Env.Lock.error
   | Measurement of Measure.failure
   | Empty_selection
   | Invalid_suite of Bench.error
@@ -12,7 +12,7 @@ type error =
 exception Error of error
 
 let pp_error ppf = function
-  | Lease e -> Env.Lease.pp_error ppf e
+  | Lock e -> Env.Lock.pp_error ppf e
   | Measurement f -> Measure.pp_failure ppf f
   | Empty_selection ->
       Format.pp_print_string ppf "no case matches the selection"
@@ -72,8 +72,8 @@ let measured ?instruments ~config ~frozen_k case =
   | Ok trial -> trial
   | Error f -> error (Measurement f)
 
-let under_lease f =
-  match Env.Lease.with_lease f with Ok v -> v | Error e -> error (Lease e)
+let under_lock f =
+  match Env.Lock.with_lock f with Ok v -> v | Error e -> error (Lock e)
 
 (* One tick per case, before it is measured (.mli): the consumer names the
    case currently holding the run, never one already done. *)
@@ -86,7 +86,7 @@ let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
     select ?filter ~metrics:config.Config.metrics ~budgets:[] benches
   in
   let total = List.length selected in
-  under_lease (fun () ->
+  under_lock (fun () ->
       Run.create
         (List.mapi
            (fun i case ->
@@ -126,7 +126,7 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
   (* Batch sizes are frozen from the section judgment compares against: a
      stale one is re-recorded from this run, so it pins nothing. *)
   let section = Verdict.compared_section ~identity file in
-  under_lease (fun () ->
+  under_lock (fun () ->
       let start_gate = sample_gate () in
       let total = List.length selected in
       let cases =

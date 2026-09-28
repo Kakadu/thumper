@@ -9,9 +9,9 @@
     section this host owns ({!machine_key}), the header lines that describe it
     ({!host_description}, {!ocaml_identity}), whether the host is quiet enough
     to measure ({!gate}, {!wait_quiet}), and the per-user lease that serializes
-    measurement ({!Lease}). Knows nothing about baselines or verdicts:
-    [Baseline] renders the identity strings into section headers, and [Check]
-    samples the gate and holds the lease around measurement. *)
+    measurement ({!Lock}). Knows nothing about baselines or verdicts: [Baseline]
+    renders the identity strings into section headers, and [Check] samples the
+    gate and holds the lease around measurement. *)
 
 (** {1:identity Identity} *)
 
@@ -167,12 +167,12 @@ val wait_quiet :
     [THUMPER_LOCK_DIR] at a shared sticky (1777) directory, or keep an external
     lock (dune [(locks)] covers one workspace). *)
 
-module Lease : sig
+module Lock : sig
   (** The type for lease failures. Both cases are environmental — misuse of the
-      API itself raises [Invalid_argument] instead ({!with_lease}). *)
+      API itself raises [Invalid_argument] instead ({!with_lock}). *)
   type error =
     | Timeout of { path : string; wait_s : float }
-        (** No holder released within its {!with_lease}[ ~wait_s] bound. A
+        (** No holder released within its {!with_lock}[ ~wait_s] bound. A
             measurement that could not be serialized is worse than none: the CLI
             maps this to exit 2. *)
     | Unusable of string
@@ -184,13 +184,13 @@ module Lease : sig
   val pp_error : Format.formatter -> error -> unit
   (** [pp_error ppf e] formats [e] for users, in the CLI's error style. *)
 
-  val with_lease :
+  val with_lock :
     ?dir:string ->
     ?wait_s:float ->
     ?on_wait:(owner_changed:bool -> unit) ->
     (unit -> 'a) ->
     ('a, error) result
-  (** [with_lease f] runs [f ()] holding the per-user measurement lease and is
+  (** [with_lock f] runs [f ()] holding the per-user measurement lease and is
       [Ok (f ())]; the lease is released when [f] returns {e and} when it raises
       (the exception propagates). The lease is [lockf] ([fcntl]) on
       [<dir>/thumper-<euid>.lock], created [0600] and refused unless it is a
@@ -218,7 +218,7 @@ module Lease : sig
       [true] exactly when the holder stamp changed since the previous attempt.
       It is never called when the lease is free.
 
-      Nested calls in the {e same process} are reentrant: an inner [with_lease]
+      Nested calls in the {e same process} are reentrant: an inner [with_lock]
       (regardless of [dir]) runs [f] directly under the already held lease. This
       is forced by [fcntl] semantics — a second OS-level acquisition by the same
       process would silently succeed, and closing its descriptor would drop the

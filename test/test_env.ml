@@ -362,9 +362,9 @@ let lock_path dir =
 
 let expect_unusable ?sub result =
   match result with
-  | Ok _ -> fail "lease was acquired; expected Unusable"
-  | Error (Env.Lease.Timeout _) -> fail "expected Unusable, got Timeout"
-  | Error (Env.Lease.Unusable msg) -> (
+  | Ok _ -> fail "lock was acquired; expected Unusable"
+  | Error (Env.Lock.Timeout _) -> fail "expected Unusable, got Timeout"
+  | Error (Env.Lock.Unusable msg) -> (
       match sub with
       | None -> ()
       | Some sub ->
@@ -374,124 +374,124 @@ let expect_unusable ?sub result =
 let expect_ok result =
   match result with
   | Ok v -> v
-  | Error e -> failf "lease not acquired: %a" Env.Lease.pp_error e
+  | Error e -> failf "lock not acquired: %a" Env.Lock.pp_error e
 
-let with_lease_runs_f_and_returns_its_value () =
+let with_lock_runs_f_and_returns_its_value () =
   let dir = fresh_dir () in
-  equal int 42 (expect_ok (Env.Lease.with_lease ~dir (fun () -> 42)))
+  equal int 42 (expect_ok (Env.Lock.with_lock ~dir (fun () -> 42)))
 
 let lock_file_is_0600_at_the_euid_path () =
   let dir = fresh_dir () in
   let path = lock_path dir in
   expect_ok
-    (Env.Lease.with_lease ~dir (fun () ->
+    (Env.Lock.with_lock ~dir (fun () ->
          let st = Unix.stat path in
          is_true ~msg:"regular file" (st.Unix.st_kind = Unix.S_REG);
          equal ~msg:"mode 0600" int 0o600 st.Unix.st_perm));
   is_true ~msg:"lock file persists after release (unlinking would race)"
     (Sys.file_exists path)
 
-let lease_releases_on_return () =
+let lock_releases_on_return () =
   let dir = fresh_dir () in
-  expect_ok (Env.Lease.with_lease ~dir (fun () -> ()));
-  expect_ok (Env.Lease.with_lease ~dir (fun () -> ()))
+  expect_ok (Env.Lock.with_lock ~dir (fun () -> ()));
+  expect_ok (Env.Lock.with_lock ~dir (fun () -> ()))
 
-let lease_releases_on_exception () =
+let lock_releases_on_exception () =
   let dir = fresh_dir () in
   raises (Failure "boom") (fun () ->
-      Env.Lease.with_lease ~dir (fun () -> failwith "boom"));
-  expect_ok (Env.Lease.with_lease ~dir (fun () -> ()))
+      Env.Lock.with_lock ~dir (fun () -> failwith "boom"));
+  expect_ok (Env.Lock.with_lock ~dir (fun () -> ()))
 
 (* Pinned: nested acquisition in the same process is reentrant — the inner
    call runs its thunk under the already held lease (fcntl locks are
    per-process; an inner OS-level release would silently drop the outer
    lock). Cross-process exclusion is cram. *)
-let lease_is_reentrant_in_process () =
+let lock_is_reentrant_in_process () =
   let dir = fresh_dir () in
   let nested =
-    Env.Lease.with_lease ~dir (fun () ->
-        expect_ok (Env.Lease.with_lease ~dir (fun () -> 1)))
+    Env.Lock.with_lock ~dir (fun () ->
+        expect_ok (Env.Lock.with_lock ~dir (fun () -> 1)))
   in
   equal int 1 (expect_ok nested);
   (* The outer release actually released. *)
-  expect_ok (Env.Lease.with_lease ~dir (fun () -> ()))
+  expect_ok (Env.Lock.with_lock ~dir (fun () -> ()))
 
 let on_wait_is_not_called_when_free () =
   let dir = fresh_dir () in
   let calls = ref 0 in
   expect_ok
-    (Env.Lease.with_lease ~dir
+    (Env.Lock.with_lock ~dir
        ~on_wait:(fun ~owner_changed:_ -> incr calls)
        (fun () -> ()));
   equal ~msg:"no waiting happened" int 0 !calls
 
 (* A symlink to an existing file opens (no O_NOFOLLOW in OCaml's Unix) but is
    refused by the lstat validation; nothing is created or written. *)
-let lease_refuses_a_symlink () =
+let lock_refuses_a_symlink () =
   let dir = fresh_dir () in
   let target = Filename.concat dir "target" in
   Unix.close (Unix.openfile target [ Unix.O_CREAT; Unix.O_WRONLY ] 0o600);
   Unix.symlink "target" (lock_path dir);
   expect_unusable ~sub:"not one stable regular file"
-    (Env.Lease.with_lease ~dir (fun () -> ()))
+    (Env.Lock.with_lock ~dir (fun () -> ()))
 
 (* The classic sticky-/tmp attack: a planted dangling symlink must not make
    the open create the attacker-chosen target with our credentials — creation
    happens only under O_EXCL, which fails on a symlink even when it dangles. *)
-let lease_never_creates_through_a_symlink () =
+let lock_never_creates_through_a_symlink () =
   let dir = fresh_dir () in
   let target = Filename.concat dir "planted-target" in
   Unix.symlink "planted-target" (lock_path dir);
-  expect_unusable ~sub:"cannot open" (Env.Lease.with_lease ~dir (fun () -> ()));
+  expect_unusable ~sub:"cannot open" (Env.Lock.with_lock ~dir (fun () -> ()));
   is_false ~msg:"the symlink's target was not created" (Sys.file_exists target)
 
-let lease_refuses_a_fifo () =
+let lock_refuses_a_fifo () =
   let dir = fresh_dir () in
   Unix.mkfifo (lock_path dir) 0o600;
   expect_unusable ~sub:"not one stable regular file"
-    (Env.Lease.with_lease ~dir (fun () -> ()))
+    (Env.Lock.with_lock ~dir (fun () -> ()))
 
-let lease_refuses_broad_permissions () =
+let lock_refuses_broad_permissions () =
   let dir = fresh_dir () in
   let path = lock_path dir in
   Unix.close (Unix.openfile path [ Unix.O_CREAT; Unix.O_WRONLY ] 0o600);
   Unix.chmod path 0o666;
   expect_unusable ~sub:"permissions are broader than 0600"
-    (Env.Lease.with_lease ~dir (fun () -> ()))
+    (Env.Lock.with_lock ~dir (fun () -> ()))
 
-let lease_missing_directory_is_unusable () =
+let lock_missing_directory_is_unusable () =
   expect_unusable ~sub:"cannot open"
-    (Env.Lease.with_lease ~dir:"no-such-directory" (fun () -> ()))
+    (Env.Lock.with_lock ~dir:"no-such-directory" (fun () -> ()))
 
 let lock_dir_env_names_the_directory () =
   let dir = fresh_dir () in
   setenv "THUMPER_LOCK_DIR" (Some dir);
-  expect_ok (Env.Lease.with_lease (fun () -> ()));
+  expect_ok (Env.Lock.with_lock (fun () -> ()));
   is_true ~msg:"lock file created under THUMPER_LOCK_DIR"
     (Sys.file_exists (lock_path dir))
 
 let explicit_dir_wins_over_the_env () =
   let env_dir = fresh_dir () and dir = fresh_dir () in
   setenv "THUMPER_LOCK_DIR" (Some env_dir);
-  expect_ok (Env.Lease.with_lease ~dir (fun () -> ()));
+  expect_ok (Env.Lock.with_lock ~dir (fun () -> ()));
   is_true ~msg:"lock file created under ~dir" (Sys.file_exists (lock_path dir));
   is_false ~msg:"THUMPER_LOCK_DIR was not consulted"
     (Sys.file_exists (lock_path env_dir))
 
-let with_lease_rejects_negative_wait () =
+let with_lock_rejects_negative_wait () =
   raises
     (Invalid_argument
-       "Thumper.Env.Lease.with_lease: wait_s -1 (need a non-negative wait in \
+       "Thumper.Env.Lock.with_lock: wait_s -1 (need a non-negative wait in \
         seconds)") (fun () ->
-      Env.Lease.with_lease ~dir:(fresh_dir ()) ~wait_s:(-1.) (fun () -> ()))
+      Env.Lock.with_lock ~dir:(fresh_dir ()) ~wait_s:(-1.) (fun () -> ()))
 
 let pp_error_pins () =
   equal ~msg:"Timeout" string
     "timed out after 600s waiting for the measurement lock /t/x.lock"
-    (Format.asprintf "%a" Env.Lease.pp_error
-       (Env.Lease.Timeout { path = "/t/x.lock"; wait_s = 600. }));
+    (Format.asprintf "%a" Env.Lock.pp_error
+       (Env.Lock.Timeout { path = "/t/x.lock"; wait_s = 600. }));
   equal ~msg:"Unusable" string "measurement lock unusable: boom"
-    (Format.asprintf "%a" Env.Lease.pp_error (Env.Lease.Unusable "boom"))
+    (Format.asprintf "%a" Env.Lock.pp_error (Env.Lock.Unusable "boom"))
 
 let () =
   run "env"
@@ -579,34 +579,34 @@ let () =
                     ~gate:(fun () -> Env.Quiet)
                     ()));
         ];
-      group "lease"
+      group "lock"
         [
-          test "runs f under the lease and returns its value"
-            with_lease_runs_f_and_returns_its_value;
+          test "runs f under the lock and returns its value"
+            with_lock_runs_f_and_returns_its_value;
           test "creates the lock file 0600 at <dir>/thumper-<euid>.lock"
             lock_file_is_0600_at_the_euid_path;
-          test "releases on return and can reacquire" lease_releases_on_return;
+          test "releases on return and can reacquire" lock_releases_on_return;
           test "releases when f raises and propagates the exception"
-            lease_releases_on_exception;
+            lock_releases_on_exception;
           test "nested acquisition in-process is reentrant"
-            lease_is_reentrant_in_process;
+            lock_is_reentrant_in_process;
           test "on_wait is not called on a free acquisition"
             on_wait_is_not_called_when_free;
-          test "refuses a symlinked lock file" lease_refuses_a_symlink;
+          test "refuses a symlinked lock file" lock_refuses_a_symlink;
           test "never creates a file through a planted symlink"
-            lease_never_creates_through_a_symlink;
+            lock_never_creates_through_a_symlink;
           test ~timeout:5. "refuses a non-regular lock file (fifo)"
-            lease_refuses_a_fifo;
+            lock_refuses_a_fifo;
           test "refuses permissions broader than 0600"
-            lease_refuses_broad_permissions;
+            lock_refuses_broad_permissions;
           test "a missing lock directory is Unusable"
-            lease_missing_directory_is_unusable;
+            lock_missing_directory_is_unusable;
           test "THUMPER_LOCK_DIR names the lock directory"
             lock_dir_env_names_the_directory;
           test "an explicit dir wins over THUMPER_LOCK_DIR"
             explicit_dir_wins_over_the_env;
           test "rejects a negative wait with the value"
-            with_lease_rejects_negative_wait;
+            with_lock_rejects_negative_wait;
           test "pp_error renders both cases" pp_error_pins;
         ];
     ]
