@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Integration tests for [Check]: the full loop driven through its two seams — [instruments]
-   scripts every clock read, [gate] scripts the environment predicate — so a
+   scripts every clock read, [load] scripts the environment predicate — so a
    planted regression confirms, a planted improvement pools 2n, and the gate
    sampling points are observable, all in-process ([Config.fork false]) with
    zero wall-clock dependence. [Check] is a private module of the library,
@@ -183,9 +183,9 @@ let contains ~sub s =
 
 let planted_regression_confirms () =
   let w = world () in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
     Env.Quiet
   in
   (* Baseline 1 ms/call at k = 8; candidate 2 ms/call: +100% against the 5%
@@ -193,7 +193,7 @@ let planted_regression_confirms () =
      (same speed) reproduces it. *)
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
@@ -202,9 +202,9 @@ let planted_regression_confirms () =
   equal ~msg:"exit code" int 1 (Verdict.exit_code v);
   equal ~msg:"suite name plumbs to the verdict" string "digest"
     (Verdict.suite v);
-  equal ~msg:"gate sampled at start and before the queue" int 2 !gate_samples;
+  equal ~msg:"load sampled at start and before the queue" int 2 !load_samples;
   is_true ~msg:"the verdict records the quiet re-sample"
-    (Verdict.gate v = Env.Quiet)
+    (Verdict.load v = Env.Quiet)
 
 let planted_improvement_pools_2n () =
   let w = world () in
@@ -212,7 +212,7 @@ let planted_improvement_pools_2n () =
      the decided relation carries both passes pooled at the frozen k. *)
   let baseline = baseline_of [ wall_row "a" (ties 4.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
@@ -235,7 +235,7 @@ let planted_improvement_pools_2n () =
 let no_section_is_all_new () =
   let w = world () in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
   (match Verdict.comparison v with
@@ -252,14 +252,14 @@ let no_section_is_all_new () =
 
 let loaded_gate_at_start_degrades () =
   let w = world () in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
     loaded ()
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
@@ -268,16 +268,16 @@ let loaded_gate_at_start_degrades () =
   check_overall ~msg:"a budgeted inconclusive metric" v `Inconclusive;
   equal ~msg:"exit 0 without --strict" int 0 (Verdict.exit_code v);
   equal ~msg:"nothing queued under load: the gate is not re-sampled" int 1
-    !gate_samples;
-  is_true ~msg:"the verdict records the start gate" (Verdict.gate v = loaded ())
+    !load_samples;
+  is_true ~msg:"the verdict records the start gate" (Verdict.load v = loaded ())
 
 let loaded_resample_degrades_the_queue () =
   let w = world () in
-  let gate_samples = ref 0 in
+  let load_samples = ref 0 in
   let calls_at_resample = ref (-1) in
-  let gate () =
-    incr gate_samples;
-    if !gate_samples = 1 then Env.Quiet
+  let load () =
+    incr load_samples;
+    if !load_samples = 1 then Env.Quiet
     else begin
       calls_at_resample := w.calls;
       loaded ()
@@ -285,18 +285,18 @@ let loaded_resample_degrades_the_queue () =
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
   in
   check_rel ~msg:"the pending regression degrades" v ~case:"a" ~metric:m_wall
     "inconclusive:environment";
   check_overall ~msg:"overall" v `Inconclusive;
-  equal ~msg:"gate re-sampled before the queue" int 2 !gate_samples;
+  equal ~msg:"load re-sampled before the queue" int 2 !load_samples;
   equal ~msg:"the queue is not measured under load" int !calls_at_resample
     w.calls;
   is_true ~msg:"the verdict records the loaded re-sample"
-    (Verdict.gate v = loaded ())
+    (Verdict.load v = loaded ())
 
 (* Progress ticks
 
@@ -320,7 +320,7 @@ let progress_ticks_both_sweeps () =
     baseline_of [ wall_row "a" (ties 1.0e-3); wall_row "b" (ties 1.0e-3) ]
   in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet
+    Check.run_with ~instruments:(scripted w) ~load:quiet
       ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
       ~config:base ~baseline "digest"
       [
@@ -337,14 +337,14 @@ let progress_ticks_both_sweeps () =
 let progress_skips_the_unmeasured_loaded_queue () =
   let w = world () in
   let ticks = ref [] in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
-    if !gate_samples = 1 then Env.Quiet else loaded ()
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
+    if !load_samples = 1 then Env.Quiet else loaded ()
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate
+    Check.run_with ~instruments:(scripted w) ~load
       ~on_progress:(fun p -> ticks := tick_str p :: !ticks)
       ~config:base ~baseline "digest"
       [ Bench.bench "a" (stepper w (constant_ns (2 * ms_ns))) ]
@@ -380,7 +380,7 @@ let sweep_freezes_the_rows_k () =
      proves the sweep passed the row's k to [Measure]. *)
   let baseline = baseline_of [ wall_row ~k:4 "a" (ties 1.0e-3) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
@@ -401,7 +401,7 @@ let a_stale_section_freezes_nothing () =
       [ wall_row ~k:4 "a" (ties 1.0e-3) ]
   in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
       ~baseline:stale "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
@@ -426,7 +426,7 @@ let freeze_reads_the_first_sampled_row () =
     ]
   in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config
       ~baseline:(baseline_of rows) "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
@@ -446,7 +446,7 @@ let freeze_skips_exact_rows () =
     ]
   in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
       ~baseline:(baseline_of rows) "digest"
       [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]
   in
@@ -460,20 +460,20 @@ let confirmation_runs_at_the_provisional_k () =
      case slows to 0.75 ms/call — a speed at which k = 32 still sits inside
      the reuse window (24 ms <= 25 ms) while both the row's k = 1 and free
      calibration would land at k = 8. A confirmed k of 32 therefore proves
-     the confirmation was frozen at the provisional trial's k. The [gate]
+     the confirmation was frozen at the provisional trial's k. The [load]
      seam is the observable between-sweeps hook: its second sample runs after
      judgment, before the confirmation queue. *)
   let slow = ref false in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
-    if !gate_samples >= 2 then slow := true;
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
+    if !load_samples >= 2 then slow := true;
     Env.Quiet
   in
   let step _call = if !slow then 750_000 else 300_000 in
   let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w step) ]
   in
@@ -492,16 +492,16 @@ let a_recalibrated_confirmation_is_unconfirmed () =
      k = 8. Its samples still show the regression, but samples at two batch
      sizes are never pooled: the relation is unconfirmed. *)
   let slow = ref false in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
-    if !gate_samples >= 2 then slow := true;
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
+    if !load_samples >= 2 then slow := true;
     Env.Quiet
   in
   let step _call = if !slow then ms_ns else 300_000 in
   let baseline = baseline_of [ wall_row ~k:1 "a" (ties 1.0e-4) ] in
   let v =
-    Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
       "digest"
       [ Bench.bench "a" (stepper w step) ]
   in
@@ -520,11 +520,11 @@ let empty_selection_is_an_error () =
   let bench () = Bench.bench "a" (stepper w (constant_ns ms_ns)) in
   let is_empty = function Check.Empty_selection -> true | _ -> false in
   check_error is_empty (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~filter:(`Or []) "digest"
         [ bench () ]);
   check_error is_empty (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
         []);
   check_error is_empty (fun () ->
       Check.measure ~instruments:(scripted w) ~config:base ~filter:(`Or [])
@@ -544,12 +544,12 @@ let duplicate_ids_are_invalid_suite () =
     | _ -> false
   in
   check_error is_dup (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
         (suite ()));
   (* Detected on the whole suite before filtering: a narrowed selection never
      masks a broken suite. *)
   check_error is_dup (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~filter:(`Id "b") "digest" (suite ()))
 
 let uncollected_budgets_are_invalid_suite () =
@@ -564,7 +564,7 @@ let uncollected_budgets_are_invalid_suite () =
           true
       | _ -> false)
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~budgets:[ Budget.no_more_alloc_than 0.01 ]
         "digest"
         [ bench () ]);
@@ -595,21 +595,21 @@ let selection_plumbs_full_vs_partial () =
     List.exists (fun s -> contains ~sub:"dead" s) (Verdict.warnings v)
   in
   let v_full =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       "digest"
       [ bench_a () ]
   in
   is_true ~msg:"a full selection notices the dead row" (has_prune_notice v_full);
   (* A filter matching every case is still a full selection. *)
   let v_all =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       ~filter:(`Id "") "digest"
       [ bench_a () ]
   in
   is_true ~msg:"an all-matching filter is a full selection"
     (has_prune_notice v_all);
   let v_partial =
-    Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base ~baseline
+    Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base ~baseline
       ~filter:(`Id "a") "digest"
       [ bench_a (); bench_b () ]
   in
@@ -642,7 +642,7 @@ let lease_failure_surfaces_as_error () =
         | _ -> false
       in
       check_error is_unusable (fun () ->
-          Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+          Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
             "digest"
             [ bench () ]);
       check_error is_unusable (fun () ->
@@ -660,7 +660,7 @@ let wrong_suite_raises_before_measuring () =
        "Check.run: baseline is for suite \"digest\", not \"other\"; pass this \
         suite's file, or update its '# suite:' header if the suite was renamed")
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~baseline "other"
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
   equal ~msg:"no case was measured" int 0 w.calls
@@ -675,7 +675,7 @@ let invalid_names_raise_before_measuring () =
         (Invalid_argument
            "Check.run: suite name must be non-empty and single-line (it heads \
             fresh baselines)") (fun () ->
-          Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base name
+          Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base name
             [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]))
     [ ""; "two\nlines" ];
   equal ~msg:"no case was measured" int 0 w.calls
@@ -688,7 +688,7 @@ let duplicate_budgets_raise_before_measuring () =
     (Invalid_argument
        "Check.run: two budgets for metric wall_time in one ~budgets list")
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         "digest"
         [ Bench.bench "a" (stepper w (constant_ns ms_ns)) ]);
@@ -708,7 +708,7 @@ let a_failing_case_aborts_the_run () =
           contains ~sub:"kaboom" exn
       | _ -> false)
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base "digest"
+      Check.run_with ~instruments:(scripted w) ~load:quiet ~config:base "digest"
         suite)
 
 let a_failing_confirmation_aborts_the_run () =
@@ -721,10 +721,10 @@ let a_failing_confirmation_aborts_the_run () =
      hook that arms the failure. *)
   let w = world () in
   let armed = ref false in
-  let gate_samples = ref 0 in
-  let gate () =
-    incr gate_samples;
-    if !gate_samples >= 2 then armed := true;
+  let load_samples = ref 0 in
+  let load () =
+    incr load_samples;
+    if !load_samples >= 2 then armed := true;
     Env.Quiet
   in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
@@ -739,9 +739,9 @@ let a_failing_confirmation_aborts_the_run () =
           contains ~sub:"confirmation kaboom" exn
       | _ -> false)
     (fun () ->
-      Check.run_with ~instruments:(scripted w) ~gate ~config:base ~baseline
+      Check.run_with ~instruments:(scripted w) ~load ~config:base ~baseline
         "digest" [ case ]);
-  equal ~msg:"the failure came from the second sweep" int 2 !gate_samples
+  equal ~msg:"the failure came from the second sweep" int 2 !load_samples
 
 (* Measuring (the numbers path) *)
 

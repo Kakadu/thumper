@@ -169,7 +169,7 @@ let load_average () = Thumper_clock.load_average ()
    the default threshold pending validation). *)
 let load_threshold = 0.5
 
-type gate = Quiet | Loaded of { load : float; cores : int }
+type load = Quiet | Loaded of { load : float; cores : int }
 
 let classify ~load ~cores =
   if cores < 1 then
@@ -180,14 +180,14 @@ let classify ~load ~cores =
       Loaded { load; cores }
   | Some _ | None -> Quiet
 
-let gate () = classify ~load:(load_average ()) ~cores:(cores ())
+let load () = classify ~load:(load_average ()) ~cores:(cores ())
 
 (* wait_quiet poll cadence: the kernel recomputes the 1-minute load average on
    a multi-second cadence, so sub-second polling is wasted work; 1 s keeps the
    overshoot negligible against the minutes-long decay being waited out. *)
 let default_poll_s = 1.0
 
-let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?gate:(sample = gate) () =
+let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?load:(sample = load) () =
   if not (timeout_s >= 0.) then
     invalid_arg
       (Printf.sprintf

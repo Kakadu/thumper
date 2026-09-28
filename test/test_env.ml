@@ -207,18 +207,18 @@ let host_description_shape () =
 
 (* The environment gate *)
 
-let pp_gate ppf = function
+let pp_load ppf = function
   | Env.Quiet -> Format.pp_print_string ppf "Quiet"
   | Env.Loaded { load; cores } ->
       Format.fprintf ppf "Loaded {load=%g; cores=%d}" load cores
 
-let gate_t : Env.gate testable = Testable.structural ~pp:pp_gate
+let load_t : Env.load testable = Testable.structural ~pp:pp_load
 let quiet = Env.Quiet
 let loaded load cores = Env.Loaded { load; cores }
 
 (* Loaded iff load / cores >= 1/2, at the boundary from both sides and
    across core counts; the Loaded payload carries the readings verbatim. *)
-let gate_table =
+let load_table =
   [
     (None, 1, quiet);
     (None, 128, quiet);
@@ -247,10 +247,10 @@ let load_average_reports_non_negative () =
   | None -> skip ~reason:"getloadavg unavailable on this host" ()
   | Some l -> is_true ~msg:"non-negative" (l >= 0.)
 
-let gate_smoke () =
+let load_smoke () =
   (* The live composition: only sanity is assertable (the host's load is not
      ours to script); the arithmetic is pinned through [classify] above. *)
-  match Env.gate () with
+  match Env.load () with
   | Env.Quiet -> ()
   | Env.Loaded { load; cores } ->
       is_true ~msg:"load non-negative" (load >= 0.);
@@ -264,7 +264,7 @@ let timeout_t : [ `Timeout ] testable =
 
 let wq_t = result unit timeout_t
 
-let counting_gate script =
+let counting_load script =
   let count = ref 0 and remaining = ref script in
   let sample () =
     incr count;
@@ -285,33 +285,33 @@ let always_loaded () =
   (count, sample)
 
 let wait_quiet_returns_when_quiet () =
-  let count, sample = counting_gate [] in
-  equal wq_t (Ok ()) (Env.wait_quiet ~timeout_s:0. ~gate:sample ());
+  let count, sample = counting_load [] in
+  equal wq_t (Ok ()) (Env.wait_quiet ~timeout_s:0. ~load:sample ());
   equal ~msg:"sampled exactly once" int 1 !count
 
 let wait_quiet_samples_once_at_zero_timeout () =
   let count, sample = always_loaded () in
-  equal wq_t (Error `Timeout) (Env.wait_quiet ~timeout_s:0. ~gate:sample ());
+  equal wq_t (Error `Timeout) (Env.wait_quiet ~timeout_s:0. ~load:sample ());
   equal ~msg:"sampled exactly once" int 1 !count
 
 let wait_quiet_polls_until_the_gate_opens () =
-  let count, sample = counting_gate [ loaded 8. 4; loaded 8. 4 ] in
+  let count, sample = counting_load [ loaded 8. 4; loaded 8. 4 ] in
   equal wq_t (Ok ())
-    (Env.wait_quiet ~timeout_s:5. ~poll_s:0.001 ~gate:sample ());
+    (Env.wait_quiet ~timeout_s:5. ~poll_s:0.001 ~load:sample ());
   equal ~msg:"two loaded polls then quiet" int 3 !count
 
 (* Pins the validation edge the .mli promises: [infinity] is a legal timeout
    (waits without bound), and the loop still returns when the gate opens. *)
 let wait_quiet_accepts_an_unbounded_timeout () =
-  let count, sample = counting_gate [ loaded 8. 4 ] in
+  let count, sample = counting_load [ loaded 8. 4 ] in
   equal wq_t (Ok ())
-    (Env.wait_quiet ~timeout_s:infinity ~poll_s:0.001 ~gate:sample ());
+    (Env.wait_quiet ~timeout_s:infinity ~poll_s:0.001 ~load:sample ());
   equal ~msg:"one loaded poll then quiet" int 2 !count
 
 let wait_quiet_times_out_while_loaded () =
   let count, sample = always_loaded () in
   equal wq_t (Error `Timeout)
-    (Env.wait_quiet ~timeout_s:0.01 ~poll_s:0.002 ~gate:sample ());
+    (Env.wait_quiet ~timeout_s:0.01 ~poll_s:0.002 ~load:sample ());
   is_true ~msg:"kept polling until the deadline" (!count >= 2)
 
 let wait_quiet_rejects_negative_timeout () =
@@ -325,7 +325,7 @@ let wait_quiet_rejects_bad_poll () =
     (Invalid_argument
        "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval \
         in seconds)") (fun () ->
-      Env.wait_quiet ~timeout_s:0. ~poll_s:0. ~gate:(fun () -> Env.Quiet) ())
+      Env.wait_quiet ~timeout_s:0. ~poll_s:0. ~load:(fun () -> Env.Quiet) ())
 
 (* The measurement lease, single-process surface. *)
 
@@ -529,16 +529,16 @@ let () =
           test "host description is hostname · cpu · arch · os"
             host_description_shape;
         ];
-      group "gate"
+      group "load"
         [
           cases
             ~name:(fun (load, cores, _) ->
               match load with
               | None -> Printf.sprintf "no load, %d cores" cores
               | Some l -> Printf.sprintf "load %g, %d cores" l cores)
-            "classify trips at load / cores >= 1/2" gate_table
+            "classify trips at load / cores >= 1/2" load_table
             (fun (load, cores, expected) ->
-              equal gate_t expected (Env.classify ~load ~cores));
+              equal load_t expected (Env.classify ~load ~cores));
           test "classify rejects cores < 1 with the value"
             classify_rejects_no_cores;
           cases ~name:string_of_int "classify rejects cores < 1" [ 0; -1; -8 ]
@@ -548,7 +548,7 @@ let () =
           test "cores is at least one" cores_is_at_least_one;
           test "load average is non-negative when readable"
             load_average_reports_non_negative;
-          test "gate composes the live readings" gate_smoke;
+          test "load composes the live readings" load_smoke;
         ];
       group "wait_quiet"
         [
@@ -576,7 +576,7 @@ let () =
             [ 0.; -0.5; nan; infinity ] (fun poll_s ->
               raises_match Exn.invalid_arg (fun () ->
                   Env.wait_quiet ~timeout_s:0. ~poll_s
-                    ~gate:(fun () -> Env.Quiet)
+                    ~load:(fun () -> Env.Quiet)
                     ()));
         ];
       group "lock"

@@ -75,21 +75,21 @@ let section_of ?(machine = "testmachine") file =
 
 let empty_file = Result.get_ok (Baseline.of_string "")
 
-let judge ?(gate = Env.Quiet) ?(selection = `Full) ?(budgets = [])
+let judge ?(load = Env.Quiet) ?(selection = `Full) ?(budgets = [])
     ?(file = empty_file) cases =
-  Verdict.judge ~identity:ident ~suite:"digest" ~gate ~selection ~budgets
+  Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets
     ~file ~cases
 
 (* Judge, confirm via [confirm : id -> Trial.t option], decide. *)
-let run_check ?gate ?selection ?budgets ?file ?(decide_gate = Env.Quiet)
+let run_check ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
     ?(confirm = fun _ -> None) cases =
-  let p = judge ?gate ?selection ?budgets ?file cases in
+  let p = judge ?load ?selection ?budgets ?file cases in
   let confirmations =
     List.filter_map
       (fun id -> Option.map (fun t -> (id, t)) (confirm id))
       (Verdict.confirmations p)
   in
-  Verdict.decide ~gate:decide_gate ~confirmations p
+  Verdict.decide ~load:decide_load ~confirmations p
 
 let report t ~case ~metric =
   let c =
@@ -415,11 +415,11 @@ let decide_rejects_unrequested_or_duplicate_ids () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let p = judge ~file [ (bcase "a", wall_trial (ties 5 2.0)) ] in
   invalid (fun () ->
-      Verdict.decide ~gate:Env.Quiet
+      Verdict.decide ~load:Env.Quiet
         ~confirmations:[ ("nope", wall_trial (ties 5 2.0)) ]
         p);
   invalid (fun () ->
-      Verdict.decide ~gate:Env.Quiet
+      Verdict.decide ~load:Env.Quiet
         ~confirmations:
           [ ("a", wall_trial (ties 5 2.0)); ("a", wall_trial (ties 5 2.0)) ]
         p)
@@ -536,7 +536,7 @@ let loaded_gate_degrades_sampled_but_not_exact () =
       (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let t =
-    run_check ~gate:loaded
+    run_check ~load:loaded
       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
       ~file
       [
@@ -557,14 +557,14 @@ let loaded_gate_degrades_sampled_but_not_exact () =
 let loaded_gate_queues_no_confirmations () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let p =
-    judge ~gate:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ]
+    judge ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ]
   in
   equal (list string) [] (Verdict.confirmations p)
 
 let loaded_gate_at_decide_degrades_pendings () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
-    run_check ~file ~decide_gate:loaded
+    run_check ~file ~decide_load:loaded
       ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
       [ (bcase "a", wall_trial (ties 5 2.0)) ]
   in
@@ -576,7 +576,7 @@ let evidence_shape_reasons_survive_a_loaded_gate () =
      the nondeterministic allocation) does not involve waiting for quiet. *)
   let file = file_of [ alloc_row "a" 54 ] in
   let t =
-    run_check ~gate:loaded ~file
+    run_check ~load:loaded ~file
       ~budgets:[ Budget.no_more_alloc_than 0.0 ]
       [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 54.0))) ]) ]
   in
@@ -587,12 +587,12 @@ let non_positive_survives_a_loaded_gate_and_drift_does_not () =
      does explain drift, so a drifted trial under load reads environment. *)
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   let t =
-    run_check ~gate:loaded ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]
+    run_check ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]
   in
   check_rel ~msg:"zeros under load" t ~case:"a" ~metric:m_wall
     "inconclusive:non_positive";
   let t =
-    run_check ~gate:loaded ~file
+    run_check ~load:loaded ~file
       [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
   in
   check_rel ~msg:"drift under load" t ~case:"a" ~metric:m_wall
@@ -1080,7 +1080,7 @@ let proposals_record_gated_and_flagged_evidence () =
      measured evidence — only bless has a gate guard, and it is the CLI's
      (see the candidate doc). The promotion prompt is the review point. *)
   let fresh =
-    run_check ~gate:loaded
+    run_check ~load:loaded
       [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
   in
   (match Verdict.corrected fresh with
@@ -1615,7 +1615,7 @@ let rank_tested_inconclusive_keeps_its_shift () =
   first_is_doubling "environment at confirmation"
     (let file = file_of [ wall_row "a" (ties 5 1.0) ] in
      run_check ~file
-       ~decide_gate:(Env.Loaded { load = 8.; cores = 8 })
+       ~decide_load:(Env.Loaded { load = 8.; cores = 8 })
        [ (bcase "a", wall_trial (ties 5 2.0)) ]);
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
   (match
@@ -1628,7 +1628,7 @@ let rank_tested_inconclusive_keeps_its_shift () =
   is_none ~msg:"environment at the first pass: no comparison ran"
     (inconclusive_shift
        (run_check ~file
-          ~gate:(Env.Loaded { load = 8.; cores = 8 })
+          ~load:(Env.Loaded { load = 8.; cores = 8 })
           [ (bcase "a", wall_trial (ties 5 2.0)) ]));
   is_none ~msg:"drifted candidate: no comparison ran"
     (inconclusive_shift
@@ -1652,7 +1652,7 @@ let json_rank_tested_inconclusive_reports_its_deltas () =
   let json =
     Verdict.to_json
       (run_check ~file
-         ~gate:(Env.Loaded { load = 8.; cores = 8 })
+         ~load:(Env.Loaded { load = 8.; cores = 8 })
          [ (bcase "a", wall_trial (ties 5 2.0)) ])
   in
   is_true ~msg:"no comparison: null deltas"

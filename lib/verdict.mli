@@ -172,7 +172,7 @@ type provisional
 val judge :
   identity:Baseline.identity ->
   suite:string ->
-  gate:Env.gate ->
+  load:Env.load ->
   selection:[ `Full | `Partial ] ->
   budgets:Budget.t list ->
   file:Baseline.t ->
@@ -198,7 +198,7 @@ val judge :
     [file]'s header, when it has one, names [suite] (the wrong-ruler check, in
     [Check.run] and the CLI).
 
-    Under a [Loaded] [gate], every sampled-metric comparison that would need a
+    Under a [Loaded] [load], every sampled-metric comparison that would need a
     rank test is [Inconclusive Environment] and nothing queues for confirmation;
     exact metrics still compare and can still fail. Cells that never reach a
     rank test keep their own reason under load — [Exactness_lost] is a property
@@ -214,7 +214,7 @@ val confirmations : provisional -> string list
     can run immediately. *)
 
 val decide :
-  gate:Env.gate -> confirmations:(string * Run.Trial.t) list -> provisional -> t
+  load:Env.load -> confirmations:(string * Run.Trial.t) list -> provisional -> t
 (** Fold confirmation trials in: a strong relation stands only if the
     confirmation alone reproduces it — the same relation criterion at α =
     0.05/side against the same baseline samples — and then carries both shifts,
@@ -224,7 +224,7 @@ val decide :
     missing, exact, drifted, or unstable with a shift within [2e] (as on the
     first pass), or whose trial recalibrated to another k than the first pass's
     (two batch sizes are never pooled), is [Inconclusive Unconfirmed]; never
-    retried in-run. A [Loaded] [gate] (re-sampled before the confirmation queue)
+    retried in-run. A [Loaded] [load] (re-sampled before the confirmation queue)
     degrades every pending relation to [Inconclusive Environment] instead.
 
     Raises [Invalid_argument] if [confirmations] repeats a case id or names one
@@ -245,8 +245,8 @@ val overall : t -> [ `Pass | `Fail | `Inconclusive ]
 val comparison : t -> comparison
 val cases : t -> case_report list
 
-val report_gates : case_report -> metric_report -> bool
-(** [report_gates c r] is [overall]'s per-metric failure predicate: a budgeted
+val report_fails : case_report -> metric_report -> bool
+(** [report_fails c r] is [overall]'s per-metric failure predicate: a budgeted
     confirmed regression, where an [Absolute_max] contract gates only proven
     exact evidence. Exported so every rendering of "failed" — the red
     REGRESSED cell, the [rerun:] list, the GitHub annotation — is this
@@ -280,8 +280,8 @@ val identity : t -> Baseline.identity
 (** [identity t] is the machine identity judged against; [machine] is the JSON
     [machine] field. *)
 
-val gate : t -> Env.gate
-(** [gate t] is the gate {!decide} ran under — [Check.run]'s start sample when
+val load : t -> Env.load
+(** [load t] is the load {!decide} ran under — [Check.run]'s start sample when
     nothing was pending, else its re-sample before the confirmation queue: the
     last sample judgment saw, which a report's load message must agree with. *)
 

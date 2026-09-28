@@ -145,13 +145,13 @@ let benches =
   ]
 
 (* Judge cases against [rows], confirm with [confirm] (a trial per queued
-   id), decide under [decide_gate]. *)
+   id), decide under [decide_load]. *)
 let empty_file = Result.get_ok (Baseline.of_string "")
 
-let verdict_of_cases ?(gate = Env.Quiet) ?(decide_gate = Env.Quiet)
+let verdict_of_cases ?(load = Env.Quiet) ?(decide_load = Env.Quiet)
     ?(file = empty_file) ?(confirm = fun _ -> None) cases =
   let p =
-    Verdict.judge ~identity:ident ~suite:"digest" ~gate ~selection:`Full
+    Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection:`Full
       ~budgets:[] ~file ~cases
   in
   let confirmations =
@@ -159,10 +159,10 @@ let verdict_of_cases ?(gate = Env.Quiet) ?(decide_gate = Env.Quiet)
       (fun id -> Option.map (fun t -> (id, t)) (confirm id))
       (Verdict.confirmations p)
   in
-  Verdict.decide ~gate:decide_gate ~confirmations p
+  Verdict.decide ~load:decide_load ~confirmations p
 
-let verdict_of ?gate ?decide_gate ?file ?confirm case_trial =
-  verdict_of_cases ?gate ?decide_gate ?file ?confirm [ case_trial ]
+let verdict_of ?load ?decide_load ?file ?confirm case_trial =
+  verdict_of_cases ?load ?decide_load ?file ?confirm [ case_trial ]
 
 (* A confirmed wall-time regression (1 us -> 2 us) with an unchanged exact
    allocation, judged against a committed section. *)
@@ -838,7 +838,7 @@ let loaded_run_warns_under_the_header () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
   let v =
-    verdict_of ~gate:loaded ~decide_gate:loaded ~file
+    verdict_of ~load:loaded ~decide_load:loaded ~file
       (bcase "alpha", trial (ties 5 2e-6))
   in
   expect (Cli.render_check (ctx ()) v)
@@ -858,7 +858,7 @@ let loaded_new_run_warns_beside_the_prompt () =
      instead — never two load messages. *)
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
   let v =
-    verdict_of ~gate:loaded ~decide_gate:loaded
+    verdict_of ~load:loaded ~decide_load:loaded
       (bcase "alpha", trial (ties 5 1e-6))
   in
   let out = Cli.render_check (ctx ~wrote:true ()) v in
@@ -1185,7 +1185,7 @@ let summary_color_follows_the_exit_code () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
   let v =
-    verdict_of ~gate:loaded ~decide_gate:loaded ~file
+    verdict_of ~load:loaded ~decide_load:loaded ~file
       (bcase "alpha", trial (ties 5 2e-6))
   in
   equal ~msg:"strict exits 1" int 1 (Verdict.exit_code ~strict:true v);

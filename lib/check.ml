@@ -97,10 +97,10 @@ let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
 let empty_file =
   match Baseline.of_string "" with Ok f -> f | Error _ -> assert false
 
-let run_with ?instruments ?gate ?(on_progress = ignore)
+let run_with ?instruments ?load ?(on_progress = ignore)
     ?(config = Config.default) ?(budgets = []) ?filter ?baseline name benches =
   Baseline.check_suite ~fname:"Check.run" name;
-  let sample_gate = Option.value gate ~default:Env.gate in
+  let sample_load = Option.value load ~default:Env.load in
   Budget.check_distinct ~fname:"Check.run" budgets;
   let selected, selection =
     select ?filter ~metrics:config.Config.metrics ~budgets benches
@@ -127,7 +127,7 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
      stale one is re-recorded from this run, so it pins nothing. *)
   let section = Verdict.compared_section ~identity file in
   under_lock (fun () ->
-      let start_gate = sample_gate () in
+      let start_load = sample_load () in
       let total = List.length selected in
       let cases =
         List.mapi
@@ -138,23 +138,23 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
           selected
       in
       let provisional =
-        Verdict.judge ~identity ~suite:name ~gate:start_gate ~selection ~budgets
+        Verdict.judge ~identity ~suite:name ~load:start_load ~selection ~budgets
           ~file ~cases
       in
       match Verdict.confirmations provisional with
       | [] ->
           (* No re-sample: with nothing pending the gate cannot matter. *)
-          Verdict.decide ~gate:start_gate ~confirmations:[] provisional
+          Verdict.decide ~load:start_load ~confirmations:[] provisional
       | queue -> (
           (* The gate is sampled again before the confirmation
              queue. *)
-          match sample_gate () with
+          match sample_load () with
           | Env.Loaded _ as loaded ->
               (* [decide] degrades every pending relation to
                  [Inconclusive Environment] under a loaded gate whatever
                  confirmation evidence is passed; measuring the queue would
                  collect evidence judgment must discard. *)
-              Verdict.decide ~gate:loaded ~confirmations:[] provisional
+              Verdict.decide ~load:loaded ~confirmations:[] provisional
           | Env.Quiet as quiet ->
               let total = List.length queue in
               let confirmations =
@@ -181,7 +181,7 @@ let run_with ?instruments ?gate ?(on_progress = ignore)
                         assert false)
                   queue
               in
-              Verdict.decide ~gate:quiet ~confirmations provisional))
+              Verdict.decide ~load:quiet ~confirmations provisional))
 
 let run ?config ?budgets ?filter ?baseline name benches =
   run_with ?config ?budgets ?filter ?baseline name benches

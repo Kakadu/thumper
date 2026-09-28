@@ -151,7 +151,7 @@ val run :
 
 val run_with :
   ?instruments:Measure.instruments ->
-  ?gate:(unit -> Env.gate) ->
+  ?load:(unit -> Env.load) ->
   ?on_progress:(progress -> unit) ->
   ?config:Config.t ->
   ?budgets:Budget.t list ->
@@ -165,7 +165,7 @@ val run_with :
 
     - [instruments] (default {!Measure.default_instruments}) drives every clock
       and counter read of both measurement sweeps ({!Measure.case}'s seam);
-    - [gate] (default {!Env.gate}) is the sampled gate predicate
+    - [load] (default {!Env.load}) is the sampled gate predicate
       ({!Env.classify}'s seam, as in {!Env.wait_quiet}), called once at run
       start and once more before a nonempty confirmation queue — its second call
       is therefore also the observable point between the two sweeps;
@@ -179,7 +179,7 @@ val run_with :
     re-exports {!run} with the facade's exact type, and module inclusion cannot
     erase optional arguments. Library callers use {!run}; the CLI is the seams'
     one production caller, for [on_progress], which drives its status line (the
-    gate its report's load message must agree with is [Verdict.gate]). Raises
+    gate its report's load message must agree with is [Verdict.load]). Raises
     {!Error}. *)
 
 (** {1:measuring Measuring (the numbers path)} *)

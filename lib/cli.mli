@@ -243,7 +243,7 @@ val render_check : render -> Verdict.t -> string
       (suite bold, the rest faint); the no-baseline form names the machine key
       and CPU model, the stale form the recorded and current compiler
       identities. When the verdict was decided under a loaded gate
-      ([Verdict.gate], so the message never contradicts the cells), a
+      ([Verdict.load], so the message never contradicts the cells), a
       {e compared} run has one yellow warning line directly under the header
       ([warning: load L on C cores; timing verdicts degraded]); acceptance
       states (NEW, stale) put their load message in the actions block instead —

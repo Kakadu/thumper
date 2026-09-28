@@ -359,7 +359,6 @@ let bound e = Printf.sprintf "%+.1f" (e *. 100.)
 (* The failure/status predicates are [Verdict]'s own — the capitalized
    REGRESSED cells, the summary, and the [::error::] annotations agree with
    [Verdict.exit_code] and the JSON [status] by construction. *)
-let report_fails = Verdict.report_gates
 let case_fails (c : Verdict.case_report) = Verdict.case_overall c = `Fail
 
 let report_proposed (mr : Verdict.metric_report) =
@@ -689,7 +688,8 @@ let cap_breach (c : Verdict.case_report) (mr : Verdict.metric_report) =
     ( Option.map Budget.contract mr.budget,
       Run.Trial.measurement c.trial mr.metric )
   with
-  | Some (Budget.Absolute_max cap), Some (Run.Exact n) when report_fails c mr ->
+  | Some (Budget.Absolute_max cap), Some (Run.Exact n)
+    when Verdict.report_fails c mr ->
       Some (n, cap)
   | _ -> None
 
@@ -745,16 +745,16 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
                   (cap_str m cap))) )
   | Verdict.Proposed, None -> Some (5, frag "proposed" (tagged ""))
   | Verdict.Judged (Verdict.Regressed strong), _ ->
-      let gates = report_fails c mr in
-      let word = if gates then "REGRESSED" else "regressed" in
-      let style = if gates then `Red else `Yellow in
+      let fails = Verdict.report_fails c mr in
+      let word = if fails then "REGRESSED" else "regressed" in
+      let style = if fails then `Red else `Yellow in
       let budget =
         match (strong, relative_budget mr) with
         | Verdict.Confirmed _, Some b -> "  " ^ b
         | _ -> ""
       in
       Some
-        ( (if gates then 0 else 1),
+        ( (if fails then 0 else 1),
           frag ~style word (tagged (strong_detail strong ^ budget)) )
   | Verdict.Judged (Verdict.Improved strong), _ ->
       Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
@@ -881,7 +881,7 @@ let render_check r v =
   (* The report's load message agrees with judgment: the gate the verdict
      was decided under, never a pre-lease reading of somebody else's load
      (the lease wait can be minutes long). *)
-  let gate = Verdict.gate v in
+  let load = Verdict.load v in
   let acceptance =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> true
@@ -914,7 +914,7 @@ let render_check r v =
                " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
                ident.Baseline.machine section current)
     in
-    match (comparison, gate) with
+    match (comparison, load) with
     | Verdict.Compared, Env.Loaded { load; cores } ->
         [
           head;
@@ -975,8 +975,8 @@ let render_check r v =
       if r.wrote_corrected then [ Printf.sprintf "  accept:  %s" r.accept ]
       else []
     in
-    let load =
-      match (acceptance && r.wrote_corrected, gate) with
+    let load_warning =
+      match (acceptance && r.wrote_corrected, load) with
       | true, Env.Loaded { load; cores } ->
           [
             styled ~color `Yellow
@@ -987,7 +987,7 @@ let render_check r v =
           ]
       | _ -> []
     in
-    rerun @ prompt @ load
+    rerun @ prompt @ load_warning
   in
   (* Summary, compared runs only. Its color is the outcome's: red iff the run
      exits 1, so a [--strict] run that fails on inconclusive cases does not
@@ -1054,7 +1054,7 @@ let render_check r v =
         (fun (c : Verdict.case_report) ->
           List.filter_map
             (fun (mr : Verdict.metric_report) ->
-              if not (report_fails c mr) then None
+              if not (Verdict.report_fails c mr) then None
               else
                 match mr.verdict with
                 | Verdict.Judged (Verdict.Regressed strong) ->
@@ -1241,7 +1241,7 @@ let wait_for_quiet = function
       (* A bounded wait must be loud: a silent multi-second pause is
          indistinguishable from a hang. One line when the wait begins (only
          when there is something to wait out). *)
-      (match Env.gate () with
+      (match Env.load () with
       | Env.Loaded { load; cores } ->
           Printf.eprintf
             "thumper: waiting up to %gs for a quiet host (load %.1f on %d cores)\n\
@@ -1369,7 +1369,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   (* On bless an expired wait is the refusal itself, unless [--force]. *)
   (match wait_for_quiet o.wait_quiet with
   | Some secs when not o.force -> (
-      match Env.gate () with
+      match Env.load () with
       | Env.Loaded { load; cores } ->
           fail2
             "bless refused: host still loaded after %gs (load %.1f on %d \
@@ -1380,7 +1380,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
   (* The gate refusal is bless's own guard: a noisy bless poisons
      the ruler; [--force] overrides and is recorded in the section header.
      The gate is sampled under the lease, directly before measurement — the
-     same principle as check's [Verdict.gate]: a lease wait can be minutes long,
+     same principle as check's [Verdict.load]: a lease wait can be minutes long,
      and a decision taken on a pre-lease sample would refuse on somebody
      else's load, or worse, record an unannotated noisy bless after a
      quiet-to-loaded transition. Residual, accepted: [--wait-quiet] still
@@ -1389,7 +1389,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
      here, at measurement time. *)
   let forced_under_load = ref None in
   let refuse_or_force () =
-    match Env.gate () with
+    match Env.load () with
     | Env.Quiet -> ()
     | Env.Loaded { load; cores } ->
         if o.force then forced_under_load := Some (load, cores)

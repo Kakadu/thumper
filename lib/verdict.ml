@@ -102,7 +102,7 @@ type core = {
 }
 
 type provisional = { p_core : core; p_cases : pcase list }
-type t = { core : core; v_gate : Env.gate; v_cases : case_report list }
+type t = { core : core; v_load : Env.load; v_cases : case_report list }
 
 (* Small helpers *)
 
@@ -199,7 +199,7 @@ let table ~e ~r ~l ~u sh =
   else Tame (inconclusive ~shift:sh Wide_interval)
 
 (* First-pass judgment of one sampled comparison. *)
-let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
+let judge_sampled ~load ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
     ~trial_k =
   let e, r = relative_params budget in
   if
@@ -208,7 +208,7 @@ let judge_sampled ~gate ~metric ~budget ~row_k ~baseline ~(cand : Run.sampled)
        quiet host would not fix it either, so it is tested before the load. *)
     (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
   then Settled (Judged (inconclusive Non_positive))
-  else if is_loaded gate then Settled (Judged (inconclusive Environment))
+  else if is_loaded load then Settled (Judged (inconclusive Environment))
   else if
     (* Load explains drift, so drift is only read on a quiet host. *)
     cand.Run.drifted
@@ -341,7 +341,7 @@ let compared_section ~identity file =
   | Compared -> section
   | No_baseline | Stale _ -> None
 
-let judge_metric ~gate section ~id ~trial metric measurement budget =
+let judge_metric ~load section ~id ~trial metric measurement budget =
   match Baseline.find_row section ~id ~metric:(Metric.id metric) with
   | None -> Settled Proposed
   | Some row -> (
@@ -356,7 +356,7 @@ let judge_metric ~gate section ~id ~trial metric measurement budget =
           if zero_tolerance_downgrade metric budget then
             Settled (Judged (inconclusive Exactness_lost))
           else
-            judge_sampled ~gate ~metric ~budget ~row_k ~baseline:samples ~cand
+            judge_sampled ~load ~metric ~budget ~row_k ~baseline:samples ~cand
               ~trial_k)
 
 (* A stale section is replaced wholesale from the selected cases alone, by
@@ -409,7 +409,7 @@ let prune_notices ~selection ~comparison ~section ~case_ids =
       List.rev !notices
   | _ -> []
 
-let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
+let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
   check_distinct ~what:"case id"
     ~ids:(List.map (fun (c, _) -> Bench.id c) cases);
   let section = Baseline.section file identity.Baseline.machine in
@@ -434,7 +434,7 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
                 match comparable with
                 | None -> Settled Proposed
                 | Some s ->
-                    judge_metric ~gate s ~id ~trial metric measurement budget
+                    judge_metric ~load s ~id ~trial metric measurement budget
               in
               (metric, state, budget))
             measured
@@ -478,9 +478,9 @@ let confirmations p =
 
 (* Deciding *)
 
-let resolve_pending ~gate ~conf metric pd =
+let resolve_pending ~load ~conf metric pd =
   let first = pd.p_first in
-  if is_loaded gate then inconclusive ~shift:first Environment
+  if is_loaded load then inconclusive ~shift:first Environment
   else
     match conf with
     | None -> inconclusive ~shift:first Unconfirmed
@@ -530,7 +530,7 @@ let resolve_pending ~gate ~conf metric pd =
         | Some (Run.Samples _) | Some (Run.Exact _) | None ->
             inconclusive ~shift:first Unconfirmed)
 
-let decide ~gate ~confirmations:confs p =
+let decide ~load ~confirmations:confs p =
   let queue = confirmations p in
   check_distinct ~what:"confirmation id" ~ids:(List.map fst confs);
   List.iter
@@ -548,7 +548,7 @@ let decide ~gate ~confirmations:confs p =
               let verdict =
                 match state with
                 | Settled v -> v
-                | Pending pd -> Judged (resolve_pending ~gate ~conf metric pd)
+                | Pending pd -> Judged (resolve_pending ~load ~conf metric pd)
               in
               { metric; verdict; budget })
             pc.c_states
@@ -573,7 +573,7 @@ let decide ~gate ~confirmations:confs p =
         })
       p.p_cases
   in
-  { core = p.p_core; v_gate = gate; v_cases }
+  { core = p.p_core; v_load = load; v_cases }
 
 (* Observers *)
 
@@ -582,7 +582,7 @@ let cases t = t.v_cases
 let warnings t = t.core.cr_warnings
 let suite t = t.core.cr_suite
 let identity t = t.core.cr_identity
-let gate t = t.v_gate
+let load t = t.v_load
 
 let exact_evidence case_report metric =
   match Run.Trial.measurement case_report.trial metric with
@@ -593,7 +593,7 @@ let exact_evidence case_report metric =
    or a proven-exact count over an absolute cap — on any run, with or
    without a baseline row. A statistical estimate crossing an absolute line
    is not an earned verdict, so a sampled count never gates a cap. *)
-let report_gates case_report report =
+let report_fails case_report report =
   match Option.map Budget.contract report.budget with
   | Some (Budget.Relative _) -> (
       match report.verdict with Judged (Regressed _) -> true | _ -> false)
@@ -607,7 +607,7 @@ let report_inconclusive report =
   match report.verdict with Judged (Inconclusive _) -> true | _ -> false
 
 let case_overall case_report =
-  if List.exists (report_gates case_report) case_report.reports then `Fail
+  if List.exists (report_fails case_report) case_report.reports then `Fail
   else if
     List.exists
       (fun r -> r.budget <> None && report_inconclusive r)
@@ -723,7 +723,7 @@ let deltas_of_verdict ~exact = function
 
 let json_metric buf case_report report =
   let status =
-    if report_gates case_report report then `Fail
+    if report_fails case_report report then `Fail
     else if report_inconclusive report then `Inconclusive
     else `Pass
   in

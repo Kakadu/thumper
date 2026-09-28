@@ -8,7 +8,7 @@
     The OS edge for everything about the {e machine}: the key of the baseline
     section this host owns ({!machine_key}), the header lines that describe it
     ({!host_description}, {!ocaml_identity}), whether the host is quiet enough
-    to measure ({!gate}, {!wait_quiet}), and the per-user lease that serializes
+    to measure ({!load}, {!wait_quiet}), and the per-user lease that serializes
     measurement ({!Lock}). Knows nothing about baselines or verdicts: [Baseline]
     renders the identity strings into section headers, and [Check] samples the
     gate and holds the lease around measurement. *)
@@ -110,35 +110,35 @@ val load_average : unit -> float option
     ([Thumper_clock.load_average]), and [None] if the operating system cannot
     report it. *)
 
-(** The type for gate outcomes, as decided by {!classify}. An unreadable load
+(** The type for load states, as decided by {!classify}. An unreadable load
     average is [Quiet] — the gate degrades open, never blocks: refusing to
     measure on hosts whose OS cannot report load would trade a noisy verdict
     (already degraded to inconclusive downstream) for no verdict at all. *)
-type gate =
+type load =
   | Quiet  (** The host shows no evidence of load; timings can be trusted. *)
   | Loaded of { load : float; cores : int }
       (** The 1-minute load average ÷ cores is at least 1/2 (raven's hand rule
           adopted as the default threshold), carrying the readings for
           rendering. *)
 
-val classify : load:float option -> cores:int -> gate
+val classify : load:float option -> cores:int -> load
 (** [classify ~load ~cores] is the pure gate predicate over one pair of
     readings: [Loaded] iff [load] is [Some l] with [l /. cores >= 0.5], else
-    [Quiet]. {!gate} is this predicate applied to the live readings; tests drive
+    [Quiet]. {!load} is this predicate applied to the live readings; tests drive
     the arithmetic through [classify] directly.
 
     Raises [Invalid_argument] if [cores < 1] (a programmer error — {!cores}
     never reports less). *)
 
-val gate : unit -> gate
-(** [gate ()] is [classify ~load:(load_average ()) ~cores:(cores ())]: the
+val load : unit -> load
+(** [load ()] is [classify ~load:(load_average ()) ~cores:(cores ())]: the
     gate's outcome for the host right now. [Check] samples it at run start and
     again before the confirmation queue. *)
 
 val wait_quiet :
   timeout_s:float ->
   ?poll_s:float ->
-  ?gate:(unit -> gate) ->
+  ?load:(unit -> load) ->
   unit ->
   (unit, [ `Timeout ]) result
 (** [wait_quiet ~timeout_s ()] polls the gate until it reports [Quiet] ([Ok ()])
@@ -151,7 +151,7 @@ val wait_quiet :
     so sub-second polling is wasted work, while a 1 s cadence keeps the wait's
     overshoot negligible against the minutes-long decay the gate is waiting out.
 
-    [gate] (default {!gate}) is the deterministic test seam, scripting the
+    [load] (default {!load}) is the deterministic test seam, scripting the
     polled predicate exactly as [Measure.instruments] scripts the clock.
 
     Raises [Invalid_argument] if [timeout_s] is negative or NaN, or if [poll_s]
