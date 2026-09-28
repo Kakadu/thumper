@@ -187,7 +187,7 @@ let zero_tolerance_downgrade metric budget =
 
 type raw =
   | Strong of [ `Improved | `Regressed ]
-  | Demonstrated of shift (* within budget: a demonstrated direction *)
+  | Demonstrated (* within budget: a demonstrated direction *)
   | Tame of relation (* equivalent or inconclusive: no direction claimed *)
 
 let table ~e ~r sh =
@@ -195,12 +195,12 @@ let table ~e ~r sh =
   if r = 0. then
     if u < 0. then Strong `Improved
     else if l > 0. then Strong `Regressed
-    else if u <= 0. then Demonstrated sh
+    else if u <= 0. then Demonstrated
     else Tame (inconclusive ~shift:sh Wide_interval)
   else if u < -.e then Strong `Improved
   else if l > r then Strong `Regressed
   else if -.e <= l && u <= e then Tame (Equivalent (Some sh))
-  else if l > e && u <= r then Demonstrated sh
+  else if l > e && u <= r then Demonstrated
   else Tame (inconclusive ~shift:sh Wide_interval)
 
 (* First-pass judgment of one sampled comparison. *)
@@ -240,30 +240,29 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
          one outlier barely moves a rank interval, and at the derived band
          (where r >= 2e) a strong regression must not hide behind a heavy
          tail. *)
-      let unless_unstable settle =
-        if not (bias_comparable ~e sh) then settle ()
+      let unless_unstable state =
+        if not (bias_comparable ~e sh) then state
         else if unstable baseline then
           Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
         else if unstable cand.Run.sorted then
           Settled (Judged (inconclusive ~shift:sh Candidate_unstable))
-        else settle ()
+        else state
       in
       match table ~e ~r sh with
       | Tame rel -> Settled (Judged rel)
-      | Demonstrated sh ->
-          unless_unstable (fun () -> Settled (Judged (Within_budget sh)))
+      | Demonstrated -> unless_unstable (Settled (Judged (Within_budget sh)))
       | Strong dir ->
-          unless_unstable (fun () ->
-              Pending
-                {
-                  p_dir = dir;
-                  p_first = sh;
-                  p_first_sorted = cand.Run.sorted;
-                  p_first_k = trial_k;
-                  p_baseline_log = baseline_log;
-                  p_e = e;
-                  p_r = r;
-                })
+          unless_unstable
+            (Pending
+               {
+                 p_dir = dir;
+                 p_first = sh;
+                 p_first_sorted = cand.Run.sorted;
+                 p_first_k = trial_k;
+                 p_baseline_log = baseline_log;
+                 p_e = e;
+                 p_r = r;
+               })
 
 (* Whether a proven-exact count exceeds its budget's absolute cap. The cap
    is on the measured value itself, so it is judged on this run's count
