@@ -683,32 +683,26 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
      another run's load. [--wait-quiet] waits before the lock, since holding it
      would block every other run, so a load that rises after both waits is
      refused only here. *)
-  let forced_under_load = ref None in
-  let refuse_or_force () =
-    match Env.load () with
-    | Env.Quiet -> ()
-    | Env.Loaded { load; cores } ->
-        if o.force then forced_under_load := Some (load, cores)
-        else
-          fail2
-            "bless refused: load %.1f on %d cores; rerun with --wait-quiet \
-             SECS, or with --force to record it anyway"
-            load cores
-  in
-  let run =
+  let load, run =
     checked (fun () ->
         with_status (fun tick ->
             with_lock_progress (fun () ->
-                refuse_or_force ();
-                Check.measure ~on_progress:tick ~config ?filter benches)))
+                let load = Env.load () in
+                (match load with
+                | Env.Loaded { load; cores } when not o.force ->
+                    fail2
+                      "bless refused: load %.1f on %d cores; rerun with \
+                       --wait-quiet SECS, or with --force to record it anyway"
+                      load cores
+                | Env.Loaded _ | Env.Quiet -> ());
+                (load, Check.measure ~on_progress:tick ~config ?filter benches))))
   in
-  let forced_under_load = !forced_under_load in
   (* The [--force] record in the section header; a partial bless names its
      cases, the rows the load touched. *)
   let annotations =
-    match forced_under_load with
-    | None -> []
-    | Some (load, cores) ->
+    match load with
+    | Env.Quiet -> []
+    | Env.Loaded { load; cores } ->
         let cases =
           match scope with
           | `Full -> ""
@@ -723,11 +717,6 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     Verdict.bless ~annotations ~identity ~suite:name ~selection:scope ~run file
   in
   write_baseline corrected_path corrected;
-  let load =
-    match forced_under_load with
-    | Some (load, cores) -> Env.Loaded { load; cores }
-    | None -> Env.Quiet
-  in
   print_string
     (Report.bless ~color ~suite:name ~machine ~cases:(List.length sel) ~load
        ~notices ~accept run);
