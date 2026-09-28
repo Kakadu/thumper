@@ -100,11 +100,10 @@ let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
 let empty_file =
   match Baseline.of_string "" with Ok f -> f | Error _ -> assert false
 
-let run_with ?instruments ?load ?(on_progress = ignore)
+let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
     ?(config = Config.default) ?(budgets = []) ?(prune = false) ?filter
-    ?baseline name benches =
+    ?baseline:(file = empty_file) name benches =
   Baseline.check_suite ~fname:"Check.run" name;
-  let sample_load = Option.value load ~default:Env.load in
   Budget.check_distinct ~fname:"Check.run" budgets;
   let selected, selection =
     select ?filter ~metrics:config.Config.metrics ~budgets benches
@@ -112,7 +111,6 @@ let run_with ?instruments ?load ?(on_progress = ignore)
   (* Only a caller that holds the whole suite may judge a selection of every
      case as full, which prunes the rows of cases [benches] lacks. *)
   let selection = if prune then selection else `Partial in
-  let file = Option.value baseline ~default:empty_file in
   let identity =
     {
       Baseline.machine = Env.machine_key ();
