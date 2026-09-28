@@ -32,7 +32,10 @@ let name m = m.name
 let units m = m.units
 let kind m = m.kind
 let source m = m.source
-let is_counter m = match m.source with Gc_counter _ -> true | _ -> false
+
+let is_counter m =
+  match m.source with Gc_counter _ -> true | Wall_clock | Cpu_clock -> false
+
 let equal a b = String.equal a.id b.id
 let compare a b = String.compare a.id b.id
 let pp ppf m = Format.pp_print_string ppf m.id
