@@ -73,11 +73,14 @@ let approx_words ~unit ~wscale v =
   if Float.abs v >= approx_exponent_at then "~" ^ grouped_scaled v unit
   else strf "~%.3g %s" v unit
 
-let exact_str metric n =
+(* A metric's unit in a cell: [w] for the word counters, whose own unit is
+   spelled out. *)
+let unit_of metric =
   match Metric.kind metric with
-  | `Allocation -> group_int n ^ " w"
-  | `Time | `Other -> strf "%s %s" (group_int n) (Metric.units metric)
+  | `Allocation -> "w"
+  | `Time | `Other -> Metric.units metric
 
+let exact_str metric n = group_int n ^ " " ^ unit_of metric
 let pct e = strf "%+.1f%%" (e *. 100.)
 let bound e = strf "%+.1f" (e *. 100.)
 
@@ -86,7 +89,7 @@ let bound e = strf "%+.1f" (e *. 100.)
 let case_fails (c : Verdict.case_report) = Verdict.case_overall c = `Fail
 
 let report_proposed (mr : Verdict.metric_report) =
-  match mr.verdict with Verdict.Proposed -> true | _ -> false
+  match mr.verdict with Verdict.Proposed -> true | Verdict.Judged _ -> false
 
 let count p l = List.length (List.filter p l)
 
@@ -330,12 +333,7 @@ let cap_str metric cap =
       done;
       if !i <= 2 then "" else String.sub f 1 (!i - 1)
   in
-  let unit =
-    match Metric.kind metric with
-    | `Allocation -> "w"
-    | `Time | `Other -> Metric.units metric
-  in
-  group_int (Float.to_int cap) ^ digits ^ " " ^ unit
+  group_int (Float.to_int cap) ^ digits ^ " " ^ unit_of metric
 
 (* [(rank, fragment)], the rank ordering fragments most severe first: 0 a
    REGRESSED that fails the case, 1 a regression that does not, 2
@@ -687,13 +685,8 @@ let check r v =
                           | Some b -> interval first ^ ", " ^ b
                           | None -> interval first)
                       | Verdict.Exact_change { baseline; candidate } ->
-                          let unit =
-                            match Metric.kind mr.metric with
-                            | `Allocation -> "w"
-                            | `Time | `Other -> Metric.units mr.metric
-                          in
                           strf "%d \xe2\x86\x92 %d %s (exact)" baseline
-                            candidate unit
+                            candidate (unit_of mr.metric)
                     in
                     Some
                       (strf "::error::%s regressed: %s %s" c.id
