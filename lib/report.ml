@@ -496,6 +496,35 @@ let header_line ~color ~suite rest =
   styled ~color `Faint "thumper: "
   ^ styled ~color `Bold suite ^ styled ~color `Faint rest
 
+(* The [::error::] line of a metric that fails its case, with the row's own
+   facts: the id [-f] selects by, then the shift with its interval and
+   budget, or the exact counts. *)
+let error_line (c : Verdict.case_report) (mr : Verdict.metric_report) =
+  if not (Verdict.report_fails c mr) then None
+  else
+    match mr.verdict with
+    | Verdict.Judged (Verdict.Regressed strong) ->
+        let detail =
+          match strong with
+          | Verdict.Confirmed { first; _ } -> (
+              match relative_budget mr with
+              | Some b -> interval first ^ ", " ^ b
+              | None -> interval first)
+          | Verdict.Exact_change { baseline; candidate } ->
+              strf "%d \xe2\x86\x92 %d %s (exact)" baseline candidate
+                (unit_of mr.metric)
+        in
+        Some
+          (strf "::error::%s regressed: %s %s" c.id (Metric.id mr.metric) detail)
+    | _ -> (
+        match cap_breach c mr with
+        | Some (n, cap) ->
+            Some
+              (strf "::error::%s regressed: %s %s, over its %s cap (exact)" c.id
+                 (Metric.id mr.metric) (exact_str mr.metric n)
+                 (cap_str mr.metric cap))
+        | None -> None)
+
 let check r v =
   let color = r.color in
   let cases = Verdict.cases v in
@@ -547,21 +576,24 @@ let check r v =
     | _ -> [ head ]
   in
   (* Table rows in suite order, then the warnings. *)
+  let cells =
+    List.map
+      (fun c ->
+        (* A proposed case whose count breaks its cap fails even here. *)
+        if acceptance && not (case_fails c) then (c, [ frag "proposed" "" ])
+        else (c, check_cell c))
+      cases
+  in
   let rows =
     List.map
-      (fun (c : Verdict.case_report) ->
-        (* A proposed case whose count breaks its cap fails even here. *)
-        let cell =
-          if acceptance && not (case_fails c) then [ frag "proposed" "" ]
-          else check_cell c
-        in
+      (fun ((c : Verdict.case_report), cell) ->
         {
           row_id = c.id;
           time = time_of_trial c.trial;
           alloc = alloc_of_trial c.trial;
           cell;
         })
-      cases
+      cells
   in
   let warnings =
     List.concat_map
@@ -633,11 +665,13 @@ let check r v =
         in
         let n_imp =
           count
-            (fun c ->
-              match check_cell c with
+            (fun (c, cell) ->
+              Verdict.case_overall c = `Pass
+              &&
+              match cell with
               | { word = "improved"; _ } :: _ -> true
               | _ -> false)
-            passing
+            cells
         in
         let n_pass = n_cases - n_fail - n_inc - n_prop - n_imp in
         let term n word = if n > 0 then [ strf "%d %s" n word ] else [] in
@@ -669,39 +703,7 @@ let check r v =
     else
       List.concat_map
         (fun (c : Verdict.case_report) ->
-          List.filter_map
-            (fun (mr : Verdict.metric_report) ->
-              if not (Verdict.report_fails c mr) then None
-              else
-                match mr.verdict with
-                | Verdict.Judged (Verdict.Regressed strong) ->
-                    (* The row's own facts: the id [-f] selects by, the
-                       shift with its interval and budget, or the exact
-                       integers. *)
-                    let detail =
-                      match strong with
-                      | Verdict.Confirmed { first; _ } -> (
-                          match relative_budget mr with
-                          | Some b -> interval first ^ ", " ^ b
-                          | None -> interval first)
-                      | Verdict.Exact_change { baseline; candidate } ->
-                          strf "%d \xe2\x86\x92 %d %s (exact)" baseline
-                            candidate (unit_of mr.metric)
-                    in
-                    Some
-                      (strf "::error::%s regressed: %s %s" c.id
-                         (Metric.id mr.metric) detail)
-                | _ -> (
-                    match cap_breach c mr with
-                    | Some (n, cap) ->
-                        Some
-                          (strf
-                             "::error::%s regressed: %s %s, over its %s cap \
-                              (exact)"
-                             c.id (Metric.id mr.metric) (exact_str mr.metric n)
-                             (cap_str mr.metric cap))
-                    | None -> None))
-            c.reports)
+          List.filter_map (error_line c) c.reports)
         cases
   in
   report_of_blocks [ header; table; actions; summary; annotations ]
