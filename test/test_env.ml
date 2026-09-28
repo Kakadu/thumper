@@ -236,8 +236,8 @@ let load_table =
   ]
 
 let classify_rejects_no_cores () =
-  raises (Invalid_argument "Thumper.Env.classify: 0 cores (need at least 1)")
-    (fun () -> Env.classify ~load:(Some 1.0) ~cores:0)
+  raises (Invalid_argument "Env.classify: 0 cores (need at least 1)") (fun () ->
+      Env.classify ~load:(Some 1.0) ~cores:0)
 
 let cores_is_at_least_one () = is_true (Env.cores () >= 1)
 
@@ -316,14 +316,14 @@ let wait_quiet_times_out_while_loaded () =
 let wait_quiet_rejects_negative_timeout () =
   raises
     (Invalid_argument
-       "Thumper.Env.wait_quiet: timeout_s -1 (need a non-negative timeout in \
-        seconds)") (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
+       "Env.wait_quiet: timeout_s -1 (need a non-negative timeout in seconds)")
+    (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
 
 let wait_quiet_rejects_bad_poll () =
   raises
     (Invalid_argument
-       "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval \
-        in seconds)") (fun () ->
+       "Env.wait_quiet: poll_s 0 (need a positive finite poll interval in \
+        seconds)") (fun () ->
       Env.wait_quiet ~timeout_s:0. ~poll_s:0. ~load:(fun () -> Env.Quiet) ())
 
 (* The measurement lease, single-process surface. *)
@@ -480,8 +480,8 @@ let explicit_dir_wins_over_the_env () =
 let with_lock_rejects_negative_wait () =
   raises
     (Invalid_argument
-       "Thumper.Env.Lock.with_lock: wait_s -1 (need a non-negative wait in \
-        seconds)") (fun () ->
+       "Env.Lock.with_lock: wait_s -1 (need a non-negative wait in seconds)")
+    (fun () ->
       Env.Lock.with_lock ~dir:(fresh_dir ()) ~wait_s:(-1.) (fun () -> ()))
 
 let pp_error_pins () =

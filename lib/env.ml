@@ -174,7 +174,7 @@ type load = Quiet | Loaded of { load : float; cores : int }
    verdict at all. *)
 let classify ~load ~cores =
   if cores < 1 then
-    invalid_arg (strf "Thumper.Env.classify: %d cores (need at least 1)" cores);
+    invalid_arg (strf "Env.classify: %d cores (need at least 1)" cores);
   match load with
   | Some load when load /. float_of_int cores >= load_threshold ->
       Loaded { load; cores }
@@ -191,14 +191,13 @@ let wait_quiet ~timeout_s ?(poll_s = default_poll_s) ?load:(sample = load) () =
   if not (timeout_s >= 0.) then
     invalid_arg
       (strf
-         "Thumper.Env.wait_quiet: timeout_s %g (need a non-negative timeout in \
-          seconds)"
+         "Env.wait_quiet: timeout_s %g (need a non-negative timeout in seconds)"
          timeout_s);
   if not (poll_s > 0. && poll_s < infinity) then
     invalid_arg
       (strf
-         "Thumper.Env.wait_quiet: poll_s %g (need a positive finite poll \
-          interval in seconds)"
+         "Env.wait_quiet: poll_s %g (need a positive finite poll interval in \
+          seconds)"
          poll_s);
   let deadline = Os.monotonic_s () +. timeout_s in
   let rec loop () =
@@ -380,8 +379,7 @@ module Lock = struct
     if not (wait_s >= 0.) then
       invalid_arg
         (strf
-           "Thumper.Env.Lock.with_lock: wait_s %g (need a non-negative wait in \
-            seconds)"
+           "Env.Lock.with_lock: wait_s %g (need a non-negative wait in seconds)"
            wait_s);
     if !held then Ok (f ())
     else
