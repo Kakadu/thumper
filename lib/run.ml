@@ -3,26 +3,23 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Evidence comes from thumper's own measurement, which only produces it
+   sorted, finite and at least 3 long: broken evidence is a bug, never data,
+   so every check here raises [Invalid_argument]. *)
+
 type sampled = { sorted : float array; drifted : bool }
 
-(* Loud [Invalid_argument]s throughout, [Stats] style: broken evidence here is
-   a harness bug, never data (measurement guarantees sorted, finite, n >= 3). *)
-
+(* The checks run on the copy, so a caller changing its own array later
+   cannot break them. Non-finite values are refused because [Stats] checks
+   only the order of the values it computes the median and the outlier test
+   from, and an infinity is in ascending position ([[| 1.; 2.; infinity |]]
+   is sorted). Finiteness is checked first, for its message on NaN; the
+   negated [<=] refuses NaN as well. *)
 let sampled ~sorted ~drifted =
-  (* Copy before validating: the checks below then hold for the array actually
-     stored, by construction — never for a caller's alias whose mutation could
-     revoke the invariant between check and store. *)
   let sorted = Array.copy sorted in
-  (* Non-finite values are refused here, at the evidence boundary: an
-     infinity sits in ascending position ([| 1.; 2.; infinity |] is sorted),
-     and [Stats]' order-only checks, which guard the median and the outlier
-     test, would compute with it silently. *)
   let n = Array.length sorted in
   if n < 3 then
     invalid_arg (Printf.sprintf "Run.sampled: %d samples, need at least 3" n);
-  (* Finiteness first, for the precise diagnostic on NaN. The ascending check
-     below also rejects NaN on its own (negated [<=], [Stats.check_sorted]
-     style), so neither check depends on the other for soundness. *)
   Array.iter
     (fun x ->
       if not (Float.is_finite x) then
@@ -58,9 +55,7 @@ module Trial = struct
     | Some id ->
         invalid_arg (Printf.sprintf "Run.Trial.make: duplicate metric %s" id)
     | None -> ());
-    (* Exactness is proven by the k/2k counter probe: only exact-capable
-       metrics can carry [Exact] evidence. The converse is fine — a failed
-       probe downgrades an exact-capable metric to [Samples]. *)
+    (* Only a counter metric's probe can prove a count exact. *)
     List.iter
       (fun (m, v) ->
         match v with
