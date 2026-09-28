@@ -116,10 +116,10 @@ val of_string : string -> (t, error) result
     requires each row's stored median to equal the median derived from its
     stored samples. It is lenient on the spelling of numbers: a sample is any
     finite float that [float_of_string] reads, and a count, a [batch=] or an
-    [n=] value is any run of decimal digits, leading zeros included. A row
-    edited by hand may therefore differ from the line {!sampled_row} prints.
-    Every accepted [s] prints back as [s]: [to_string t = s] when the result is
-    [Ok t]. *)
+    [n=] value is any run of decimal digits, leading zeros included, up to
+    [max_int]; a larger one is refused as out of range. A row edited by hand may
+    therefore differ from the line {!sampled_row} prints. Every accepted [s]
+    prints back as [s]: [to_string t = s] when the result is [Ok t]. *)
 
 val to_string : t -> string
 (** [to_string t] is [t]'s file text: what was read, byte for byte, and what was

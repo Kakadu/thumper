@@ -118,8 +118,8 @@ val case :
 
     In-process ([config.fork = false]), the protocol runs on the calling
     process's heap. The deadline is read on [instruments.now_ns] from before
-    setup, and checked before each batch only: a call that never returns hangs
-    the run, and a crash ends it.
+    setup, and checked between batches, and after the last one: a batch runs to
+    its end, so a call that never returns hangs the run, and a crash ends it.
 
     The teardown runs once after setup completes, whatever the protocol does,
     unless the process running it dies first: a forked worker killed at its
