@@ -40,7 +40,6 @@ $ dune exec examples/01-first-benchmark/bench_hello.exe
 thumper: hello — no baseline for machine ca352e279bc47cb1 (Apple M1 Max)
 
   proposed   1.43 us  ±2.4%      3 kw  list-rev
-  proposed  25.03 us  ±2.2%  32.73 kw  list-sort
 
   accept:  mv examples/01-first-benchmark/hello.thumper.corrected examples/01-first-benchmark/hello.thumper
   warning: load 7.6 on 10 cores; prefer a quiet host before accepting
