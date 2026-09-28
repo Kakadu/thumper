@@ -362,8 +362,8 @@ let bound e = Printf.sprintf "%+.1f" (e *. 100.)
 let report_fails = Verdict.report_gates
 let case_fails (c : Verdict.case_report) = Verdict.case_overall c = `Fail
 
-let report_new (mr : Verdict.metric_report) =
-  match mr.verdict with Verdict.New_row -> true | _ -> false
+let report_proposed (mr : Verdict.metric_report) =
+  match mr.verdict with Verdict.Proposed -> true | _ -> false
 
 let count p l = List.length (List.filter p l)
 
@@ -735,7 +735,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
           (exact_str m candidate)
   in
   match (mr.verdict, cap_breach c mr) with
-  | (Verdict.New_row | Verdict.Judged (Verdict.Inconclusive _)), Some (n, cap)
+  | (Verdict.Proposed | Verdict.Judged (Verdict.Inconclusive _)), Some (n, cap)
     ->
       Some
         ( 0,
@@ -743,7 +743,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
             (tagged
                (Printf.sprintf "%s, over its %s cap (exact)" (exact_str m n)
                   (cap_str m cap))) )
-  | Verdict.New_row, None -> Some (5, frag "proposed" (tagged ""))
+  | Verdict.Proposed, None -> Some (5, frag "proposed" (tagged ""))
   | Verdict.Judged (Verdict.Regressed strong), _ ->
       let gates = report_fails c mr in
       let word = if gates then "REGRESSED" else "regressed" in
@@ -799,7 +799,10 @@ let check_cell (c : Verdict.case_report) =
     | Some m -> Metric.equal m mr.metric
     | None -> false
   in
-  if c.reports <> [] && List.for_all report_new c.reports && not (case_fails c)
+  if
+    c.reports <> []
+    && List.for_all report_proposed c.reports
+    && not (case_fails c)
   then [ frag "proposed" "" ]
   else
     let notable =
@@ -1006,7 +1009,7 @@ let render_check r v =
         let n_prop =
           count
             (fun (c : Verdict.case_report) ->
-              c.reports <> [] && List.for_all report_new c.reports)
+              c.reports <> [] && List.for_all report_proposed c.reports)
             passing
         in
         let n_imp =

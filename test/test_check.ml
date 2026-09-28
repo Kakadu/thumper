@@ -150,7 +150,7 @@ let reason_name = function
   | Candidate_drifted -> "candidate_drifted"
 
 let rel_name = function
-  | Verdict.New_row -> "new"
+  | Verdict.Proposed -> "proposed"
   | Judged (Improved (Confirmed _)) -> "improved-confirmed"
   | Judged (Improved (Exact_change _)) -> "improved-exact"
   | Judged (Regressed (Confirmed _)) -> "regressed-confirmed"
@@ -243,8 +243,8 @@ let no_section_is_all_new () =
   | Verdict.Stale _ -> fail "expected No_baseline, got Stale"
   | Verdict.Compared -> fail "expected No_baseline, got Compared");
   (match (report v ~case:"a" ~metric:m_wall).Verdict.verdict with
-  | Verdict.New_row -> ()
-  | mv -> failf "expected New_row, got %s" (rel_name mv));
+  | Verdict.Proposed -> ()
+  | mv -> failf "expected Proposed, got %s" (rel_name mv));
   check_overall ~msg:"NEW passes" v `Pass;
   equal ~msg:"exit code" int 0 (Verdict.exit_code v)
 
@@ -788,8 +788,8 @@ let live_measure_smoke () =
 let live_run_smoke () =
   let v = Check.run ~config:live_config "smoke" [ Bench.bench "noop" ignore ] in
   (match (report v ~case:"noop" ~metric:m_wall).Verdict.verdict with
-  | Verdict.New_row -> ()
-  | mv -> failf "expected New_row, got %s" (rel_name mv));
+  | Verdict.Proposed -> ()
+  | mv -> failf "expected Proposed, got %s" (rel_name mv));
   equal ~msg:"suite name" string "smoke" (Verdict.suite v);
   check_overall ~msg:"NEW passes" v `Pass
 

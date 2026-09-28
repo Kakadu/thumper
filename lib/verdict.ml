@@ -32,7 +32,7 @@ type relation =
   | Within_budget of shift
   | Inconclusive of { reason : reason; shift : shift option }
 
-type metric_verdict = New_row | Judged of relation
+type metric_verdict = Proposed | Judged of relation
 
 type metric_report = {
   metric : Metric.t;
@@ -343,7 +343,7 @@ let compared_section ~identity file =
 
 let judge_metric ~gate section ~id ~trial metric measurement budget =
   match Baseline.find_row section ~id ~metric:(Metric.id metric) with
-  | None -> Settled New_row
+  | None -> Settled Proposed
   | Some row -> (
       let trial_k = Run.Trial.k trial in
       match (Baseline.row_evidence row, measurement) with
@@ -432,7 +432,7 @@ let judge ~identity ~suite ~gate ~selection ~budgets ~file ~cases =
               let budget = budget_for effective metric in
               let state =
                 match comparable with
-                | None -> Settled New_row
+                | None -> Settled Proposed
                 | Some s ->
                     judge_metric ~gate s ~id ~trial metric measurement budget
               in
@@ -621,11 +621,11 @@ let overall t =
   else if List.mem `Inconclusive outcomes then `Inconclusive
   else `Pass
 
-let has_new t =
+let has_proposed t =
   List.exists
     (fun c ->
       List.exists
-        (fun r -> match r.verdict with New_row -> true | Judged _ -> false)
+        (fun r -> match r.verdict with Proposed -> true | Judged _ -> false)
         c.reports)
     t.v_cases
 
@@ -639,7 +639,7 @@ let exit_code ?(strict = false) t =
         | Compared -> false
         | No_baseline | Stale _ -> true
       in
-      if strict && (non_compared || has_new t) then 1 else 0
+      if strict && (non_compared || has_proposed t) then 1 else 0
 
 (* JSON (v1 field names and escaping) *)
 
@@ -706,7 +706,7 @@ let strong_estimate = function
    relation's shift otherwise (an inconclusive row's first-pass shift when its
    rank test ran); exact evidence has no interval bounds. *)
 let deltas_of_verdict ~exact = function
-  | New_row -> (None, None, None)
+  | Proposed -> (None, None, None)
   | Judged (Inconclusive { shift = None; _ }) -> (None, None, None)
   | Judged (Equivalent None) -> (Some 0.0, None, None)
   | Judged (Equivalent (Some sh))
@@ -731,13 +731,13 @@ let json_metric buf case_report report =
   json_string buf (Metric.id report.metric);
   Buffer.add_string buf ",\"relation\":";
   (match report.verdict with
-  | New_row -> Buffer.add_string buf "null"
+  | Proposed -> Buffer.add_string buf "null"
   | Judged rel -> json_string buf (wire_relation rel));
   Buffer.add_string buf ",\"status\":";
   json_string buf (json_overall status);
   Buffer.add_string buf ",\"reason\":";
   (match report.verdict with
-  | New_row -> json_string buf "missing_baseline"
+  | Proposed -> json_string buf "missing_baseline"
   | Judged (Inconclusive { reason; _ }) -> json_string buf (wire_reason reason)
   | Judged _ -> Buffer.add_string buf "null");
   (match report.verdict with
@@ -754,7 +754,7 @@ let json_metric buf case_report report =
             (Printf.sprintf ",\"confirmed\":%b,\"n\":%d" confirmed
                (Array.length s.Run.sorted))
       | None -> ())
-  | New_row -> ());
+  | Proposed -> ());
   let delta, lower, upper =
     deltas_of_verdict
       ~exact:(exact_evidence case_report report.metric)
@@ -771,7 +771,7 @@ let json_metric buf case_report report =
 (* The per-case ratio a report contributes to the geomean, v1's guard: only
    finite, strictly positive ratios participate. *)
 let ratio_of_verdict = function
-  | New_row | Judged (Inconclusive { shift = None; _ }) -> None
+  | Proposed | Judged (Inconclusive { shift = None; _ }) -> None
   | Judged (Equivalent None) -> Some 1.0
   | ( Judged (Equivalent (Some _))
     | Judged (Within_budget _)
@@ -827,7 +827,7 @@ let json_summary buf t =
       let n_inconclusive =
         count (fun r ->
             match r.verdict with
-            | New_row | Judged (Inconclusive _) -> true
+            | Proposed | Judged (Inconclusive _) -> true
             | _ -> false)
       in
       let ratios =
@@ -926,7 +926,7 @@ let corrected t =
                       Some
                         (Baseline.exact_row ~id:c.id
                            ~metric:(Metric.id r.metric) value)
-                  | New_row ->
+                  | Proposed ->
                       Option.map
                         (row_of_measurement ~id:c.id ~k:(Run.Trial.k c.trial)
                            r.metric)

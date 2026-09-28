@@ -116,7 +116,7 @@ type relation =
           {!decide}), whatever the relation; [None] where no comparison ran. *)
 
 type metric_verdict =
-  | New_row
+  | Proposed
       (** No comparable baseline row — none in the section, or no current
           section: the candidate proposes, never judges. *)
   | Judged of relation
@@ -151,7 +151,7 @@ type comparison =
   | No_baseline  (** No section for this machine: whole section is NEW. *)
   | Stale of staleness
       (** Refuse to compare; propose a fresh section; exit 0. Every measured
-          metric is a [New_row], as with [No_baseline]. *)
+          metric is [Proposed], as with [No_baseline]. *)
   | Compared
 
 val compared_section :
@@ -239,8 +239,8 @@ val overall : t -> [ `Pass | `Fail | `Inconclusive ]
     only proven exact evidence: a statistical estimate crossing an absolute line
     is not an earned verdict. [`Inconclusive] iff no case fails and some
     {e budgeted} metric is [Inconclusive]; unbudgeted relations never change the
-    outcome, and a [New_row] changes it only when its exact count is over an
-    absolute cap, which consults no baseline. *)
+    outcome, and a [Proposed] row changes it only when its exact count is over
+    an absolute cap, which consults no baseline. *)
 
 val comparison : t -> comparison
 val cases : t -> case_report list
@@ -286,9 +286,10 @@ val gate : t -> Env.gate
     last sample judgment saw, which a report's load message must agree with. *)
 
 val exit_code : ?strict:bool -> t -> int
-(** [exit_code t] is the exit table: [0] pass / NEW / inconclusive; [1] confirmed
-    regression or exact budget violation. With [strict] (default [false]): also
-    [1] on inconclusive, NEW (any [New_row] or a missing section), and stale. *)
+(** [exit_code t] is the exit table: [0] pass / NEW / inconclusive; [1]
+    confirmed regression or exact budget violation. With [strict] (default
+    [false]): also [1] on inconclusive, NEW (any [Proposed] or a missing
+    section), and stale. *)
 
 val to_json : t -> string
 (** [to_json t] is the verdict document, v1 field names frozen — one line, stable
@@ -300,7 +301,7 @@ val to_json : t -> string
     - [summary.<metric-id>.{n_improved, n_regressed, n_equivalent,
        n_inconclusive, geomean_delta}] — [Within_budget] counts in
       [n_equivalent] (v1's bucket for [changed_within_budget]); [Inconclusive]
-      and [New_row] count in [n_inconclusive], so the lab's screen rule reads
+      and [Proposed] count in [n_inconclusive], so the lab's screen rule reads
       unconfirmed strong relations correctly; [geomean_delta] is the
       geometric mean over the per-case ratios [1 + delta] minus 1 ([null] when
       no case contributes one);
@@ -309,14 +310,14 @@ val to_json : t -> string
        upper_delta}] with the additive fields [confirmed] and [n] (sampled
       evidence) or [exact] (exact evidence) between [reason] and [delta]. Wire
       relations: [improved], [regressed], [equivalent], [changed_within_budget]
-      (terminal renders "within_budget"), [inconclusive]; [null] for [New_row],
+      (terminal renders "within_budget"), [inconclusive]; [null] for [Proposed],
       which reports [reason: "missing_baseline"] (v1's spelling) and
       [status: "pass"] — NEW is a promotion prompt, not a verdict — unless its
       exact count is over an absolute cap ([status: "fail"]). [reason] is
       otherwise non-null exactly for [inconclusive] relations, with the wire
       values ([Candidate_unstable] is ["unstable"], [Candidate_drifted] is
       ["drifted"]). [delta] is [0.0] for exact equality and [null] for
-      [New_row], a zero baseline, and inconclusive relations no rank test ran
+      [Proposed], a zero baseline, and inconclusive relations no rank test ran
       for (an inconclusive row that reached the rank test reports its first-pass
       shift, and contributes to [geomean_delta]); exact evidence always has
       [null] interval bounds. [status] is the metric's contribution to the case

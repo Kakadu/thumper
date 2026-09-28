@@ -111,7 +111,7 @@ let reason_name = function
   | Candidate_drifted -> "candidate_drifted"
 
 let rel_name = function
-  | Verdict.New_row -> "new"
+  | Verdict.Proposed -> "proposed"
   | Judged (Improved (Confirmed _)) -> "improved-confirmed"
   | Judged (Improved (Exact_change _)) -> "improved-exact"
   | Judged (Regressed (Confirmed _)) -> "regressed-confirmed"
@@ -633,8 +633,8 @@ let stale_section_makes_every_row_new () =
       equal ~msg:"recorded" string "5.4.0 64-bit release" section;
       equal ~msg:"current" string "5.5.0 64-bit release" current
   | _ -> failf "expected a stale comparison");
-  check_rel ~msg:"sampled is new" t ~case:"a" ~metric:m_wall "new";
-  check_rel ~msg:"exact is new too" t ~case:"a" ~metric:m_alloc "new";
+  check_rel ~msg:"sampled is proposed" t ~case:"a" ~metric:m_wall "proposed";
+  check_rel ~msg:"exact is proposed too" t ~case:"a" ~metric:m_alloc "proposed";
   check_overall ~msg:"new rows are not a verdict" t `Pass;
   equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
   equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t)
@@ -841,7 +841,7 @@ let a_cap_is_judged_without_a_baseline_row () =
   let first_run n = run_check ~budgets [ (bcase "a", alloc n) ] in
   let t = first_run 120 in
   check_rel ~msg:"first run: the row is proposed" t ~case:"a" ~metric:m_alloc
-    "new";
+    "proposed";
   check_overall ~msg:"first run: over the cap fails" t `Fail;
   equal ~msg:"first run: exit 1" int 1 (Verdict.exit_code t);
   check_overall ~msg:"first run: at the cap passes" (first_run 100) `Pass;
@@ -1035,7 +1035,7 @@ let new_section_proposes_everything () =
   in
   is_true ~msg:"comparison"
     (match Verdict.comparison t with No_baseline -> true | _ -> false);
-  check_rel t ~case:"a" ~metric:m_wall "new";
+  check_rel t ~case:"a" ~metric:m_wall "proposed";
   check_overall ~msg:"NEW is not a verdict" t `Pass;
   equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
   equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t);
@@ -1059,7 +1059,7 @@ let new_metric_row_is_added_on_compared_runs () =
       ]
   in
   check_rel ~msg:"judged metric" t ~case:"a" ~metric:m_wall "equivalent";
-  check_rel ~msg:"new metric" t ~case:"a" ~metric:m_alloc "new";
+  check_rel ~msg:"new metric" t ~case:"a" ~metric:m_alloc "proposed";
   equal ~msg:"strict exits 1 on a NEW row" int 1
     (Verdict.exit_code ~strict:true t);
   match Verdict.corrected t with
@@ -1101,7 +1101,7 @@ let proposals_record_gated_and_flagged_evidence () =
       ]
   in
   check_rel ~msg:"drift never affects a NEW judgment" compared ~case:"a"
-    ~metric:m_cpu "new";
+    ~metric:m_cpu "proposed";
   match Verdict.corrected compared with
   | None -> failf "expected the drifted NEW row to be proposed"
   | Some result ->
