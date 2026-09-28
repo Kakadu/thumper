@@ -13,7 +13,6 @@ let styled ~color style s =
       | `Red -> "31"
       | `Green -> "32"
       | `Yellow -> "33"
-      | `Cyan -> "36"
       | `Bold -> "1"
       | `Faint -> "2"
     in
@@ -119,7 +118,6 @@ type render = {
   exe : string option;
   github : bool;
   baseline_path : string;
-  corrected_path : string;
   wrote_corrected : bool;
   rerun_flags : string list;
   rerun_patterns : string list;

@@ -244,7 +244,6 @@ let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
     exe;
     github;
     baseline_path = baseline;
-    corrected_path = baseline ^ ".corrected";
     wrote_corrected = wrote;
     rerun_flags;
     rerun_patterns;

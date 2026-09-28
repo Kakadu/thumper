@@ -643,7 +643,6 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       exe = (if staged then None else Some exe);
       github = Sys.getenv_opt "GITHUB_ACTIONS" <> None;
       baseline_path;
-      corrected_path;
       wrote_corrected = Result.value written ~default:false;
       (* The rerun hint reproduces the invocation, not just the selection: the
          preset, an explicit --baseline and every --tag are carried

@@ -45,9 +45,6 @@ type render = {
   baseline_path : string;
       (** The baseline's path, which the header of a run against a current
           section prints. *)
-  corrected_path : string;
-      (** The corrected file's path. {!check} does not read it; the path it
-          prints is the one in [accept]. *)
   wrote_corrected : bool;
       (** Whether the corrected file was written. The [accept:] line prints iff
           it was. The load warning beside it prints when it was, the section is
