@@ -151,7 +151,7 @@ thumper: digest — 3 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
 
   ratchet the baseline:  dune promote
 
-  3 cases: 3 passed.
+  3 cases: 2 passed, 1 improved.
 File "bench/digest.thumper", line 1, characters 0-0:
 ------ bench/digest.thumper
 ++++++ bench/digest.thumper.corrected

@@ -734,7 +734,7 @@ thumper: digest — 3 cases vs digest.thumper for machine testkey
   rerun:   bench.exe -f alpha
   ratchet the baseline:  dune promote
 
-  3 cases: 2 passed, 1 regressed.
+  3 cases: 1 passed, 1 improved, 1 regressed.
 |}
 
 let pass_run_renders_header_table_summary () =
@@ -842,7 +842,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 
   ratchet the baseline:  dune promote
 
-  1 case: 1 passed.
+  1 case: 0 passed, 1 improved.
 |}
 
 let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
@@ -1027,12 +1027,33 @@ let summary_color_follows_the_exit_code () =
       (bcase "alpha", trial (ties 5 2e-6))
   in
   equal ~msg:"strict exits 1" int 1 (Verdict.exit_code ~strict:true v);
+  let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
+  assert_contains ~msg:"green when every case passes"
+    (Cli.render_check (ctx ~color:true ()) pass)
+    "\027[32m1 case: 1 passed.\027[0m";
   assert_contains ~msg:"yellow without --strict"
     (Cli.render_check (ctx ~color:true ()) v)
     "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m";
-  assert_contains ~msg:"red under --strict"
+  assert_contains ~msg:"red under --strict, which the words say"
     (Cli.render_check (ctx ~color:true ~strict:true ()) v)
-    "\027[31m1 case: 0 passed, 1 inconclusive.\027[0m"
+    "\027[31m1 case: 0 passed, 1 inconclusive; failed under --strict.\027[0m"
+
+let summary_counts_proposed_cases () =
+  (* A case with no baseline row was never compared: proposed, not passed.
+     Under --strict the run fails on it, and the summary says so. *)
+  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
+  let v =
+    verdict_of_cases ~file
+      [
+        (bcase "alpha", trial (ties 5 1e-6)); (bcase "beta", trial (ties 5 1e-6));
+      ]
+  in
+  assert_contains
+    (Cli.render_check (ctx ()) v)
+    "  2 cases: 1 passed, 1 proposed.\n";
+  assert_contains ~msg:"strict"
+    (Cli.render_check (ctx ~strict:true ()) v)
+    "  2 cases: 1 passed, 1 proposed; failed under --strict.\n"
 
 (* Main: validation, unlinks, list, exits *)
 
@@ -1512,6 +1533,7 @@ let () =
           test "an absolute cap on sampled evidence agrees with the exit code"
             absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
           test "ANSI color only when enabled" color_uses_ansi_only_when_enabled;
+          test "the summary counts proposed cases" summary_counts_proposed_cases;
           test "the summary's color follows the exit code"
             summary_color_follows_the_exit_code;
         ];

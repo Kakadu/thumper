@@ -920,22 +920,49 @@ let render_check r v =
         let n_inc =
           count (fun c -> Verdict.case_overall c = `Inconclusive) cases
         in
-        let n_pass = n_cases - n_fail - n_inc in
+        (* Among passing cases, a never-compared one is [proposed] and one
+           whose row opens on [improved] is improved: the summary never
+           counts as passed what the table does not call a pass. *)
+        let passing =
+          List.filter (fun c -> Verdict.case_overall c = `Pass) cases
+        in
+        let n_prop =
+          count
+            (fun (c : Verdict.case_report) ->
+              c.reports <> [] && List.for_all report_new c.reports)
+            passing
+        in
+        let n_imp =
+          count
+            (fun c ->
+              match check_cell c with
+              | { word = "improved"; _ } :: _ -> true
+              | _ -> false)
+            passing
+        in
+        let n_pass = n_cases - n_fail - n_inc - n_prop - n_imp in
+        let term n word =
+          if n > 0 then [ Printf.sprintf "%d %s" n word ] else []
+        in
         let parts =
           [ Printf.sprintf "%d passed" n_pass ]
-          @ (if n_fail > 0 then [ Printf.sprintf "%d regressed" n_fail ] else [])
-          @ if n_inc > 0 then [ Printf.sprintf "%d inconclusive" n_inc ] else []
+          @ term n_imp "improved" @ term n_fail "regressed"
+          @ term n_inc "inconclusive" @ term n_prop "proposed"
+        in
+        let code = Verdict.exit_code ~strict:r.strict v in
+        (* A run --strict failed says so in words, not in red alone. *)
+        let strict_clause =
+          if code <> 0 && Verdict.exit_code v = 0 then "; failed under --strict"
+          else ""
         in
         let style =
-          if Verdict.exit_code ~strict:r.strict v <> 0 then `Red
-          else if n_inc > 0 then `Yellow
-          else `Green
+          if code <> 0 then `Red else if n_inc > 0 then `Yellow else `Green
         in
         [
           "  "
           ^ styled ~color style
-              (Printf.sprintf "%d case%s: %s." n_cases (plural n_cases)
-                 (String.concat ", " parts));
+              (Printf.sprintf "%d case%s: %s%s." n_cases (plural n_cases)
+                 (String.concat ", " parts) strict_clause);
         ]
   in
   (* GitHub annotations on gating regressions, closing the report: CI wants

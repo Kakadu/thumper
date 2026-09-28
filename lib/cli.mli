@@ -291,10 +291,14 @@ val render_check : render -> Verdict.t -> string
       ([measured under load (L/C) — prefer a quiet host before accepting],
       yellow) beside the prompt.
     - {b Summary} (compared runs):
-      [<N> cases: <a> passed[, <b> regressed][, <c> inconclusive].] — the whole
-      line red iff the run exits 1 ([Verdict.exit_code ~strict:r.strict], so a
-      [--strict] run failed by inconclusive cases ends red), else yellow if any
-      case is inconclusive, else green.
+      [<N> cases: <a> passed[, <b> improved][, <c> regressed][, <d>
+       inconclusive][, <e> proposed][; failed under --strict].] — a case whose
+      row opens on [improved] counts as improved, a never-compared one as
+      proposed; the [--strict] clause appears when [--strict] alone made the run
+      exit 1. The whole line red iff the run exits 1
+      ([Verdict.exit_code ~strict:r.strict], so a [--strict] run failed by
+      inconclusive cases ends red), else yellow if any case is inconclusive,
+      else green.
 
     [::error::] annotations (when [r.github]) end the report and use the same
     gate predicate as the cells (every non-pass names its reason; NEW
