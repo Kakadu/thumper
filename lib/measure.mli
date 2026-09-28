@@ -193,8 +193,8 @@ module Protocol : sig
 
       Parsing is shape-only but total: any deviation — an unparseable line, an
       unknown or missing metric, a [samples] count disagreeing with the values
-      present (a hostile count allocates nothing), unsorted or non-finite
-      samples, out-of-range flags, text after [end], or a missing [end] (a
-      truncated stream) — is [Error (Worker_died _)] naming the deviation, never
-      an exception. *)
+      present (a hostile count allocates nothing), a negative exact count,
+      unsorted or non-finite samples, out-of-range flags, text after [end], or a
+      missing [end] (a truncated stream) — is [Error (Worker_died _)] naming the
+      deviation, never an exception. *)
 end

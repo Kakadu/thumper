@@ -578,7 +578,15 @@ let parse_accepts_the_pinned_grammar () =
   equal ~msg:"k" int 8 (Run.Trial.k t);
   equal ~msg:"alloc" int 54 (exact_of t Metric.alloc_words);
   equal ~msg:"wall n" int 3
-    (Array.length (samples_of t Metric.wall_time).Run.sorted)
+    (Array.length (samples_of t Metric.wall_time).Run.sorted);
+  let zero =
+    "k 8\n\
+     samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+     exact alloc_words 0\n\
+     end\n"
+  in
+  equal ~msg:"a zero count" int 0
+    (exact_of (trial_ok (parse ~metrics:both_metrics zero)) Metric.alloc_words)
 
 let malformed_wire =
   [
@@ -605,6 +613,11 @@ let malformed_wire =
     ( "unparseable exact value",
       "k 8\n\
        exact alloc_words fifty\n\
+       samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
+       end\n" );
+    ( "negative exact value",
+      "k 8\n\
+       exact alloc_words -3\n\
        samples wall_time 3 0 0x1p-21 0x1.8p-21 0x1p-20\n\
        end\n" );
     ("missing metric", "k 8\nexact alloc_words 54\nend\n");

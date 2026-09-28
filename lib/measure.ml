@@ -141,7 +141,8 @@ module Protocol = struct
       | [ "exact"; mid; v ] -> (
           let m = resolve mid in
           match int_of_string_opt v with
-          | Some v -> (m, Run.Exact v)
+          | Some v when v >= 0 -> (m, Run.Exact v)
+          | Some v -> malformed "negative exact value %d" v
           | None -> malformed "unparseable exact value %S" v)
       | "samples" :: mid :: count :: drifted :: values ->
           let m = resolve mid in
