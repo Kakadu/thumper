@@ -1860,11 +1860,13 @@ let rank_tested_inconclusive_keeps_its_shift () =
       is_true ~msg:"wide interval: a real interval"
         (sh.Verdict.lower < sh.Verdict.upper)
   | None -> failf "wide interval: expected the first-pass shift");
-  is_none ~msg:"environment at the first pass: no comparison ran"
+  first_is_doubling "environment at the first pass"
+    (run_check ~file
+       ~load:(Env.Loaded { load = 8.; cores = 8 })
+       [ (bcase "a", wall_trial (ties 5 2.0)) ]);
+  is_none ~msg:"a non-positive sample: no comparison ran"
     (inconclusive_shift
-       (run_check ~file
-          ~load:(Env.Loaded { load = 8.; cores = 8 })
-          [ (bcase "a", wall_trial (ties 5 2.0)) ]));
+       (run_check ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]));
   match
     inconclusive_shift
       (run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ])
@@ -1889,11 +1891,20 @@ let json_rank_tested_inconclusive_reports_its_deltas () =
   is_true ~msg:"in the geomean"
     (contains ~sub:("\"geomean_delta\":" ^ f d) json);
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let json =
+  let loaded =
     Verdict.to_json
       (run_check ~file
          ~load:(Env.Loaded { load = 8.; cores = 8 })
          [ (bcase "a", wall_trial (ties 5 2.0)) ])
+  in
+  is_true ~msg:"under load, the deltas as information"
+    (contains
+       ~sub:
+         ("\"reason\":\"environment\",\"confirmed\":false,\"n\":5,\"delta\":"
+        ^ f d ^ ",\"lower_delta\":" ^ f d ^ ",\"upper_delta\":" ^ f d)
+       loaded);
+  let json =
+    Verdict.to_json (run_check ~file [ (bcase "a", wall_trial (ties 5 0.0)) ])
   in
   is_true ~msg:"no comparison: null deltas"
     (contains ~sub:"\"delta\":null,\"lower_delta\":null,\"upper_delta\":null"

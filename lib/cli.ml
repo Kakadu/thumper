@@ -762,8 +762,14 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
       Some (4, frag "within budget" (tagged (interval s)))
   | Verdict.Judged (Verdict.Changed_within_budget s), _ ->
       Some (4, frag "within budget" (tagged (pct s.Verdict.estimate)))
-  | Verdict.Judged (Verdict.Inconclusive { reason; _ }), None ->
-      let reason = reason_short reason in
+  | Verdict.Judged (Verdict.Inconclusive { reason; shift }), None ->
+      (* Under load the estimate is printed as information. *)
+      let reason =
+        match shift with
+        | Some sh when reason = Verdict.Environment ->
+            reason_short reason ^ "  " ^ interval sh
+        | Some _ | None -> reason_short reason
+      in
       Some
         ( 2,
           if primary then frag ~style:`Yellow ~sep:": " "inconclusive" reason

@@ -224,7 +224,6 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
        host would not fix it, so it is tested before the load. *)
     (not (all_positive baseline)) || not (all_positive cand.Run.sorted)
   then Settled (Judged (inconclusive Non_positive))
-  else if is_loaded load then Settled (Judged (inconclusive Environment))
   else if
     (* Defensive: public constructors require n >= 3. *)
     Array.length baseline < 3
@@ -237,7 +236,10 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
            ~candidate:(log_all cand.Run.sorted))
     in
     let k_moved = row_k <> trial_k in
-    if
+    if is_loaded load then
+      (* The shift is information only: a loaded host judges nothing. *)
+      Settled (Judged (inconclusive ~shift:sh Environment))
+    else if
       (* Load explains drift, so drift is only read on a quiet host. Like
          instability, it undermines only a shift within 2e. *)
       cand.Run.drifted && bias_comparable ~e sh

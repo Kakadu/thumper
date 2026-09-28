@@ -833,8 +833,9 @@ let mv_hint_replaces_promote_outside_dune () =
 
 let loaded_run_warns_under_the_header () =
   (* The compared run's one load message: a yellow line directly under the
-     header; the sampled verdict degrades to inconclusive (environment) while
-     the exact alloc verdict stays visible. *)
+     header; the sampled verdict degrades to inconclusive (environment), with
+     its estimate and interval as information, while the exact alloc verdict
+     stays visible. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
   let v =
@@ -848,7 +849,7 @@ thumper: digest — 1 case vs digest.thumper for machine testkey
 warning: load 7.9 on 8 cores; timing verdicts degraded
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
-      environment; equivalent (alloc exact)
+      environment  +100.0% [+100.0, +100.0]; equivalent (alloc exact)
 
   1 case: 0 passed, 1 inconclusive.
 |}

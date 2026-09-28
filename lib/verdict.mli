@@ -48,8 +48,8 @@ type reason =
           spelling is [baseline_unstable]. *)
   | Environment
       (** The load given to {!judge}, or to {!decide} for a pending relation,
-          was [Loaded]. It concerns sampled comparisons only. Its JSON spelling
-          is [environment]. *)
+          was [Loaded]. It concerns sampled comparisons only, and its shift is
+          reported as information. Its JSON spelling is [environment]. *)
   | Unconfirmed
       (** The confirmation trial did not reproduce the pending regression, or
           could not ({!decide}). Its JSON spelling is [unconfirmed]. *)
@@ -230,10 +230,10 @@ val judge :
       [wall_time].
     - [file] is kept for {!corrected}.
 
-    A sampled comparison tests, in order, a non-positive sample ([Non_positive])
-    and a loaded host ([Environment]). It then computes the shift at α = 0.005
-    per side and tests this trial's drift flag ([Candidate_drifted]) and a moved
-    batch size ([Batch_drifted]) before the relation ({!type-relation}).
+    A sampled comparison tests a non-positive sample ([Non_positive]) first. It
+    then computes the shift at α = 0.005 per side and tests, in order, a loaded
+    host ([Environment]), this trial's drift flag ([Candidate_drifted]) and a
+    moved batch size ([Batch_drifted]) before the relation ({!type-relation}).
     [Exactness_lost] is decided before all of these. An exact comparison settles
     here, on a loaded host too, and a strong sampled relation waits for
     {!decide}.
