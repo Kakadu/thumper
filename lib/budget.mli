@@ -3,53 +3,37 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Per-metric performance contracts.
+(** Budgets: one metric and the {!type:contract} that bounds it.
 
-    A budget names one {!Metric.t} and one tolerance. [Verdict] judges every
-    budgeted metric of a case against that metric's budget alone — a case fails
-    iff some budgeted metric fails, and there is no cross-metric forgiveness
-   . This module only constructs and observes contracts; it never sees
-    samples or verdicts.
-
-    Contracts are {e relative} — the confirmed regression against the baseline
-    is bounded as a fraction ({!no_slower_than}, {!no_more_alloc_than},
-    {!relative}) — or {e absolute} — the measured value itself is bounded
-    ({!at_most}). A relative contract also carries the equivalence band
-    [e], resolved at construction: [equivalent_within] when given, else
-    [min band_cap (max_regression /. 2.)] — v1's own [r /. 2.] rule with a 2.5%
-    cap. Either way the band never exceeds the budget it serves: the relations
-    partition confirmed shifts only when [e <= r]. Cases left with no budget
-    once the uncollected ones are dropped get {!defaults}. *)
+    A budget is validated when it is built, and its equivalence band is resolved
+    then, so [Verdict] reads the band from the {!type:contract} and never
+    derives it. The module never sees evidence: what a contract makes of a
+    comparison is [Verdict]'s rule. [Thumper.Budget] re-exports {!type:t} and
+    the four {{!constructors}constructors} with their user contract, and nothing
+    else of this module. *)
 
 (** {1:types Types} *)
 
 type t
-(** The type for budgets: one metric, one contract. Values are immutable and
-    validated at construction: every tolerance is non-negative and not NaN, and
-    a relative band never exceeds its budget. *)
+(** The type for budgets. *)
 
-(** The type for contracts. [Relative] tolerances are fractions of the baseline
-    value ([0.05] is 5%); the [Absolute_max] tolerance is in the metric's own
-    {!Metric.units}. *)
+(** The type for what a budget bounds. *)
 type contract =
   | Relative of { max_regression : float; band : float }
-      (** Fails when the metric regresses by more than [max_regression], after
-          confirmation. [band] is the equivalence band [e], already
-          resolved (see {!relative}); [band <= max_regression] always, which is
-          what keeps the relations pairwise disjoint. With
-          [max_regression = 0.] the band is [0.] — derived or explicit — and
-          the relation order stays total: improved ([U < 0]) → regressed
-          ([L > 0]) → within_budget ([U ≤ 0]) → inconclusive. *)
+      (** A bound on the change from the baseline, as a fraction of the baseline
+          value: [max_regression] is the budget [r] and [band] the equivalence
+          band [e]. [0. <= band <= max_regression], neither is NaN, and [band]
+          is [0.] when [max_regression] is. *)
   | Absolute_max of float
-      (** Fails when the metric's {e proven exact} value exceeds the
-          tolerance; no baseline is consulted. Only exact evidence gates (a statistical estimate crossing an absolute line is not an earned
-          verdict): sampled evidence under a cap is judged under default
-          relative parameters and reported, never failed. *)
+      (** A cap on this run's exact count, in the metric's {!Metric.units}:
+          non-negative, not NaN, and only on a counter metric
+          ({!Metric.is_counter}). A count over the cap fails its case whatever
+          the baseline holds; sampled evidence never does. *)
 
 (** {1:constructors Constructors}
 
-    All constructors raise [Invalid_argument] on a negative or NaN tolerance — a
-    nonsense budget is a programmer error, never a measurement outcome. *)
+    Each constructor raises [Invalid_argument] if a tolerance is negative or
+    NaN. *)
 
 val relative :
   metric:Metric.t ->
@@ -57,76 +41,65 @@ val relative :
   max_regression:float ->
   unit ->
   t
-(** [relative ~metric ~max_regression ()] fails when [metric] regresses by more
-    than [max_regression] (as a fraction of the baseline), after confirmation.
-    [equivalent_within] overrides the equivalence band, which defaults to
-    [min band_cap (max_regression /. 2.)]; an explicit override may exceed
-    {!band_cap} — the cap binds only the derived band — but never
-    [max_regression]: the relations partition confirmed shifts only when
-    the band is within the budget.
+(** [relative ~metric ?equivalent_within ~max_regression ()] is the budget on
+    [metric] with the contract [Relative { max_regression; band }]. [band] is
+    [equivalent_within], which defaults to
+    [min band_cap (max_regression /. 2.)].
 
-    Raises [Invalid_argument] if [max_regression] or [equivalent_within] is
-    negative or NaN, or if [equivalent_within] exceeds [max_regression]. [0.] is
-    legal for both: a zero budget or band degenerates rather than errors (see
-    {!type:contract}). *)
+    Raises [Invalid_argument] if [equivalent_within] exceeds [max_regression].
+*)
 
 val no_slower_than : ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-(** [no_slower_than frac] is
-    [relative ~metric ?equivalent_within ~max_regression:frac ()]. [metric]
-    defaults to {!Metric.wall_time}.
-
-    {b Warning.} v1's [no_slower_than] defaulted to [cpu_time]; a bare
-    [no_slower_than] now gates wall-clock time — a deliberate migration change. *)
+(** [no_slower_than r] is
+    [relative ~metric ?equivalent_within ~max_regression:r ()]. [metric]
+    defaults to {!Metric.wall_time}. *)
 
 val no_more_alloc_than :
   ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-(** [no_more_alloc_than frac] is like {!no_slower_than} except that [metric]
-    defaults to {!Metric.alloc_words}. [no_more_alloc_than 0.0] pins
-    allocations: exact counts must not grow at all, and when exactness is lost
-    the comparison degrades to inconclusive rather than running a rank test at
-    zero budget. *)
+(** [no_more_alloc_than r] is {!no_slower_than} with [metric] defaulting to
+    {!Metric.alloc_words}. *)
 
 val at_most : metric:Metric.t -> float -> t
-(** [at_most ~metric v] fails when the proven exact value of [metric] exceeds
-    [v], in [metric]'s own {!Metric.units}. Only exact evidence gates;
-    a run whose probe fails reads the cap as inconclusive, never as failure.
+(** [at_most ~metric v] is the budget on [metric] with the contract
+    [Absolute_max v].
 
-    Raises [Invalid_argument] if [v] is negative or NaN — checked first — or
-    if [metric] is not {!Metric.is_counter}: a cap on a metric that can
-    never be exact could never fail, and a budget that cannot fail is a
-    silent lie in the suite's contract list. *)
+    Raises [Invalid_argument] if [metric] is not a counter metric
+    ({!Metric.is_counter}), as {!Metric.wall_time} and {!Metric.cpu_time} are
+    not. A negative or NaN [v] is refused first, whatever [metric]. *)
 
-(** {1:queries Queries} *)
+(** {1:observers Observers and checks} *)
 
 val metric : t -> Metric.t
-(** [metric b] is the metric [b] binds. Budgets bind by metric identity: this
-    value under {!Metric.equal} is the key per-metric resolution looks a case's
-    budget list up by. *)
+(** [metric b] is the metric [b] binds. A list of budgets holds at most one
+    budget per metric ({!check_distinct}), so this metric, compared with
+    {!Metric.equal}, is the list's key. *)
 
 val contract : t -> contract
-(** [contract b] is [b]'s contract, with the equivalence band resolved. *)
+(** [contract b] is [b]'s contract, with its band resolved. *)
 
 val check_distinct : fname:string -> t list -> unit
 (** [check_distinct ~fname budgets] checks that no two of [budgets] bind the
-    same metric ({!Metric.equal}). This is the one statement of the rule: the
-    constructors that take a [~budgets] list, [Check.run] (before the lease) and
-    the CLI entry point all call it. Raises [Invalid_argument], prefixed with
-    [fname], naming the metric. *)
+    same metric. Every [~budgets] list the library accepts is checked by it, so
+    the rule and its message have one owner.
 
-(** {1:defaults Defaults}
+    Raises [Invalid_argument]
+    [<fname>: two budgets for metric <id> in one ~budgets list], naming the
+    first metric found twice. [fname] must be the name of the value the user
+    called. *)
 
-    The protocol constants this module owns. *)
+(** {1:defaults Defaults} *)
 
 val default_max_regression : float
-(** [default_max_regression] is [0.05]: the default 5% regression budget.
-*)
+(** [default_max_regression] is [0.05]. [Verdict] judges a metric without a
+    budget, and sampled evidence under an {!at_most} cap, with this [r]. *)
 
 val band_cap : float
-(** [band_cap] is [0.025]: the cap on the {e derived} equivalence band. An explicit [equivalent_within] may exceed it, though never the budget
-    (see {!relative}). [Verdict]'s relation table shares this constant. *)
+(** [band_cap] is [0.025], the largest band {!relative} derives. An explicit
+    [equivalent_within] may exceed it. [Verdict]'s band for a metric without a
+    budget, and for sampled evidence under an {!at_most} cap, is
+    [min band_cap (default_max_regression /. 2.)]. *)
 
 val defaults : t list
-(** [defaults] is [[no_slower_than default_max_regression]] — the budget list
-    for cases left with none (from case, group, or run) once the budgets on
-    metrics they do not collect are dropped: wall-clock time may regress by at
-    most 5%, with a 2.5% band. *)
+(** [defaults] is [[no_slower_than default_max_regression]]: the budgets of a
+    case left with none once the budgets on metrics it does not collect are
+    dropped. It binds only a case that collects {!Metric.wall_time}. *)
