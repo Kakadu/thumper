@@ -113,17 +113,18 @@ val config_of : ?config:Config.t -> options -> Config.t
     faint, red, green, yellow, cyan), plain ANSI. *)
 
 val use_color :
-  color -> is_tty:bool -> inside_dune:bool -> no_color:bool -> bool
-(** [use_color mode ~is_tty ~inside_dune ~no_color] resolves [--color] for one
+  color -> is_tty:bool -> rule_action:bool -> no_color:bool -> bool
+(** [use_color mode ~is_tty ~rule_action ~no_color] resolves [--color] for one
     output stream: [`Always] is [true], [`Never] is [false], and [`Auto] is
-    [(is_tty || inside_dune) && not no_color]. An explicit [--color always]
+    [(is_tty || rule_action) && not no_color]. An explicit [--color always]
     beats [NO_COLOR] (the no-color.org contract: the variable is a default, a
     user's explicit request wins); [NO_COLOR] only dampens [`Auto], where
-    [no_color] is [true] iff the variable is set non-empty. [inside_dune]
-    ([INSIDE_DUNE] set) participates in [`Auto] because dune captures rule
+    [no_color] is [true] iff the variable is set non-empty. [rule_action]
+    ({!promotion_staged}) participates in [`Auto] because dune captures a rule's
     output and re-displays it in a color-capable terminal (windtrap's rule), so
-    a non-TTY pipe under dune still wants styling. {!main} resolves each stream
-    with its own [isatty]. *)
+    a non-TTY pipe in a rule action still wants styling; [dune exec] also sets
+    [INSIDE_DUNE], but its output goes where its user sent it, so a file gets no
+    escapes. {!main} resolves each stream with its own [isatty]. *)
 
 (** {1:status The status line}
 
@@ -187,7 +188,7 @@ val promotion_staged : inside_dune:string option -> cwd:string -> bool
     lies inside the build directory (under the dirname of [INSIDE_DUNE]'s
     build-context path, or — for older dunes that set ["1"], and for sandboxes —
     containing a [_build] component). Pure; {!main} feeds it the real
-    environment. Wording only — never behavior. *)
+    environment. Wording and colour only — never behavior. *)
 
 val accept_command :
   promotion_staged:bool -> corrected:string -> baseline:string -> string
@@ -379,9 +380,9 @@ val main :
       rows it drops. Under [--force] on a loaded host, the [# forced:]
       annotation of a filtered bless names its cases.
 
-    Environment: [--color], the per-stream TTY state, [NO_COLOR], and
-    [INSIDE_DUNE] resolve color ({!use_color}); [GITHUB_ACTIONS] gates
-    annotations; [INSIDE_DUNE] with the working directory picks the hints only
+    Environment: [--color], the per-stream TTY state, [NO_COLOR], and a rule
+    action ({!promotion_staged}) resolve color ({!use_color}); [GITHUB_ACTIONS]
+    gates annotations; [INSIDE_DUNE] with the working directory picks the hints
     ({!promotion_staged}: [dune promote] and no rerun line under a rule action,
     else [mv] and the rerun line); [THUMPER_MACHINE] (validated here: a
     malformed value is exit 2, not a crash) and [THUMPER_LOCK_DIR] are consumed

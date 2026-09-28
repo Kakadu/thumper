@@ -483,17 +483,17 @@ let config_of_keeps_the_callers_knobs () =
 let use_color_resolution () =
   let auto = Cli.use_color `Auto in
   is_true ~msg:"auto: tty"
-    (auto ~is_tty:true ~inside_dune:false ~no_color:false);
+    (auto ~is_tty:true ~rule_action:false ~no_color:false);
   is_true ~msg:"auto: pipe"
-    (not (auto ~is_tty:false ~inside_dune:false ~no_color:false));
-  is_true ~msg:"auto: dune re-displays captured output"
-    (auto ~is_tty:false ~inside_dune:true ~no_color:false);
+    (not (auto ~is_tty:false ~rule_action:false ~no_color:false));
+  is_true ~msg:"auto: dune re-displays a rule action's output"
+    (auto ~is_tty:false ~rule_action:true ~no_color:false);
   is_true ~msg:"auto: NO_COLOR dampens"
-    (not (auto ~is_tty:true ~inside_dune:true ~no_color:true));
+    (not (auto ~is_tty:true ~rule_action:true ~no_color:true));
   is_true ~msg:"always beats NO_COLOR (no-color.org)"
-    (Cli.use_color `Always ~is_tty:false ~inside_dune:false ~no_color:true);
+    (Cli.use_color `Always ~is_tty:false ~rule_action:false ~no_color:true);
   is_true ~msg:"never beats a tty"
-    (not (Cli.use_color `Never ~is_tty:true ~inside_dune:false ~no_color:false))
+    (not (Cli.use_color `Never ~is_tty:true ~rule_action:false ~no_color:false))
 
 (* The status line *)
 

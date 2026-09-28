@@ -238,14 +238,15 @@ let config_of ?config (o : options) =
 
    Per-stream resolution (.mli): [--color always] beats NO_COLOR (the
    no-color.org contract — the variable is a default, an explicit request
-   wins); NO_COLOR only dampens Auto; INSIDE_DUNE joins Auto because dune
-   captures rule output and re-displays it in a color-capable terminal
-   (windtrap's rule). *)
-let use_color mode ~is_tty ~inside_dune ~no_color =
+   wins); NO_COLOR only dampens Auto; a rule action joins Auto because dune
+   captures its output and re-displays it in a color-capable terminal
+   (windtrap's rule). [dune exec] sets INSIDE_DUNE too, but its stdout is
+   the user's own: a file there gets no escapes. *)
+let use_color mode ~is_tty ~rule_action ~no_color =
   match mode with
   | `Always -> true
   | `Never -> false
-  | `Auto -> (is_tty || inside_dune) && not no_color
+  | `Auto -> (is_tty || rule_action) && not no_color
 
 let styled ~color style s =
   if not color then s
@@ -1480,7 +1481,7 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         let config = config_of ?config o in
         let color =
           use_color o.color ~is_tty:(Unix.isatty Unix.stdout)
-            ~inside_dune:(inside_dune <> None)
+            ~rule_action:staged
             ~no_color:
               (match Sys.getenv_opt "NO_COLOR" with
               | Some s when s <> "" -> true

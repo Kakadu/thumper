@@ -757,9 +757,9 @@ val run :
 
     {b Color} ([--color auto|always|never], default [auto]) resolves per stream:
     [always] and [never] are unconditional — an explicit [--color always] beats
-    [NO_COLOR] — while [auto] styles when the stream is a terminal (or
-    [INSIDE_DUNE] is set: dune re-displays captured rule output in a
-    color-capable terminal) and [NO_COLOR] is unset or empty. Color is
+    [NO_COLOR] — while [auto] styles when the stream is a terminal (or the
+    process runs as a dune rule action: dune re-displays captured rule output in
+    a color-capable terminal) and [NO_COLOR] is unset or empty. Color is
     reinforcement only: the report reads identically with color off.
 
     Environment: [THUMPER_MACHINE] overrides the machine key

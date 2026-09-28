@@ -44,7 +44,8 @@ pipeline is new (design rationale distilled in `doc/dev/`):
   pure function of (file, verdict) that can never advance a regressed,
   inconclusive, or unconfirmed case. Promoting after any run is safe by
   construction. `bless` is a candidate too; nothing writes the baseline in
-  place, and `INSIDE_DUNE` affects hint wording only.
+  place, and `INSIDE_DUNE` picks only the hints and, in a rule action, the
+  colour.
 - **Environment honesty.** A per-user lease serializes all measurement on a
   host; a load gate degrades timing verdicts to `inconclusive` on a busy
   machine (`--wait-quiet` waits instead); a compiler upgrade makes a section
