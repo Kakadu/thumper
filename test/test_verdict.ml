@@ -369,6 +369,24 @@ let unconfirmed_improvement_is_inconclusive_and_never_ratchets () =
   check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed";
   is_none ~msg:"no candidate" (Verdict.corrected t)
 
+let confirmation_warnings_reach_the_report () =
+  (* The confirmation's samples are judged and pooled, so a warning about
+     them reaches the case; one the first trial already raised is not
+     repeated. *)
+  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+  let with_warnings ws =
+    Run.Trial.make ~k:8 ~warnings:ws
+      [ (m_wall, Run.Samples (sam (ties 5 2.0))) ]
+  in
+  let t =
+    run_check ~file
+      ~confirm:(fun _ -> Some (with_warnings [ "gc"; "folded" ]))
+      [ (bcase "a", with_warnings [ "gc" ]) ]
+  in
+  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
+  equal (list string) [ "gc"; "folded" ]
+    (List.hd (Verdict.cases t)).Verdict.warnings
+
 let queue_lists_only_sampled_strongs_in_case_order () =
   let file =
     (fun f -> f)
@@ -1658,6 +1676,8 @@ let () =
             confirmation_is_judged_at_the_wider_alpha;
           test "an unconfirmed improvement is inconclusive and never ratchets"
             unconfirmed_improvement_is_inconclusive_and_never_ratchets;
+          test "a confirmation's warnings reach the report"
+            confirmation_warnings_reach_the_report;
           test "the queue lists sampled strongs in case order"
             queue_lists_only_sampled_strongs_in_case_order;
           test "decide rejects unrequested or duplicate confirmations"

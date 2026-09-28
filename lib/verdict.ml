@@ -539,12 +539,23 @@ let decide ~gate ~confirmations:confs p =
               { metric; verdict; budget })
             pc.c_states
         in
+        (* The confirmation's samples are judged and pooled, so its
+           warnings are the case's too; one the first trial raised already
+           is not repeated. *)
+        let conf_warnings =
+          match conf with
+          | None -> []
+          | Some trial ->
+              List.filter
+                (fun w -> not (List.mem w pc.c_warnings))
+                (Run.Trial.warnings trial)
+        in
         {
           id = pc.c_id;
           full_name = pc.c_full_name;
           trial = pc.c_trial;
           reports;
-          warnings = pc.c_warnings;
+          warnings = pc.c_warnings @ conf_warnings;
         })
       p.p_cases
   in

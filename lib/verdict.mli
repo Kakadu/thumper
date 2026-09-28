@@ -134,7 +134,9 @@ type case_report = {
   full_name : string;
   trial : Run.Trial.t;  (** Candidate evidence (feeds NEW rows). *)
   reports : metric_report list;  (** Measured metrics, in trial order. *)
-  warnings : string list;  (** The trial's measurement-time warnings. *)
+  warnings : string list;
+      (** The trial's measurement-time warnings, then those of its confirmation
+          trial that the first did not raise. *)
 }
 
 (** {1:comparability Comparability} *)
