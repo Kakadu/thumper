@@ -19,7 +19,7 @@ to a build-failing regression gate, to the library underneath the CLI.
 - `05-config-and-noise` — the protocol as a value: presets and setters,
   `--quick` / `--precise`, what inconclusive means, `--wait-quiet` /
   `--strict` / `--color`, and `THUMPER_MACHINE` CI lanes.
-- `06-programmatic` — the library without the CLI: `measure`, `Run`
+- `07-programmatic` — the library without the CLI: `measure`, `Run`
   projections, `Baseline`, `Check.run`, and `Verdict.corrected` / `to_json` /
   `exit_code` — the CI gate as a program.
 
@@ -184,24 +184,10 @@ Still exit 0 — noise is never a red build — and the exact allocation
 comparisons stayed earned and visible while the timing side degraded.
 Example 05 is about exactly this.
 
-## The gate as a program (example 06)
+## The library without the command line (example 07)
 
-The same machinery as ordinary values — no argv, no CLI; the run below
-bootstraps a synthetic baseline in a temp file, then re-checks against it:
-
-```
-$ dune exec examples/06-programmatic/programmatic.exe
-== measure: evidence, no judgment ==
-rev  wall_time median 1399 ns (11 samples), alloc_words exact 3000
-sum  wall_time median 2769 ns (11 samples), alloc_words exact 0
-== check: judge against a baseline ==
-recorded first section for machine ca352e279bc47cb1
-{"overall":"inconclusive","machine":"ca352e279bc47cb1","summary":{"wall_time":{"n_improved":0,"n_regressed":0,"n_equivalent":1,"n_inconclusive":1,"geomean_delta":0.0032353722919238326},"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":2,"n_inconclusive":0,"geomean_delta":0}},"cases":[...]}
-exit code: 0
-```
-
-This run shared the machine with a parallel build, and the verdict document
-says exactly what that meant: `sum`'s timing compared equivalent (+0.3%, CI
-[−2.5%, +2.0%]), `rev`'s samples drifted mid-trial and its timing row is
-`inconclusive` with `"reason":"drifted"`, both allocation rows compared as
-exact integers and passed — and inconclusive is exit 0, never a red build.
+`dune exec examples/07-programmatic/programmatic.exe` measures the suite and
+prints each case's median time and exact allocation, then checks it against
+`programmatic.thumper` in the working directory, prints the JSON document,
+writes `programmatic.thumper.corrected` when it proposes a change, and exits
+with the verdict's exit code.
