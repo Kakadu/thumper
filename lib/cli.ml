@@ -119,6 +119,10 @@ let parse argv =
         baseline := Some v;
         go rest
     | [ "--baseline" ] -> missing "--baseline"
+    | "--json" :: "-" :: _ ->
+        (* No stdout document: the report owns stdout, and a file named [-]
+           is never what was meant. *)
+        fail "option '--json' requires a file path, got '-'"
     | "--json" :: v :: rest ->
         json := Some v;
         go rest

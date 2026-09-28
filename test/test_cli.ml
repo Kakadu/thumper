@@ -363,6 +363,13 @@ let missing_option_arguments_are_usage_errors () =
     (fun flag -> assert_contains ~msg:flag (usage_error [ flag ]) flag)
     [ "-f"; "--tag"; "--baseline"; "--json"; "--wait-quiet"; "--color" ]
 
+let json_dash_is_a_usage_error () =
+  equal string "option '--json' requires a file path, got '-'"
+    (usage_error [ "--json"; "-" ]);
+  equal ~msg:"equals form" string
+    "option '--json' requires a file path, got '-'"
+    (usage_error [ "--json=-" ])
+
 let malformed_wait_quiet_is_a_usage_error () =
   List.iter
     (fun v ->
@@ -1448,6 +1455,7 @@ let () =
             missing_option_arguments_are_usage_errors;
           test "malformed --wait-quiet is a usage error"
             malformed_wait_quiet_is_a_usage_error;
+          test "--json - is a usage error" json_dash_is_a_usage_error;
           test "unknown options are usage errors"
             unknown_options_are_usage_errors;
           test "-h and -V win" help_and_version_win;

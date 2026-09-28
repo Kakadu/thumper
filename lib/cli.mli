@@ -43,7 +43,8 @@ type options = {
           config by setting the batch count to [Config.quick]'s /
           [Config.precise]'s ({!config_of}). Not on [list]. *)
   baseline : string option;  (** [--baseline PATH]. Not on [list]. *)
-  json : string option;  (** [--json PATH]. [check] only. *)
+  json : string option;
+      (** [--json PATH]. [check] only. [-] is refused: stdout is the report. *)
   strict : bool;
       (** [--strict]: inconclusive, NEW, and stale exit 1. [check] only. *)
   wait_quiet : float option;
