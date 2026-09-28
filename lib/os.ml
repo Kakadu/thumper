@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* [Unix] has no monotonic clock ([Unix.gettimeofday] is wall time), so waits
+   and deadlines read the vendored one. *)
 let monotonic_s () = float_of_int (Thumper_clock.now_ns ()) *. 1e-9
 
 let write_all fd s =
