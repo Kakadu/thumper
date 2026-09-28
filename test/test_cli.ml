@@ -969,6 +969,63 @@ let alloc_column_scales_per_column () =
   assert_contains ~msg:"small counts exact" out "54 w";
   assert_contains ~msg:"separators at the base unit" out "32,730 w"
 
+let large_alloc_cells_never_print_an_exponent () =
+  (* Where [%.4g] (exact) or [%.3g] (sampled) would turn to exponent
+     notation, a cell prints a grouped integer: a 12 Mw count in a kilo
+     column, and a sampled 1,234.5 w beside a 54 w row. Exact cells below
+     that keep their four significant digits. *)
+  let sampled v =
+    Run.Trial.make ~k:8
+      [
+        (m_wall, Run.Samples (sam (ties 5 1e-6)));
+        (m_alloc, Run.Samples (sam (ties 5 v)));
+      ]
+  in
+  let v =
+    verdict_of_cases
+      [
+        (bcase "a", trial ~alloc:(Some 3000) (ties 5 1e-6));
+        (bcase "b", trial ~alloc:(Some 12_345_678) (ties 5 1e-6));
+        (bcase "c", sampled 2_345_678.);
+        (bcase "d", trial ~alloc:(Some 999_600) (ties 5 1e-6));
+        (bcase "e", trial ~alloc:(Some 1_234_500) (ties 5 1e-6));
+        (bcase "f", trial ~alloc:(Some 9_999_500) (ties 5 1e-6));
+        (bcase "g", sampled 999_500.);
+      ]
+  in
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — no baseline for machine testkey (Test CPU)
+
+  proposed  1.00 us  ±0.0%       3 kw  a
+  proposed  1.00 us  ±0.0%  12,346 kw  b
+  proposed  1.00 us  ±0.0%  ~2,346 kw  c
+  proposed  1.00 us  ±0.0%   999.6 kw  d
+  proposed  1.00 us  ±0.0%    1234 kw  e
+  proposed  1.00 us  ±0.0%  10,000 kw  f
+  proposed  1.00 us  ±0.0%  ~1,000 kw  g
+
+  accept:  dune promote
+|};
+  let v =
+    verdict_of_cases
+      [
+        (bcase "a", trial ~alloc:(Some 54) (ties 5 1e-6));
+        (bcase "b", sampled 1234.5);
+      ]
+  in
+  expect (Cli.render_check (ctx ~wrote:true ()) v)
+  @@ __POS_OF__
+       {|
+thumper: digest — no baseline for machine testkey (Test CPU)
+
+  proposed  1.00 us  ±0.0%      54 w  a
+  proposed  1.00 us  ±0.0%  ~1,235 w  b
+
+  accept:  dune promote
+|}
+
 let sampled_alloc_renders_approximate () =
   (* A failed exactness probe leaves sampled allocation evidence: the cell
      says so with the ~ marker, scaled, without a ci% of its own — one
@@ -1673,6 +1730,8 @@ let () =
           test "alloc column scales per column" alloc_column_scales_per_column;
           test "sampled alloc renders approximate with the ~ marker"
             sampled_alloc_renders_approximate;
+          test "large alloc cells never print an exponent"
+            large_alloc_cells_never_print_an_exponent;
           test "measurement warnings render after the table"
             measurement_warnings_render_after_the_table;
           test "an absent column leaves no gap" absent_columns_leave_no_gap;

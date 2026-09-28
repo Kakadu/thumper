@@ -324,11 +324,27 @@ let words_unit v =
   let a = Float.abs v in
   if a < 1e3 then ("w", 1.) else if a < 1e6 then ("kw", 1e-3) else ("Mw", 1e-6)
 
-let exact_words ~unit ~wscale n =
-  if wscale = 1. then group_int n ^ " w"
-  else Printf.sprintf "%.4g %s" (float_of_int n *. wscale) unit
+(* A scaled value prints as a grouped integer, as base-unit counts do, from
+   where its [%g] precision would turn to exponent notation ([1.235e+04 kw]):
+   [%.4g] at five integer digits for an exact cell, [%.3g] at four for a
+   sampled one. Below that, the cell keeps its significant digits. The unit
+   stays the column's. *)
+let exact_exponent_at = 9999.5
+let approx_exponent_at = 999.5
 
-let approx_words ~unit ~wscale v = Printf.sprintf "~%.3g %s" (v *. wscale) unit
+let grouped_scaled v unit =
+  group_int (Float.to_int (Float.round v)) ^ " " ^ unit
+
+let exact_words ~unit ~wscale n =
+  let v = float_of_int n *. wscale in
+  if wscale = 1. then group_int n ^ " w"
+  else if Float.abs v >= exact_exponent_at then grouped_scaled v unit
+  else Printf.sprintf "%.4g %s" v unit
+
+let approx_words ~unit ~wscale v =
+  let v = v *. wscale in
+  if Float.abs v >= approx_exponent_at then "~" ^ grouped_scaled v unit
+  else Printf.sprintf "~%.3g %s" v unit
 
 let exact_str metric n =
   match Metric.kind metric with

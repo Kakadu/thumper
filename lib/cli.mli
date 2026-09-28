@@ -257,10 +257,12 @@ val render_check : render -> Verdict.t -> string
       comparable down the column and never mix [us] and [ms], or [w] and [kw];
       units are ASCII. At the base unit, exact allocation integers render with
       thousands separators (["32,730 w"]); a kilo-scale column renders scaled
-      with trailing zeros trimmed (["3 kw"], ["32.73 kw"]). Display rounds; the
-      gate never does — exact deltas in verdict cells keep full integers.
-      Sampled allocation renders approximate, scaled, without its own ci%
-      (["~2.1 kw"] — one representation, the time ci already carries the
+      with trailing zeros trimmed (["3 kw"], ["32.73 kw"]), and a scaled value
+      past its significant digits (five integer digits exact, four sampled) as a
+      grouped integer (["12,346 kw"]), never in exponent notation. Display
+      rounds; the gate never does — exact deltas in verdict cells keep full
+      integers. Sampled allocation renders approximate, scaled, without its own
+      ci% (["~2.1 kw"] — one representation, the time ci already carries the
       sampling noise). The value columns show the first time-kind and first
       allocation-kind metrics; every other metric surfaces through the verdict
       cell. Per-case measurement warnings and run-level prune notices follow the
