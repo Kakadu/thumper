@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 let styled ~color style s =
   if not color then s
   else
@@ -15,7 +17,7 @@ let styled ~color style s =
       | `Bold -> "1"
       | `Faint -> "2"
     in
-    Printf.sprintf "\027[%sm%s\027[0m" code s
+    strf "\027[%sm%s\027[0m" code s
 
 (* The status line *)
 
@@ -25,8 +27,7 @@ let status_line (p : Check.progress) =
     | `Measuring -> "measuring"
     | `Confirming -> "confirming"
   in
-  Printf.sprintf "thumper: %s %d/%d — %s" verb p.Check.index p.Check.total
-    p.Check.case
+  strf "thumper: %s %d/%d — %s" verb p.Check.index p.Check.total p.Check.case
 
 (* Value formatting *)
 
@@ -71,15 +72,15 @@ let grouped_scaled v unit =
 let approx_words ~unit ~wscale v =
   let v = v *. wscale in
   if Float.abs v >= approx_exponent_at then "~" ^ grouped_scaled v unit
-  else Printf.sprintf "~%.3g %s" v unit
+  else strf "~%.3g %s" v unit
 
 let exact_str metric n =
   match Metric.kind metric with
   | `Allocation -> group_int n ^ " w"
-  | `Time | `Other -> Printf.sprintf "%s %s" (group_int n) (Metric.units metric)
+  | `Time | `Other -> strf "%s %s" (group_int n) (Metric.units metric)
 
-let pct e = Printf.sprintf "%+.1f%%" (e *. 100.)
-let bound e = Printf.sprintf "%+.1f" (e *. 100.)
+let pct e = strf "%+.1f%%" (e *. 100.)
+let bound e = strf "%+.1f" (e *. 100.)
 
 (* Verdict classification *)
 
@@ -223,12 +224,12 @@ let table_lines ~color rows =
       (fun r ->
         let t =
           match r.time with
-          | Some (v, _) -> Printf.sprintf "%.2f %s" (v *. scale) unit
+          | Some (v, _) -> strf "%.2f %s" (v *. scale) unit
           | None -> ""
         in
         let ci =
           match r.time with
-          | Some (_, Some p) -> Printf.sprintf "\xc2\xb1%.1f%%" p
+          | Some (_, Some p) -> strf "\xc2\xb1%.1f%%" p
           | _ -> ""
         in
         let alloc =
@@ -293,13 +294,13 @@ let metric_tag m =
 (* A sampled shift and its interval: [+12.1% [+7.3, +17.5]]. The report's
    cells and the annotations print it, and a relative budget, the same way. *)
 let interval (s : Verdict.shift) =
-  Printf.sprintf "%s [%s, %s]" (pct s.Verdict.estimate) (bound s.Verdict.lower)
+  strf "%s [%s, %s]" (pct s.Verdict.estimate) (bound s.Verdict.lower)
     (bound s.Verdict.upper)
 
 let relative_budget (mr : Verdict.metric_report) =
   match Option.map Budget.contract mr.budget with
   | Some (Budget.Relative { max_regression; _ }) ->
-      Some (Printf.sprintf "budget +%g%%" (max_regression *. 100.))
+      Some (strf "budget +%g%%" (max_regression *. 100.))
   | Some (Budget.Absolute_max _) | None -> None
 
 (* An exact count over its absolute cap, as [(count, cap)], when the metric
@@ -324,7 +325,7 @@ let cap_str metric cap =
   let digits =
     if Float.is_integer cap then ""
     else
-      let f = Printf.sprintf "%.6f" (cap -. whole) in
+      let f = strf "%.6f" (cap -. whole) in
       let i = ref (String.length f) in
       while !i > 2 && f.[!i - 1] = '0' do
         decr i
@@ -354,7 +355,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
   let strong_detail = function
     | Verdict.Confirmed { first; _ } -> interval first
     | Verdict.Exact_change { baseline; candidate } ->
-        Printf.sprintf "%s \xe2\x86\x92 %s (exact)" (exact_str m baseline)
+        strf "%s \xe2\x86\x92 %s (exact)" (exact_str m baseline)
           (exact_str m candidate)
   in
   match (mr.verdict, cap_breach c mr) with
@@ -364,7 +365,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
         ( 0,
           frag ~style:`Red "REGRESSED"
             (tagged
-               (Printf.sprintf "%s, over its %s cap (exact)" (exact_str m n)
+               (strf "%s, over its %s cap (exact)" (exact_str m n)
                   (cap_str m cap))) )
   | Verdict.Proposed, None -> Some (5, frag "proposed" (tagged ""))
   | Verdict.Judged (Verdict.Regressed strong), _ ->
@@ -408,10 +409,7 @@ let reassurance_of ~primary (c : Verdict.case_report)
   | Verdict.Judged (Verdict.Equivalent None) when not primary -> (
       match Run.Trial.measurement c.trial mr.metric with
       | Some (Run.Exact _) ->
-          Some
-            ( 6,
-              frag "equivalent"
-                (Printf.sprintf "(%s exact)" (metric_tag mr.metric)) )
+          Some (6, frag "equivalent" (strf "(%s exact)" (metric_tag mr.metric)))
       | _ -> None)
   | _ -> None
 
@@ -524,12 +522,12 @@ let check r v =
       match comparison with
       | Verdict.Compared ->
           header_line ~color ~suite
-            (Printf.sprintf " — %d case%s vs %s for machine %s" n_cases
-               (plural n_cases) r.baseline_path ident.Baseline.machine)
+            (strf " — %d case%s vs %s for machine %s" n_cases (plural n_cases)
+               r.baseline_path ident.Baseline.machine)
       | Verdict.No_baseline ->
           header_line ~color ~suite
-            (Printf.sprintf " — no baseline for machine %s (%s)"
-               ident.Baseline.machine r.cpu_model)
+            (strf " — no baseline for machine %s (%s)" ident.Baseline.machine
+               r.cpu_model)
       | Verdict.Stale (Verdict.Ocaml_mismatch { section; current }) ->
           (* The recorded identity is text from the file: quoted when it
              holds a control byte, as it could write to the terminal. *)
@@ -539,8 +537,7 @@ let check r v =
             else section
           in
           header_line ~color ~suite
-            (Printf.sprintf
-               " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
+            (strf " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
                ident.Baseline.machine section current)
     in
     match (comparison, load) with
@@ -548,9 +545,8 @@ let check r v =
         [
           head;
           styled ~color `Yellow
-            (Printf.sprintf
-               "warning: load %.1f on %d cores; timing verdicts degraded" load
-               cores);
+            (strf "warning: load %.1f on %d cores; timing verdicts degraded"
+               load cores);
         ]
     | _ -> [ head ]
   in
@@ -575,8 +571,7 @@ let check r v =
     List.concat_map
       (fun (c : Verdict.case_report) ->
         List.map
-          (fun w ->
-            styled ~color `Yellow (Printf.sprintf "  warning: %s: %s" c.id w))
+          (fun w -> styled ~color `Yellow (strf "  warning: %s: %s" c.id w))
           c.warnings)
       cases
     @ List.map
@@ -601,15 +596,14 @@ let check r v =
             (r.rerun_flags @ selection)
     in
     let prompt =
-      if r.wrote_corrected then [ Printf.sprintf "  accept:  %s" r.accept ]
-      else []
+      if r.wrote_corrected then [ strf "  accept:  %s" r.accept ] else []
     in
     let load_warning =
       match (acceptance && r.wrote_corrected, load) with
       | true, Env.Loaded { load; cores } ->
           [
             styled ~color `Yellow
-              (Printf.sprintf
+              (strf
                  "  warning: load %.1f on %d cores; prefer a quiet host before \
                   accepting"
                  load cores);
@@ -650,11 +644,9 @@ let check r v =
             passing
         in
         let n_pass = n_cases - n_fail - n_inc - n_prop - n_imp in
-        let term n word =
-          if n > 0 then [ Printf.sprintf "%d %s" n word ] else []
-        in
+        let term n word = if n > 0 then [ strf "%d %s" n word ] else [] in
         let parts =
-          [ Printf.sprintf "%d passed" n_pass ]
+          [ strf "%d passed" n_pass ]
           @ term n_imp "improved" @ term n_fail "regressed"
           @ term n_inc "inconclusive" @ term n_prop "proposed"
         in
@@ -670,7 +662,7 @@ let check r v =
         [
           "  "
           ^ styled ~color style
-              (Printf.sprintf "%d case%s: %s%s." n_cases (plural n_cases)
+              (strf "%d case%s: %s%s." n_cases (plural n_cases)
                  (String.concat ", " parts) strict_clause);
         ]
   in
@@ -702,17 +694,17 @@ let check r v =
                             | `Allocation -> "w"
                             | `Time | `Other -> Metric.units mr.metric
                           in
-                          Printf.sprintf "%d \xe2\x86\x92 %d %s (exact)"
-                            baseline candidate unit
+                          strf "%d \xe2\x86\x92 %d %s (exact)" baseline
+                            candidate unit
                     in
                     Some
-                      (Printf.sprintf "::error::%s regressed: %s %s" c.id
+                      (strf "::error::%s regressed: %s %s" c.id
                          (Metric.id mr.metric) detail)
                 | _ -> (
                     match cap_breach c mr with
                     | Some (n, cap) ->
                         Some
-                          (Printf.sprintf
+                          (strf
                              "::error::%s regressed: %s %s, over its %s cap \
                               (exact)"
                              c.id (Metric.id mr.metric) (exact_str mr.metric n)
@@ -728,8 +720,7 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
   let header =
     [
       header_line ~color ~suite
-        (Printf.sprintf " — blessed %d case%s for machine %s" n (plural n)
-           machine);
+        (strf " — blessed %d case%s for machine %s" n (plural n) machine);
     ]
   in
   let table =
@@ -746,8 +737,7 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
     @ List.concat_map
         (fun (id, trial) ->
           List.map
-            (fun w ->
-              styled ~color `Yellow (Printf.sprintf "  warning: %s: %s" id w))
+            (fun w -> styled ~color `Yellow (strf "  warning: %s: %s" id w))
             (Run.Trial.warnings trial))
         (Run.trials run)
   in
@@ -756,7 +746,7 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
       | Env.Loaded { load; cores } ->
           [
             styled ~color `Yellow
-              (Printf.sprintf
+              (strf
                  "  warning: blessed under load %.1f on %d cores (--force \
                   recorded)"
                  load cores);
@@ -765,6 +755,6 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
     (* A notice of what the corrected file drops sits beside the accept line,
        where the file is reviewed. *)
     @ List.map (fun w -> styled ~color `Yellow ("  warning: " ^ w)) notices
-    @ [ Printf.sprintf "  accept:  %s" accept ]
+    @ [ strf "  accept:  %s" accept ]
   in
   report_of_blocks [ header; table; actions ]
