@@ -179,7 +179,7 @@ let parse argv =
   in
   go args;
   let subcommand = Option.value explicit ~default:`Check in
-  (* The scoping matrix (.mli): a flag accepted where it does nothing would
+  (* The scoping matrix: a flag accepted where it does nothing would
      misdescribe the run, so it is a usage error naming both sides. *)
   let scoped flag allowed present =
     match !error with
@@ -249,12 +249,12 @@ let config_of ?config (o : options) =
 
 (* Color
 
-   Per-stream resolution (.mli): [--color always] beats NO_COLOR (the
-   no-color.org contract — the variable is a default, an explicit request
-   wins); NO_COLOR only dampens Auto; a rule action joins Auto because dune
-   captures its output and re-displays it in a color-capable terminal
-   (windtrap's rule). [dune exec] sets INSIDE_DUNE too, but its stdout is
-   the user's own: a file there gets no escapes. *)
+   [main] resolves the mode once, for stdout; stderr is never styled.
+   [--color always] beats NO_COLOR (the no-color.org contract: the variable
+   is a default, an explicit request wins); NO_COLOR only dampens Auto; a
+   rule action joins Auto because dune captures its output and re-displays
+   it in a color-capable terminal. [dune exec] sets INSIDE_DUNE too, but its
+   stdout is the user's own: a file there gets no escapes. *)
 let use_color mode ~is_tty ~rule_action ~no_color =
   match mode with
   | `Always -> true
@@ -318,7 +318,7 @@ let time_unit v =
    reads "3 kw" / "32.73 kw" (trailing zeros trimmed). Display rounds; the
    gate never does — exact deltas in verdict cells keep full integers via
    [exact_str]. Sampled allocation is approximate by nature: the cell says
-   so with [~], without a ci% of its own — one representation (.mli); the
+   so with [~], without a ci% of its own — one representation; the
    time ci already carries the run's sampling noise. *)
 let words_unit v =
   let a = Float.abs v in
@@ -474,7 +474,7 @@ let promotion_staged ~inside_dune ~cwd =
       if Filename.is_relative v then has_build_component cwd
       else under_dir (Filename.dirname v) cwd || has_build_component cwd
 
-(* Hint arguments paste into a shell where the command ran (.mli): a path that a
+(* Hint arguments paste into a shell where the command ran: a path that a
    POSIX shell would split or expand is quoted, ordinary paths stay bare so
    transcripts keep reading naturally. *)
 let shell_arg s =
@@ -659,7 +659,7 @@ let table_lines ~color rows =
 (* Verdict cells
 
    Only REGRESSED is capitalized, and only when the metric gates the case —
-   the same predicate as [Verdict.exit_code] (.mli). Fragments of non-time
+   the same predicate as [Verdict.exit_code]. Fragments of non-time
    metrics carry the metric's tag after the verdict word; the cell holds the
    case's notable relations, most severe first, "; "-joined. *)
 
@@ -769,7 +769,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
         )
   | Verdict.Judged (Verdict.Equivalent _), _ -> None
 
-(* The reassurance exception (.mli): when the cell is otherwise non-pass, an
+(* The reassurance exception: when the cell is otherwise non-pass, an
    exact-equal metric's earned verdict stays visible. *)
 let reassurance_of ~primary (c : Verdict.case_report)
     (mr : Verdict.metric_report) =
@@ -1164,7 +1164,7 @@ let with_lock_progress f =
 let checked f =
   try f () with Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
-(* The status line (.mli): stderr, \r-overwritten, erased before anything
+(* The status line: stderr, \r-overwritten, erased before anything
    else prints, and emitted only on a TTY — dune, CI, and redirects see zero
    bytes of it. It lives inside [checked] so an operational error erases the
    line before its message prints. *)
@@ -1276,9 +1276,10 @@ let run_list ~(o : options) ~config ~filter ~budgets benches =
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     ~corrected_path ~color ~accept ~staged ~exe benches =
-  (* [Check.run_with] reads the key under the lease, where a malformed
-     override would crash after the wait: validate it first, as [bless]
-     does. *)
+  (* [Check.run_with] reads the key before its own lock acquisition, but it
+     runs inside this module's [with_lock_progress], so a malformed override
+     would raise [Invalid_argument] only after the lock wait: validate it
+     first, as a stop, as [bless] does. *)
   ignore (machine_key ());
   ignore
     (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter

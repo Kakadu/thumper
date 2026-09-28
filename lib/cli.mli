@@ -3,148 +3,121 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The command-line adapter.
+(** The command line of [Thumper.run].
 
-    The one module that knows about paths, argv, terminals, and process exit.
-    Owns the subcommand grammar ([check]/[bless]/[list]), the startup unlink of
-    both owned artifacts (the [.corrected] candidate and the [--json] target), baseline reading, the [--wait-quiet] wait, the lease and status lines,
-    terminal and GitHub-annotation rendering, the [--json] atomic write, and the
-    exit mapping. Measurement and judgment are [Check]'s and [Verdict]'s; the
-    two write paths are [Verdict.corrected] and [Verdict.bless] — this module
-    only composes them around file I/O.
+    {!main} reads the command line, the environment, the terminal and the file
+    system, and composes {!Check}, {!Verdict}, {!Baseline} and {!Env} around
+    them. Every other value is a pure function that decides one thing {!main}
+    needs: {!parse} reads the command line; {!filter_of} and {!config_of} turn
+    the options into a selection and a configuration; {!use_color},
+    {!default_baseline_dir} and {!promotion_staged} interpret the environment;
+    {!status_line}, {!accept_command} and {!render_check} build printed text.
 
-    {b Streams.} stdout is the report — the stable artifact a run leaves in a
-    log or a terminal, printed once, complete, always. stderr is process narration — the transient status line, the
-    lease and wait-quiet notices, error messages — and never carries anything a
-    consumer should capture.
+    The facade re-exports none of these values: [Thumper.run] calls {!main}, and
+    the module is otherwise visible only as [Thumper.Private.Cli], outside the
+    API. [Thumper.run]'s documentation in the facade is the user contract of the
+    command line: its grammar, its report, its files, its streams and its exit
+    codes. What it states is stable, and so is the summary's colour, which
+    follows the exit code ({!render_check}). What it leaves unstated may change:
+    the text of each message, the report's column widths, its other colours, and
+    the wrapping of its [rerun:] line. *)
 
-    Parsing ({!parse}) and rendering ({!render_check}, {!status_line}) are pure
-    so the unit suite drives them without processes; {!main} is the effectful
-    composition the facade's [Thumper.run] delegates to. *)
-
-(** {1:parsing Parsing} *)
+(** {1:parsing Command lines and options} *)
 
 type subcommand = [ `Check | `Bless | `List ]
-(** The type for subcommands. [`Check] measures and compares, [`Bless] proposes
-    a re-record of the selected cases for this machine, [`List] prints the
-    selected case ids. *)
+(** The type for subcommands, named [check], [bless] and [list] on the command
+    line. *)
 
 type color = [ `Auto | `Always | `Never ]
-(** The type for [--color] modes; resolution is {!use_color}'s. *)
+(** The type for [--color] modes, named [auto], [always] and [never]. *)
 
 type options = {
-  subcommand : subcommand;  (** Default [`Check]. *)
+  subcommand : subcommand;
+      (** The first argument's subcommand, [`Check] when it names none. *)
   patterns : string list;
-      (** [-f] arguments and bare positionals, in encounter order. Id
-          substrings, OR'd ({!filter_of}). *)
-  tags : string list;  (** [--tag] arguments, in encounter order. AND'd. *)
+      (** The [-f] arguments, the bare arguments and every argument after [--],
+          in command-line order. *)
+  tags : string list;  (** The [--tag] arguments, in command-line order. *)
   preset : [ `Default | `Quick | `Precise ];
-      (** The protocol preset: [--quick] and [--precise] refine the caller's
-          config by setting the batch count to [Config.quick]'s /
-          [Config.precise]'s ({!config_of}). Not on [list]. *)
-  baseline : string option;  (** [--baseline PATH]. Not on [list]. *)
-  json : string option;
-      (** [--json PATH]. [check] only. [-] is refused: stdout is the report. *)
-  strict : bool;
-      (** [--strict]: inconclusive, NEW, and stale exit 1. [check] only. *)
+      (** [`Quick] under [--quick], [`Precise] under [--precise], and [`Default]
+          otherwise. *)
+  baseline : string option;  (** The [--baseline] argument. *)
+  json : string option;  (** The [--json] argument, never ["-"]. *)
+  strict : bool;  (** Whether [--strict] was given. *)
   wait_quiet : float option;
-      (** [--wait-quiet SECS]: wait up to [SECS] (non-negative, finite) for a
-          quiet host before measuring. Not on [list]. *)
-  force : bool;
-      (** [--force]: overrides the loaded-host refusal of bless. [bless] only.
-      *)
-  color : color;  (** [--color MODE]. Default [`Auto]. Every subcommand. *)
+      (** The [--wait-quiet] argument in seconds, finite and non-negative. *)
+  force : bool;  (** Whether [--force] was given. *)
+  color : color;  (** The [--color] argument, [`Auto] without one. *)
 }
-(** The type for parsed invocations. One record per accepted command line; every
-    field is a flag of the grammar, and each flag parses only on the subcommands its
-    annotation names — anywhere else it is a [Usage_error] (the scoping matrix:
-    a flag accepted where it does nothing would misdescribe the run). *)
+(** The type for accepted command lines. [--baseline], [--json], [--wait-quiet]
+    or [--color] given twice keeps its last argument. In a value {!parse}
+    returns, every flag given applies to [subcommand]. [--color] applies to
+    every subcommand and changes nothing under [list], which prints no styled
+    text. *)
 
-(** The type for parse outcomes. *)
+(** The type for parse results. *)
 type parsed =
-  | Run of options
-  | Help  (** [-h]/[--help]: print help, exit 0. *)
-  | Version  (** [-V]/[--version]: print the version, exit 0. *)
+  | Run of options  (** An accepted command line. *)
+  | Help  (** [-h] or [--help]. *)
+  | Version  (** [-V] or [--version]. *)
   | Usage_error of string
-      (** Malformed argv; {!main} prints it and returns 2. *)
+      (** A refused command line, with the message that says why. *)
 
 val parse : string array -> parsed
-(** [parse argv] is the grammar over [argv] (element 0 is the program name
-    and is skipped):
+(** [parse argv] is the result of parsing [argv], whose first element, the
+    program name, is skipped. [parse] reads no environment and prints nothing.
 
-    - the first argument names the subcommand when it is one of [check],
-      [bless], [list]; otherwise the subcommand is [`Check] and the argument is
-      parsed as a flag or pattern — a later occurrence of a subcommand word is
-      an ordinary pattern, never a subcommand;
-    - bare positionals are [-f] patterns (never swallowed) — in particular
-      [explore], whose subcommand is deleted, parses as a pattern and fails
-      loudly at selection ({!main});
-    - long options that take a value accept both [--opt VALUE] and
-      [--opt=VALUE]; [--flag=VALUE] on one that takes none is a [Usage_error]
-      (["option '--strict' takes no argument"]);
-    - [--] ends option parsing: everything after it is a pattern;
-    - a known flag on a subcommand outside its {!type:options} scope is a
-      [Usage_error] naming both
-      (["option '--json' applies to check, not bless"]), as are an unknown
-      option — including the deleted spellings [-v]/[--verbose], [--no-fork],
-      [--no-color], and the v1 aliases [-q], [--explore], [--bless], [-l] — a
-      missing or malformed option argument ([--wait-quiet] takes a non-negative
-      finite number, [--color] one of [auto], [always], [never]), and [--quick]
-      together with [--precise].
+    The first argument is the subcommand when it is [check], [bless] or [list];
+    a later one is a pattern. Before [--], a flag that takes a value takes the
+    next argument, even one that starts with [-], and a long one given as
+    [--opt=v] reads as [--opt v]. An argument that starts with [-], other than
+    [-] alone, and names no flag is an unknown option. Every argument after [--]
+    is a pattern.
 
-    Pure: reads no environment and never prints or exits. *)
+    Arguments are read left to right, and the first of these ends the reading:
+    [-h] or [--help] makes [Help], [-V] or [--version] makes [Version], and a
+    defect makes [Usage_error]. A defect is an unknown option, a flag with no
+    argument left, a [--wait-quiet] argument that [float_of_string_opt] does not
+    read as a finite non-negative number, a [--color] argument other than
+    [auto], [always] or [never], the [--json] argument ["-"], or a value given
+    with [=] to a flag that takes none ([--strict=no]). When the reading ends
+    without one of these, a flag given to a subcommand it does not apply to
+    makes [Usage_error]. When none is, [--quick] together with [--precise] does.
+*)
 
 val filter_of : patterns:string list -> tags:string list -> Bench.filter option
-(** [filter_of ~patterns ~tags] is the selection — patterns are OR'd, tags
-    AND'd, composed as [`And [`Or ids; `And tags]] — with the empty sides
-    omitted so an absent [-f] never manufactures [`Or []] (the empty selection).
-    [None] iff both lists are empty: select every case. *)
+(** [filter_of ~patterns ~tags] is the selection of the cases that contain one
+    of the patterns in their id, when there are patterns, and carry every tag.
+    With [`Or ps] holding one [`Id p] per pattern and [`And ts] one [`Tag t] per
+    tag, it is [None] when both lists are empty, [Some (`Or ps)] when only
+    [patterns] is non-empty, [Some (`And ts)] when only [tags] is, and
+    [Some (`And [`Or ps; `And ts])] otherwise. *)
 
 val config_of : ?config:Config.t -> options -> Config.t
-(** [config_of ~config o] is the measurement protocol [o] selects: [config]
-    (default [Config.default], the caller's suite-level protocol) with the batch
-    count set to the preset's when [--quick]/[--precise] was given. Every other
-    knob is the caller's — in particular forking: the CLI always measures under
-    the caller's fork setting (forked by default; in-process measurement is a
-    different protocol than the forked baseline evidence and would break
-    comparability — [Config.fork] stays a library/test seam). *)
+(** [config_of ?config o] is [config] with its samples set to [Config.quick]'s
+    under [--quick] and to [Config.precise]'s under [--precise]
+    ({!Config.samples}). [config] defaults to {!Config.default}. Every other
+    field, forking included, is [config]'s. *)
 
-(** {1:color Color}
-
-    Color is reinforcement, never information: the report reads correctly with
-    color off — the words carry the verdicts. Styles are the semantic six (bold,
-    faint, red, green, yellow, cyan), plain ANSI. *)
+(** {1:terminal Terminal output} *)
 
 val use_color :
   color -> is_tty:bool -> rule_action:bool -> no_color:bool -> bool
-(** [use_color mode ~is_tty ~rule_action ~no_color] resolves [--color] for one
-    output stream: [`Always] is [true], [`Never] is [false], and [`Auto] is
-    [(is_tty || rule_action) && not no_color]. An explicit [--color always]
-    beats [NO_COLOR] (the no-color.org contract: the variable is a default, a
-    user's explicit request wins); [NO_COLOR] only dampens [`Auto], where
-    [no_color] is [true] iff the variable is set non-empty. [rule_action]
-    ({!promotion_staged}) participates in [`Auto] because dune captures a rule's
-    output and re-displays it in a color-capable terminal (windtrap's rule), so
-    a non-TTY pipe in a rule action still wants styling; [dune exec] also sets
-    [INSIDE_DUNE], but its output goes where its user sent it, so a file gets no
-    escapes. {!main} resolves each stream with its own [isatty]. *)
-
-(** {1:status The status line}
-
-    The only progress narration: one stderr line, [\r]-overwritten in place
-    while measurement runs, erased (carriage return plus clear-to-EOL) before
-    anything else prints. Emitted only when stderr is a TTY — dune, CI, and
-    redirects see zero bytes of it. TTY gating is by construction: {!main}
-    installs the ticker only on a TTY, so the pure formatter below is the whole
-    testable surface. *)
+(** [use_color mode ~is_tty ~rule_action ~no_color] is whether a stream is
+    coloured: [true] under [`Always], [false] under [`Never], and
+    [(is_tty || rule_action) && not no_color] under [`Auto]. [is_tty] is whether
+    the stream is a terminal, [rule_action] whether the process is a dune rule
+    action ({!promotion_staged}), and [no_color] whether [NO_COLOR] is set and
+    non-empty. *)
 
 val status_line : Check.progress -> string
-(** [status_line p] is the status text for tick [p], without the carriage return
-    or erase sequence: ["thumper: measuring 3/6 — busy/spin"] during the first
-    sweep, ["thumper: confirming 1/2 — busy/spin"] during the confirmation
-    sweep. *)
+(** [status_line p] is the text of the progress tick [p],
+    [thumper: <verb> <index>/<total> — <id>], where [<verb>] is [measuring] or
+    [confirming] for [p]'s phase. It holds no carriage return and no escape
+    sequence. {!main} prints it on stderr at each tick while [check] and [bless]
+    measure, when stderr is a terminal. *)
 
-(** {1:paths Path resolution} *)
+(** {1:paths Paths and dune rule actions} *)
 
 val default_baseline_dir :
   dir_exists:(string -> bool) ->
@@ -153,163 +126,90 @@ val default_baseline_dir :
   cwd_in_build:bool ->
   string
 (** [default_baseline_dir ~dir_exists ~exe ~cwd ~cwd_in_build] is the directory
-    in which the default [<suite>.thumper] baseline resolves when no
-    [--baseline] was given. In order:
+    of the default baseline, the first of:
+    + [cwd], when [cwd_in_build];
+    + the source directory of [exe], when [exe], made absolute against [cwd],
+      contains [/_build/] and [dir_exists] holds of that directory;
+    + [cwd].
 
-    - [cwd] when [cwd_in_build] — the process cwd lies inside a [_build]
-      directory (rule actions, cram sandboxes): the rule's [diff?] names files
-      in the action's cwd, and a build action must never write to the source
-      tree;
-    - the benchmark's {e source} directory when [exe] (made absolute against
-      [cwd] if relative) lies under a build tree — the committable location, so
-      [dune exec] from anywhere proposes the same file the dune rule's [diff?]
-      would. The workspace root is the prefix before the last [/_build/] of
-      [exe]; after it come an optional [.sandbox/<hash>], the build context
-      (default or named), and the source-relative executable path whose dirname
-      rejoins the root. Used iff [dir_exists] holds of that directory, else
-      [cwd];
-    - [cwd] otherwise — an installed or copied binary knows no source tree.
-
-    Pure: [dir_exists] is the only window on the world; {!main} passes a
-    directory-existence test on the real filesystem, [Sys.executable_name], and
-    a [cwd_in_build] keyed on the cwd alone (unlike {!promotion_staged}, which
-    additionally requires [INSIDE_DUNE]: staging needs dune, the path rule does
-    not). *)
-
-(** {1:rendering Rendering}
-
-    Pure functions from decided values to the terminal report; {!main} prints
-    the result on stdout. Color is plain ANSI, applied only when the [color]
-    field is [true] — the {!use_color} decision is {!main}'s. *)
+    The source directory is the part of [exe] before its last [/_build/], joined
+    with what follows it less an optional [.sandbox/<hash>], the build context
+    and the file name: [/w/_build/default/bench/x.exe] maps to [/w/bench].
+    [_build] is the only build directory name recognised. [dir_exists] is the
+    only query of the file system. *)
 
 val promotion_staged : inside_dune:string option -> cwd:string -> bool
-(** [promotion_staged ~inside_dune ~cwd] is [true] iff this process runs as a
-    dune {e rule action} — the only situation in which a following [diff?]
-    stages a promotion and ["dune promote"] does anything. [inside_dune] is
-    [INSIDE_DUNE]'s value ([None] when unset); [cwd] the working directory. Both
-    a rule action and [dune exec] set [INSIDE_DUNE], but only the action's cwd
-    lies inside the build directory (under the dirname of [INSIDE_DUNE]'s
-    build-context path, or — for older dunes that set ["1"], and for sandboxes —
-    containing a [_build] component). Pure; {!main} feeds it the real
-    environment. Wording and colour only — never behavior. *)
+(** [promotion_staged ~inside_dune ~cwd] is whether the process is a dune rule
+    action, where the rule's [diff?] stages the corrected file for
+    [dune promote]. [inside_dune] is the value of [INSIDE_DUNE], [None] when it
+    is unset. The result is [true] iff [inside_dune] is [Some v] and [cwd] has a
+    [_build] segment or, when [v] is absolute, lies strictly under
+    [Filename.dirname v]. *)
 
 val accept_command :
   promotion_staged:bool -> corrected:string -> baseline:string -> string
-(** [accept_command ~promotion_staged ~corrected ~baseline] is the acceptance
-    command the prompts print: ["dune promote"] when a promotion is actually
-    staged ({!promotion_staged}), else ["mv CORRECTED BASELINE"] — in particular
-    under [dune exec], where [INSIDE_DUNE] is set but ["dune promote"] would
-    silently do nothing. Paths a POSIX shell would split or expand are quoted
-    (pasteable where the command ran); ordinary paths stay bare so transcripts
-    read naturally. *)
+(** [accept_command ~promotion_staged ~corrected ~baseline] is the command that
+    replaces [baseline] with [corrected]: ["dune promote"] when
+    [promotion_staged], and ["mv <corrected> <baseline>"] otherwise. A path
+    stays bare when it is non-empty and each of its bytes is an ASCII letter, a
+    digit or one of [_ . / : @ % + = , -]; any other path is quoted by
+    [Filename.quote]. *)
+
+(** {1:rendering Rendering the report} *)
 
 type render = {
-  color : bool;  (** Style with ANSI escapes. *)
-  accept : string;  (** The {!accept_command} the prompts print. *)
+  color : bool;
+      (** Whether to style the report with ANSI escapes. Removing the escapes
+          from a styled report gives the unstyled one. *)
+  accept : string;
+      (** The command of the [accept:] line ({!accept_command}). *)
   exe : string option;
-      (** [argv.(0)], for the rerun action; [None] under a dune rule action
-          ({!promotion_staged}), where the hint could not be pasted. *)
+      (** The program the [rerun:] line runs, which {!render_check} quotes as
+          {!accept_command} quotes a path; [None] for no [rerun:] line. *)
   github : bool;
-      (** Emit [::error::] annotations on confirmed regressions
-          ([GITHUB_ACTIONS]; {!main} reads it). *)
-  baseline_path : string;  (** The resolved baseline path, for the header. *)
-  corrected_path : string;  (** The candidate path, for the prompts. *)
-  wrote_corrected : bool;  (** Whether the candidate was written. *)
+      (** Whether the report ends with one [::error::] line per metric that
+          fails its case. *)
+  baseline_path : string;
+      (** The baseline's path, which the header of a run against a current
+          section prints. *)
+  corrected_path : string;
+      (** The corrected file's path. {!render_check} does not read it; the path
+          it prints is the one in [accept]. *)
+  wrote_corrected : bool;
+      (** Whether the corrected file was written. The [accept:] line prints iff
+          it was. The load warning beside it prints when it was, the section is
+          missing or stale, and [Verdict.load] is loaded. *)
   rerun_flags : string list;
-      (** The flags the rerun hint must reproduce beyond selection, one item per
-          flag with its argument — the [--quick]/[--precise] preset, an explicit
-          [--baseline] and every [--tag], shell-quoted; [[]] when the run used
-          only defaults (the default baseline re-resolves identically from the
-          exe path). *)
+      (** The [rerun:] line's arguments before its selection, one item per flag
+          with its argument. {!render_check} prints them as given, so each
+          argument must already be quoted as {!accept_command} quotes a path. *)
   rerun_patterns : string list;
-      (** The run's own [-f] patterns, which the rerun hint selects by when more
-          cases failed than it names. *)
+      (** The run's patterns. The [rerun:] line selects by them, quoted, in
+          place of the failing ids when more than 10 cases fail. *)
   strict : bool;
-      (** The run's [--strict], which decides the summary's colour. *)
+      (** Whether the run was given [--strict]. The summary's colour follows it,
+          and the summary ends with [; failed under --strict] when [--strict]
+          alone makes the exit code [1]. *)
   cpu_model : string;
-      (** This host's CPU model ([Env.cpu_model]), which the no-baseline header
-          names beside the machine key. *)
+      (** The host's CPU model, which the header names when this machine has no
+          section in the baseline. *)
 }
-(** The type for check-report rendering inputs: everything {!render_check} needs
-    beyond the verdict, resolved by {!main}. *)
+(** The type for what {!render_check} needs besides the verdict. *)
 
 val render_check : render -> Verdict.t -> string
-(** [render_check r v] is the terminal report for a [check] run, ending in a
-    newline. The report always prints, complete
-    — a pass run is header, table, summary. Four blocks separated by single
-    blank lines, empty blocks omitted:
+(** [render_check r v] is the report of the [check] run judged as [v], ending in
+    a newline. Its load warning reports [Verdict.load v], the sample [v] was
+    judged under, and prints only when that sample is loaded.
 
-    - {b Header.} [thumper: <suite> — <N> cases vs <baseline> for machine <key>]
-      (suite bold, the rest faint); the no-baseline form names the machine key
-      and CPU model, the stale form the recorded and current compiler
-      identities. When the verdict was decided under a loaded gate
-      ([Verdict.load], so the message never contradicts the cells), a
-      {e compared} run has one yellow warning line directly under the header
-      ([warning: load L on C cores; timing verdicts degraded]); acceptance
-      states (NEW, stale) put their load message in the actions block instead —
-      one load message per run, never two.
-    - {b Table.} One row per case, in suite (authoring) order: the status word
-      (the verdict cell's first relation), time, ±ci%, alloc, id; the rest of
-      the cell, when there is any, follows on a line indented six spaces. Status
-      words are left-aligned, values right-aligned, widths content-derived, two
-      spaces between columns. Both value columns are unit-scaled {e per column}
-      — the unit of the column's smallest positive magnitude, so cells stay
-      comparable down the column and never mix [us] and [ms], or [w] and [kw];
-      units are ASCII. At the base unit, exact allocation integers render with
-      thousands separators (["32,730 w"]); a kilo-scale column renders scaled
-      with trailing zeros trimmed (["3 kw"], ["32.73 kw"]), and a scaled value
-      past its significant digits (five integer digits exact, four sampled) as a
-      grouped integer (["12,346 kw"]), never in exponent notation. Display
-      rounds; the gate never does — exact deltas in verdict cells keep full
-      integers. Sampled allocation renders approximate, scaled, without its own
-      ci% (["~2.1 kw"] — one representation, the time ci already carries the
-      sampling noise). The value columns show the first time-kind and first
-      allocation-kind metrics; every other metric surfaces through the verdict
-      cell. Per-case measurement warnings and run-level prune notices follow the
-      table, yellow, remedies verbatim.
-    - {b Verdict cells.} Only [REGRESSED] is capitalized, and it is capitalized
-      (and red) exactly when the metric gates the case — the same predicate as
-      [Verdict.exit_code], so the report and the exit code never disagree; in
-      particular an [Absolute_max] budget gates proven exact evidence only,
-      and a confirmed sampled regression under one renders lowercase [regressed]
-      (yellow). Forms: [equivalent] faint · [within budget +x.x%] plain ·
-      [improved -x.x% [lo, hi]] green · [REGRESSED +x.x% [lo, hi]  budget +r%]
-      red, a sampled strong relation being always a confirmed one (exact:
-      [REGRESSED 54 w → 71 w (exact)]) · [inconclusive: <reason>] yellow ·
-      [proposed] plain (NEW/stale rows). The cell holds the case's notable
-      relations — anything that is not a plain pass — most severe first,
-      ["; "]-joined; fragments of non-time metrics carry the metric's tag after
-      the verdict word ([REGRESSED alloc 54 w → 71 w (exact)]), so an allocation
-      verdict that differs from the time verdict is always visible. One
-      reassurance exception: when the cell is otherwise non-pass, an
-      {e exact}-equal allocation shows as [equivalent (alloc exact)] — under a
-      degraded run the exact gate's verdict is still earned and stays visible.
-    - {b Actions.} [rerun:   <exe> <rerun_flags> -f <id>...] iff any case failed
-      and [r.exe] is given — the exact command that re-measures the failing
-      cases, preset, explicit [--baseline] and [--tag]s included. It names at
-      most 10 failing cases; with more, it re-measures the run's own selection
-      ([-f] over [r.rerun_patterns]). One command, wrapped with backslash
-      continuations to stay within 80 columns (an item is never split); under a
-      rule action there is no rerun line, and the failing ids stay in the table;
-      [accept:  <cmd>] iff a corrected file was written, whatever it proposes,
-      [<cmd>] being [r.accept]; the acceptance-state load message
-      ([warning: load L on C cores; prefer a quiet host before accepting],
-      yellow) beside the prompt.
-    - {b Summary} (compared runs):
-      [<N> cases: <a> passed[, <b> improved][, <c> regressed][, <d>
-       inconclusive][, <e> proposed][; failed under --strict].] — a case whose
-      row opens on [improved] counts as improved, a never-compared one as
-      proposed; the [--strict] clause appears when [--strict] alone made the run
-      exit 1. The whole line red iff the run exits 1
-      ([Verdict.exit_code ~strict:r.strict], so a [--strict] run failed by
-      inconclusive cases ends red), else yellow if any case is inconclusive,
-      else green.
+    The report and {!Verdict.exit_code} share one predicate,
+    {!Verdict.report_fails}. A metric reads [REGRESSED] iff it fails its case,
+    and then has an [::error::] line when [r.github]. A case counts as regressed
+    in the summary iff one of its metrics fails it. The [rerun:] line prints iff
+    [r.exe] is [Some _] and some case fails. The summary, which only a run
+    against a current section prints, is red iff
+    [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
 
-    [::error::] annotations (when [r.github]) end the report and use the same
-    gate predicate as the cells (every non-pass names its reason; NEW
-    and inconclusive render as prompts and warnings, never as failures). *)
-
-(** {1:main Main} *)
+(** {1:running Running a command line} *)
 
 val main :
   ?baseline:string ->
@@ -319,75 +219,58 @@ val main :
   name:string ->
   Bench.t list ->
   int
-(** [main ~argv ~name benches] parses [argv], runs the selected subcommand,
-    renders, writes owned artifacts, and is the exit code (0 pass / NEW /
-    inconclusive / list / bless; 1 confirmed regression or exact budget
-    violation, plus inconclusive / NEW / stale under [--strict]; 2 usage, empty
-    selection, unreadable or corrupt baseline, lease timeout, worker failure).
-    The report prints on stdout; errors and progress on stderr. In order:
+(** [main ?baseline ?config ?budgets ~argv ~name benches] runs the command line
+    [argv] on the suite [name] of [benches] and is its exit code. It never exits
+    the process. [Thumper.run] is [main] with [argv] defaulting to [Sys.argv].
 
-    + [name] and [budgets] are validated — an empty or multi-line [name] (it
-      heads fresh baselines) and two budgets for one metric raise
-      [Invalid_argument]: programmer errors, never exit codes.
-    + [argv] parses; [Usage_error] is exit 2.
-    + The baseline path resolves — [--baseline] always wins, else [baseline],
-      else [name ^ ".thumper"] in {!default_baseline_dir}'s directory: the
-      action's cwd inside a build directory (the [diff?] contract), the
-      benchmark's source directory when the executable runs from [_build] (the
-      committable location — [dune exec] from anywhere proposes the file next to
-      the benchmark's source), the cwd for an installed binary. Rendering, with
-      [.] segments removed: an explicit path prints as typed, so the header, the
-      hints and the errors agree with the command line; a mapped source
-      directory under the invoker's cwd prints as the short relative path
-      ([examples/01-first-benchmark/hello.thumper]); inside a rule action the
-      bare relative name is the [diff?] contract; every other default path
-      prints absolute, so a candidate's location is never a guess.
-    + {b Startup unlinks}: [<baseline>.corrected] and the [--json] target
-      are removed before anything else can fail, for every subcommand — no
-      failed, interrupted, or non-measuring invocation leaves a stale artifact
-      to be read. An unremovable artifact is exit 2. The {e unconditional} write
-      targets — the [--json] document and bless's candidate — are then
-      pre-flighted: a target directory that is missing or unwritable is exit 2
-      here, before measurement can be wasted on a file that could never be
-      written. (Check's corrected file is conditional: it is pre-flighted only
-      once the baseline is found absent, below; against an existing baseline a
-      pass run writes nothing and must not require a writable directory.)
-    + The selection resolves ([Check.select], with the config's metrics and the
-      run's budgets, for every subcommand) — exit 2 on a duplicate id, a budget
-      on a metric its scope does not collect, or an empty selection, before the
-      lease, so a broken suite or filter fails without waiting; the
-      empty-selection error names the unmatched patterns and tags
-      ([no case matches 'explore']), so a deleted-subcommand word explains
-      itself. [list] prints the ids and stops.
-    + [check]/[bless] read the baseline: an absent file is the NEW flow (never
-      an error; [check] then pre-flights its corrected file, which every NEW run
-      writes), [Io]/[Corrupt] exit 2 with [Baseline]'s message. [--wait-quiet]
-      then polls for a quiet host; on [check], expiry warns and proceeds —
-      degradation, not refusal, is the specified fallback; on [bless] an expired
-      wait is the refusal below. [bless] under a loaded gate refuses with the
-      remedy (exit 2 — an operational stop, like the lease) unless [--force],
-      which is recorded as a [# forced:] annotation in the proposed section.
-    + Measurement runs under the lease with the lease notice and, on a TTY
-      stderr, the {!status_line} ticker ([Check]'s [on_progress]); the line is
-      erased before anything else prints. [Check.Error] — lease timeout, worker
-      failure, deadline — is exit 2.
-    + [check] writes [<baseline>.corrected] iff [Verdict.corrected] differs
-      ([Baseline.write], atomic), writes [--json] atomically (temp + rename;
-      present iff measurement completed), renders {!render_check}, and returns
-      [Verdict.exit_code ~strict]; a failed corrected-file write still prints
-      the report, without its accept line, then the error, exit 2. [bless]
-      writes the [Verdict.bless] candidate and renders the same report shape
-      over proposed rows, exit 0. A {e filtered} bless re-records the selected
-      cases only, keeping every other row, unless the section is missing or
-      stale ([Verdict.bless]'s contract); over a stale section it prints
-      [Verdict.bless]'s notice beside the prompt, naming the unselected cases'
-      rows it drops. Under [--force] on a loaded host, the [# forced:]
-      annotation of a filtered bless names its cases.
+    A {e stop} prints [thumper: <message>] on stderr and makes [main] return
+    [2]. A {!Check.Error}, a {!type:Baseline.error} from reading or writing a
+    file, a {!type:Env.Lock.error}, the [Invalid_argument] of a malformed
+    [THUMPER_MACHINE], and a [Unix.Unix_error] of an unlink, a pre-flight or the
+    [--json] write are stops; any other exception escapes [main]. The steps, in
+    order:
+    + [main] raises [Invalid_argument] if [name] fails {!Baseline.check_suite}
+      or [budgets] fails {!Budget.check_distinct}, whatever [argv] holds.
+    + It parses [argv]. [Help] prints the help and [Version] the version on
+      stdout, and both return [0]. [Usage_error] prints [thumper: <message>] and
+      [Try '-h' for usage.] on stderr and returns [2]. None of the three touches
+      a file.
+    + It resolves the baseline path: [--baseline], else [baseline], else
+      [<name>.thumper] in {!default_baseline_dir}'s directory. It passes that
+      function [Sys.executable_name], not [argv.(0)], and a [cwd_in_build] true
+      iff the working directory has a [_build] segment. The corrected file's
+      path is the baseline path followed by [.corrected].
+    + It removes the corrected file and the [--json] file, whatever the
+      subcommand; a file it cannot remove stops the run. It stops when the
+      directory of the [--json] file, or under [bless] that of the corrected
+      file, is not a writable directory.
+    + It decides once whether the report is coloured: {!use_color} for stdout,
+      with {!promotion_staged}'s result as [rule_action]. Nothing [main] prints
+      on stderr is coloured.
+    + It runs the subcommand, whose exit code it returns.
 
-    Environment: [--color], the per-stream TTY state, [NO_COLOR], and a rule
-    action ({!promotion_staged}) resolve color ({!use_color}); [GITHUB_ACTIONS]
-    gates annotations; [INSIDE_DUNE] with the working directory picks the hints
-    ({!promotion_staged}: [dune promote] and no rerun line under a rule action,
-    else [mv] and the rerun line); [THUMPER_MACHINE] (validated here: a
-    malformed value is exit 2, not a crash) and [THUMPER_LOCK_DIR] are consumed
-    inside [Env]. *)
+    [list] selects the cases with {!Check.select}, given the config's metrics
+    and [budgets], and prints their ids on stdout, one per line. It reads
+    neither the baseline nor [THUMPER_MACHINE] and takes no lock.
+
+    [check] validates [THUMPER_MACHINE], selects the cases as [list] does, and
+    reads the baseline. When there is no baseline file, it stops unless the
+    corrected file's directory is a writable directory. It waits for a quiet
+    host under [--wait-quiet]. It then holds the measurement lock
+    ({!Env.Lock.with_lock}) around {!Check.run_with}, whose own acquisition
+    nests. It writes the [--json] file, then the corrected file when
+    {!Verdict.corrected} is [Some], prints {!render_check}'s report on stdout
+    and returns [Verdict.exit_code ~strict]. Its {!type:render} has [exe] set to
+    [argv.(0)], or [None] in a dune rule action, and [rerun_flags] holding
+    [--quick] or [--precise] when given, [--baseline] when [argv] gave one, and
+    one [--tag] per tag. When the corrected file cannot be written, the report
+    prints without its [accept:] line before the stop.
+
+    [bless] selects the cases as [list] does, validates [THUMPER_MACHINE], reads
+    the baseline and waits under [--wait-quiet]. An expired wait stops the run
+    unless [--force] is given or the host is quiet by then. It then holds the
+    lock, samples the load, and stops on a loaded host unless [--force] is
+    given, and then records the load through {!Verdict.bless}'s [annotations].
+    It measures with {!Check.measure}, writes {!Verdict.bless}'s file as the
+    corrected file, prints its own report on stdout, built without
+    {!render_check}, and returns [0]. *)
