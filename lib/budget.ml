@@ -3,27 +3,22 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 type contract =
   | Relative of { max_regression : float; band : float }
   | Absolute_max of float
 
 type t = { metric : Metric.t; contract : contract }
 
-(* Default regression budget r = 5%. *)
 let default_max_regression = 0.05
-
-(* Band cap 2.5% — the derived band is e = min (band_cap, r /. 2.)
-  . [Verdict]'s relation table shares this
-   constant. *)
 let band_cap = 0.025
 
-(* Tolerances are validated with [not (x >= 0.)] so that NaN fails loudly
-   too: a NaN tolerance would make every downstream comparison silently
-   false. An explicit band may exceed [band_cap] but never the budget:
-   The relations partition shifts only when e <= r (
-   with e > r a confirmed shift in (r, e] would be both regressed and
-   equivalent), and at r = 0 the model degenerates the band with no override
-   carve-out. *)
+(* Tolerances are tested with [not (x >= 0.)] so that NaN fails too: a NaN
+   tolerance would make every later comparison false. An explicit band may
+   exceed [band_cap] but never the budget, since the relations partition the
+   shifts only when e <= r: with e > r, a confirmed shift in (r, e] would be
+   both regressed and equivalent. At r = 0 the band is therefore 0. *)
 let relative ~metric ?equivalent_within ~max_regression () =
   if not (max_regression >= 0.) then
     invalid_arg "Thumper.Budget: negative or NaN max_regression";
@@ -50,12 +45,12 @@ let no_more_alloc_than ?(metric = Metric.alloc_words) ?equivalent_within
 let at_most ~metric v =
   if not (v >= 0.) then
     invalid_arg "Thumper.Budget.at_most: negative or NaN threshold";
-  (* An absolute cap gates proven exact evidence only: on a metric that
-     can never be exact the contract is structurally void — a budget that
-     cannot fail is the same species of nonsense as a negative tolerance. *)
+  (* A cap applies to exact evidence only, which only a counter metric has: on
+     any other metric it could never fail, so it is refused as a negative
+     tolerance is. *)
   if not (Metric.is_counter metric) then
     invalid_arg
-      (Printf.sprintf
+      (strf
          "Thumper.Budget.at_most: metric %s can never be measured exactly, and \
           an absolute cap applies to exact evidence only; use a relative \
           budget"
@@ -73,8 +68,8 @@ let check_distinct ~fname budgets =
     | b :: rest ->
         if List.exists (Metric.equal b.metric) seen then
           invalid_arg
-            (Printf.sprintf "%s: two budgets for metric %s in one ~budgets list"
-               fname (Metric.id b.metric))
+            (strf "%s: two budgets for metric %s in one ~budgets list" fname
+               (Metric.id b.metric))
         else go (b.metric :: seen) rest
   in
   go [] budgets
