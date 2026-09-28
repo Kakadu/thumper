@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 (* The dune-release/dune-subst watermark: substituted with the VCS tag,
    without its leading [v], at distribution time, so [-V] and the changelog
    cannot drift apart. In a dev tree the literal stays unsubstituted and
@@ -99,9 +101,7 @@ let parse argv =
   let error = ref None in
   (* Every error branch is terminal: the first defect wins. *)
   let fail msg = error := Some msg in
-  let missing flag =
-    fail (Printf.sprintf "option '%s' requires an argument" flag)
-  in
+  let missing flag = fail (strf "option '%s' requires an argument" flag) in
   let rec go = function
     | [] -> ()
     | ("-h" | "--help") :: _ -> result := Some Help
@@ -143,7 +143,7 @@ let parse argv =
             go rest
         | Some _ | None ->
             fail
-              (Printf.sprintf
+              (strf
                  "option '--wait-quiet' requires a non-negative number of \
                   seconds, got '%s'"
                  v))
@@ -164,15 +164,14 @@ let parse argv =
             go rest
         | _ ->
             fail
-              (Printf.sprintf
-                 "option '--color' takes auto, always, or never, got '%s'" v))
+              (strf "option '--color' takes auto, always, or never, got '%s'" v)
+        )
     | [ "--color" ] -> missing "--color"
     | a :: _ when String.length a > 1 && a.[0] = '-' -> (
         match String.index_opt a '=' with
         | Some i when List.mem (String.sub a 0 i) long_flags ->
-            fail
-              (Printf.sprintf "option '%s' takes no argument" (String.sub a 0 i))
-        | Some _ | None -> fail (Printf.sprintf "unknown option '%s'" a))
+            fail (strf "option '%s' takes no argument" (String.sub a 0 i))
+        | Some _ | None -> fail (strf "unknown option '%s'" a))
     | a :: rest ->
         (* A bare argument is a pattern, as after [-f]. *)
         patterns := a :: !patterns;
@@ -191,7 +190,7 @@ let parse argv =
             String.concat " and " (List.map subcommand_word allowed)
           in
           fail
-            (Printf.sprintf "option '%s' applies to %s, not %s" flag where
+            (strf "option '%s' applies to %s, not %s" flag where
                (subcommand_word subcommand))
   in
   let measuring = [ `Check; `Bless ] in
@@ -399,10 +398,7 @@ let rerun_exe ~cwd exe =
 
 let accept_command ~promotion_staged ~corrected ~baseline =
   if promotion_staged then "dune promote"
-  else
-    Printf.sprintf "mv %s %s"
-      (Report.shell_arg corrected)
-      (Report.shell_arg baseline)
+  else strf "mv %s %s" (Report.shell_arg corrected) (Report.shell_arg baseline)
 
 (* The effectful adapter *)
 
@@ -524,10 +520,9 @@ let no_match ~patterns ~tags =
   let quoted l = String.concat ", " (List.map (fun s -> "'" ^ s ^ "'") l) in
   match (patterns, tags) with
   | [], [] -> pp_str Check.pp_error Check.Empty_selection
-  | ps, [] -> Printf.sprintf "no case matches %s" (quoted ps)
-  | [], ts -> Printf.sprintf "no case matches tag %s" (quoted ts)
-  | ps, ts ->
-      Printf.sprintf "no case matches %s with tag %s" (quoted ps) (quoted ts)
+  | ps, [] -> strf "no case matches %s" (quoted ps)
+  | [], ts -> strf "no case matches tag %s" (quoted ts)
+  | ps, ts -> strf "no case matches %s with tag %s" (quoted ps) (quoted ts)
 
 let selection ~patterns ~tags ~config ~budgets ?filter benches =
   match
@@ -720,8 +715,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
           | `Partial -> String.concat " " (List.map Bench.id sel) ^ " "
         in
         [
-          Printf.sprintf "forced: blessed %sunder load %.1f on %d cores" cases
-            load cores;
+          strf "forced: blessed %sunder load %.1f on %d cores" cases load cores;
         ]
   in
   let file = Option.value file ~default:(Baseline.empty ~suite:name) in
@@ -747,9 +741,9 @@ let help_text exe =
   let name = Filename.basename exe in
   String.concat "\n"
     [
-      Printf.sprintf "%s: thumper benchmark suite (thumper %s)" name version;
+      strf "%s: thumper benchmark suite (thumper %s)" name version;
       "";
-      Printf.sprintf "usage: %s [check|bless|list] [OPTS] [PATTERN...]" name;
+      strf "usage: %s [check|bless|list] [OPTS] [PATTERN...]" name;
       "";
       "subcommands:";
       "  check      measure, compare against the baseline (default)";
