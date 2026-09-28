@@ -124,6 +124,9 @@ let fractional_of_stats (s : Stats.shift) =
     upper = expm1 s.Stats.interval.Stats.upper;
   }
 
+let bias_comparable ~e (sh : shift) =
+  Float.abs sh.estimate <= bias_comparability_factor *. e
+
 let is_loaded = function Env.Loaded _ -> true | Env.Quiet -> false
 
 (* One reading for both sides, from the sorted vector alone: a stored
@@ -226,7 +229,7 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
            ~candidate:(log_all cand.Run.sorted))
     in
     let k_moved = row_k <> trial_k in
-    if k_moved && Float.abs sh.estimate <= bias_comparability_factor *. e then
+    if k_moved && bias_comparable ~e sh then
       (* After recalibration only a bias-comparable shift degrades; a
          large shift is a verdict, not a calibration event. *)
       Settled (Judged (inconclusive ~shift:sh Batch_drifted))
@@ -238,7 +241,7 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
          (where r >= 2e) a strong regression must not hide behind a heavy
          tail. *)
       let unless_unstable settle =
-        if Float.abs sh.estimate > bias_comparability_factor *. e then settle ()
+        if not (bias_comparable ~e sh) then settle ()
         else if unstable baseline then
           Settled (Judged (inconclusive ~shift:sh Baseline_unstable))
         else if unstable cand.Run.sorted then
@@ -494,8 +497,7 @@ let resolve_pending ~load ~conf metric pd =
             if
               (not reproduced)
               || unstable s.Run.sorted
-                 && Float.abs confirmation.estimate
-                    <= bias_comparability_factor *. pd.p_e
+                 && bias_comparable ~e:pd.p_e confirmation
             then inconclusive ~shift:first Unconfirmed
             else
               (* Pool both passes for the ratchet; [Array.append] is a fresh
