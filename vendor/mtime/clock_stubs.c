@@ -21,7 +21,9 @@
    upstream's boxed int64, so a read allocates nothing and can sit inside
    an allocation-counter interval; this needs 63-bit ints. The Windows
    tier converts counter ticks to nanoseconds in integer arithmetic,
-   where upstream multiplies by a double-valued period. */
+   where upstream multiplies by a double-valued period. Error messages
+   name Thumper_clock.now_ns and the system call that failed, not
+   upstream's module. */
 #ifndef _DEFAULT_SOURCE
 #define _DEFAULT_SOURCE 1
 #endif
@@ -37,9 +39,10 @@
 #include <stdint.h>
 
 #define Val_none Val_int(0)
-#define OCAML_MTIME_RAISE_SYS_ERROR(ERR)                               \
-  do { caml_raise_sys_error (caml_copy_string("Mtime_clock: " ERR)); } \
-  while (0)
+#define OCAML_MTIME_RAISE_SYS_ERROR(ERR)                                \
+  do {                                                                  \
+    caml_raise_sys_error (caml_copy_string("Thumper_clock.now_ns: " ERR)); \
+  } while (0)
 
 /* Detect platform */
 
@@ -137,7 +140,7 @@ static void set_performance_frequency(void)
 {
   LARGE_INTEGER t_freq;
   if (!QueryPerformanceFrequency(&t_freq) || t_freq.QuadPart <= 0) {
-    OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
+    OCAML_MTIME_RAISE_SYS_ERROR ("QueryPerformanceFrequency () failed");
   }
   performance_frequency = (uint64_t)t_freq.QuadPart;
 }
@@ -154,7 +157,7 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
     set_performance_frequency();
   }
   if (!QueryPerformanceCounter(&now)) {
-    OCAML_MTIME_RAISE_SYS_ERROR ("clock_gettime () failed");
+    OCAML_MTIME_RAISE_SYS_ERROR ("QueryPerformanceCounter () failed");
   }
   uint64_t ticks = (uint64_t)now.QuadPart;
   uint64_t f = performance_frequency;
@@ -166,7 +169,7 @@ CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 
 #else
 
-#warning OCaml Mtime_clock module: unsupported platform
+#warning Thumper_clock: unsupported platform
 
 CAMLprim value ocaml_thumper_clock_now_ns (value unit)
 { OCAML_MTIME_RAISE_SYS_ERROR ("unsupported platform"); }
