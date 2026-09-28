@@ -77,6 +77,12 @@ let max_calibration_k = 1 lsl 30
    lesson: bounded reads). *)
 let parent_read_bound = 16 * 1024 * 1024
 
+(* How long the parent waits to reap a worker it killed. A stopped traced
+   worker ignores SIGKILL until its tracer exits (macOS), so an unbounded
+   wait would hang the run; past the bound the parent moves on, and the
+   worker dies when thumper exits. Elsewhere the reap is immediate. *)
+let reap_bound_s = 1.0
+
 (* Internal control flow
 
    [Deadline] is raised by the in-process protocol driver at batch
@@ -594,7 +600,17 @@ let parent_collect ~deadline_s ~case pid r =
   let deadline_at = Option.map (fun s -> Os.monotonic_s () +. s) deadline_s in
   let kill_and_reap () =
     (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
-    ignore (waitpid_retry pid)
+    let until = Os.monotonic_s () +. reap_bound_s in
+    let rec reap () =
+      match Unix.waitpid [ Unix.WNOHANG ] pid with
+      | 0, _ ->
+          if Os.monotonic_s () < until then (
+            Unix.sleepf 0.005;
+            reap ())
+      | _ -> ()
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap ()
+    in
+    reap ()
   in
   let rec wait_readable () =
     let timeout =
@@ -653,6 +669,9 @@ let parent_collect ~deadline_s ~case pid r =
             (Worker_died
                { case; detail = Printf.sprintf "killed by %s" (signal_name s) })
       | Unix.WSTOPPED s ->
+          (* Only a traced worker reports a stop here ([waitpid] has no
+             [WUNTRACED]): kill it, so no stopped worker outlives the run. *)
+          kill_and_reap ();
           `Failure
             (Worker_died
                { case; detail = Printf.sprintf "stopped by %s" (signal_name s) })

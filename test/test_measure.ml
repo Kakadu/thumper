@@ -734,6 +734,43 @@ let parent_kills_a_hung_worker_at_the_deadline () =
     (Measure.Deadline_exceeded { case = "hang"; deadline = 0.2 })
     (the_failure (Measure.case ~config ~frozen_k:None case))
 
+external stop_traced : unit -> bool = "thumper_test_stop_traced"
+external sigkill_ends_tracee : unit -> bool = "thumper_test_sigkill_ends_tracee"
+
+(* A worker that writes its pid to a file, closes its report pipe and stops
+   as a traced child: the parent sees end of file, then a stopped child.
+   The failure names the signal, and the case returns: SIGKILL is sent and
+   the reap is bounded. Where the kernel ends a traced child on SIGKILL
+   (Linux), it is reaped before the case returns. macOS delivers the kill
+   only once the tracer exits, so there the worker dies with the test
+   runner and only the report is checked. A host that refuses tracing skips
+   the test (the child exits 3). *)
+let a_stopped_worker_is_killed_and_reaped () =
+  let pid_file = Filename.temp_file "thumper-stop" ".pid" in
+  let case =
+    resolved
+      (Bench.bench "stop" (fun () ->
+           Out_channel.with_open_bin pid_file (fun oc ->
+               output_string oc (string_of_int (Unix.getpid ())));
+           if not (stop_traced ()) then exit 3))
+  in
+  let config = Config.(default |> samples 3 |> warmup 0. |> deadline 10.) in
+  let outcome = Measure.case ~config ~frozen_k:None case in
+  let pid =
+    int_of_string (In_channel.with_open_bin pid_file In_channel.input_all)
+  in
+  Sys.remove pid_file;
+  match the_failure outcome with
+  | Measure.Worker_died { detail = "exited with code 3"; _ } ->
+      skip ~reason:"this host refuses ptrace" ()
+  | Measure.Worker_died { case = "stop"; detail } ->
+      equal ~msg:"detail" string "stopped by SIGUSR1" detail;
+      if sigkill_ends_tracee () then
+        raises_match ~msg:"the worker is reaped"
+          (function Unix.Unix_error (Unix.ECHILD, _, _) -> true | _ -> false)
+          (fun () -> Unix.waitpid [ Unix.WNOHANG ] pid)
+  | f -> failf "expected Worker_died, got %a" Measure.pp_failure f
+
 (* OCaml refuses [Unix.fork] once the process has spawned a domain, even a
    joined one. A domain in this process would refuse every later fork, the
    test runner's included, so the refusal is staged in a child: it spawns
@@ -858,6 +895,9 @@ let () =
             forked_child_does_not_check_the_deadline;
           test "the parent kills a hung worker at the deadline"
             parent_kills_a_hung_worker_at_the_deadline;
+          (* Its own limit: a blocking reap would otherwise wedge the run. *)
+          test ~timeout:30. "a stopped worker is killed and reaped"
+            a_stopped_worker_is_killed_and_reaped;
         ];
     ]
   |> exit

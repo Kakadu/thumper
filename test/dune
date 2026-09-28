@@ -63,7 +63,11 @@
 
 (test
  (name test_measure)
+ ; The C fixture stops a forked worker as a traced child.
  (modules test_measure)
+ (foreign_stubs
+  (language c)
+  (names stop_stubs))
  (libraries thumper unix windtrap))
 
 (test
