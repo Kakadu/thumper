@@ -284,15 +284,12 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
   let need_cpu =
     List.exists
       (fun m ->
-        match Metric.source m with Metric.Cpu_clock -> true | _ -> false)
+        match Metric.source m with
+        | Metric.Cpu_clock -> true
+        | Metric.Wall_clock | Metric.Gc_counter _ -> false)
       metrics
   in
-  let need_gc =
-    List.exists
-      (fun m ->
-        match Metric.source m with Metric.Gc_counter _ -> true | _ -> false)
-      metrics
-  in
+  let need_gc = List.exists Metric.is_counter metrics in
   let gc_before = Gc.get () in
   (* The full measured protocol against [run_batch]. *)
   let protocol run_batch =
