@@ -98,6 +98,11 @@ let probe_k ~frozen_k ~k =
   | Some k0 when k0 <= max_probe_k_ratio * k -> k0
   | Some _ | None -> k
 
+(* A per-call count in the metric's units: [54.5 words], and [3] for a
+   collection count, whose units are ["count"], no unit word. *)
+let per_call m v =
+  match Metric.units m with "count" -> strf "%g" v | u -> strf "%g %s" v u
+
 let effective_metrics ~config bcase =
   match Bench.metrics bcase with Some ms -> ms | None -> config.Config.metrics
 
@@ -493,10 +498,11 @@ let measure_case ~instruments ~config ~deadline ~frozen_k bcase =
               warn
                 (strf
                    "%s: exactness probe failed: batch deltas %g (k=%d) and %g \
-                    (2k=%d) give per-call %g words with harness h %g vs %g; \
+                    (2k=%d) give %s per call and a per-batch overhead of %g; \
                     treating as sampled"
                    (Metric.id m) dk raw.raw_probe_k d2k (2 * raw.raw_probe_k)
-                   (diff /. pk) h h2);
+                   (per_call m (diff /. pk))
+                   ((2. *. dk) -. d2k));
               None)
       in
       let measurements =

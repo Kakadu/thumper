@@ -281,7 +281,8 @@ let probe_downgrades_nondeterministic_counters () =
   | Some (Run.Exact v) -> failf "expected downgrade to samples, got exact %d" v
   | None -> fail "alloc_words not measured");
   is_true ~msg:"probe warning present" (has_warning t "exactness probe failed");
-  is_true ~msg:"warning reports h" (has_warning t "harness h")
+  is_true ~msg:"warning reports the overhead"
+    (has_warning t "per-batch overhead of 10")
 
 (* With [base] (5 ms floor, warmup 0.) and 5 ms calls, k = 1 and the call
    indices are fixed: 1 calibration, 2-4 warmup, 5-24 samples, 25 the k probe
