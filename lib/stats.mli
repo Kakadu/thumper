@@ -3,159 +3,131 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Deterministic rank-based statistics.
+(** Deterministic rank statistics.
 
-    Every function is pure and deterministic: no RNG, no bootstrap, no normality
-    assumption. The module is unit-agnostic — callers pass log-space samples
-    where relative comparisons are wanted (see {!val:shift}) and raw per-call
-    values everywhere else.
+    [Stats] holds the median and its confidence interval, the two tests of a
+    trial's quality, the exact Mann–Whitney p-value, the Hodges–Lehmann shift
+    with its Moses interval, and the geometric mean. Every function is pure,
+    with no randomness and no normality assumption. An interval's cutoffs come
+    from exact integer counts of the binomial and Mann–Whitney null
+    distributions, and its endpoints are values of the data, so the same vectors
+    give the same interval bit for bit.
 
-    Confidence intervals are closed intervals whose endpoints are order
-    statistics of the data. Their cutoff indices come from exact-integer
-    binomial and Mann–Whitney quantile computations — never from a normal
-    approximation — so two runs over the same vectors produce the same interval,
-    bit for bit, and coverage is conservative (at least the nominal level) even
-    under ties.
+    The functions ignore units. A caller passes logarithms to {!val:shift} for a
+    relative comparison, and raw per-call values everywhere else.
 
-    Vectors named [sorted] must be sorted ascending; passing an unsorted or
-    NaN-containing vector raises [Invalid_argument]. Empty or too-short vectors
-    raise [Invalid_argument] as well: a short vector is a programmer error,
-    since measurement guarantees n >= 3. *)
+    A function whose name ends in [_sorted] takes an ascending vector: an
+    unsorted one, or one holding NaN, raises [Invalid_argument]. A vector
+    shorter than a function's minimum raises [Invalid_argument] too. *)
 
 (** {1:types Types} *)
 
 type interval = { lower : float; upper : float }
-(** A closed interval \[[lower];[upper]\], [lower <= upper]. Endpoints are order
-    statistics of the underlying data, so ties are handled conservatively:
-    coverage never falls below the nominal level because an endpoint repeats
-   . *)
+(** The type for closed intervals \[[lower];[upper]\]. Every interval this
+    module returns has [lower <= upper] and endpoints that are order statistics,
+    so a repeated value never lowers its coverage below the nominal level. The
+    full-range fallbacks of {!median_ci_sorted} and {!val:shift} are the
+    exception. *)
 
 type shift = { estimate : float; interval : interval }
-(** A two-sample location shift: the Hodges–Lehmann point estimate with a Moses
-    order-statistic confidence interval, as one deterministic object. [interval]
-    always contains [estimate]. *)
+(** The type for location shifts: the Hodges–Lehmann estimate and its Moses
+    confidence interval, which always contains [estimate]. *)
 
 (** {1:location Median and its confidence interval} *)
 
 val median_sorted : float array -> float
-(** [median_sorted v] is the central sample of [v] (odd length) or the midpoint
-    [(a +. b) /. 2.] of the two central samples (even length).
+(** [median_sorted v] is the central value of [v], or the midpoint
+    [(a +. b) /. 2.] of its two central values [a] and [b] when its length is
+    even.
 
-    Raises [Invalid_argument] if [v] is empty or not sorted ascending. *)
+    Raises [Invalid_argument] if [v] is empty or not sorted. *)
 
 val median_ci_sorted : alpha:float -> float array -> interval
 (** [median_ci_sorted ~alpha v] is a distribution-free confidence interval on
-    the median of the population behind [v], with two-sided miss probability
-    at most [alpha] (e.g. [~alpha:0.05] for a 95% interval).
+    the median of the population behind [v], which misses it with probability at
+    most [alpha] ([~alpha:0.05] is a 95% interval). Its endpoints are
+    [v.(l - 1)] and [v.(n - l)], with [l] the largest index such that a
+    Binomial([n], 1/2) variable falls below [l] with probability at most
+    [alpha /. 2.].
 
-    The endpoints are the order statistics [v.(l - 1)] and [v.(n - l)]
-    (1-indexed [l]-th smallest and largest) where [l] is the largest index
-    such that a Binomial([n], 1/2) variable falls below [l] with probability
-    at most [alpha /. 2.] — computed in exact integer arithmetic. If no order
-    statistic achieves the coverage (possible only for very small [n], e.g.
-    [n = 3] at [alpha = 0.05]), the full range [\[v.(0);v.(n - 1)\]] is
-    returned: the widest data-supported interval, with coverage below the
-    nominal level.
+    When no order statistic reaches that level, the interval is the full range
+    \[[v.(0)];[v.(n - 1)]\] and its coverage is below the nominal level. At
+    [alpha = 0.05] that is the case for [n <= 5].
 
-    Raises [Invalid_argument] if [Array.length v < 3], if [v] is not sorted
-    ascending, or if [alpha] is outside ]0;1[. *)
+    Raises [Invalid_argument] if [v] has fewer than 3 values or is not sorted,
+    or if [alpha] is outside \]0;1\[. *)
 
-(** {1:stability Stability diagnostics}
+(** {1:stability Trial quality}
 
-    The two trial-quality predicates: severe outlier-variance inflation
-    ([unstable]), which judgment reads from a sorted vector, and the
-    collection-order drift check, which measurement runs before sorting.
-    Outliers are never removed. *)
+    These tests flag a vector and never remove an outlier. *)
 
 val severe_outlier_inflation_sorted : float array -> bool
-(** [severe_outlier_inflation_sorted v] is [true] iff outliers inflate the
-    sample variance severely — criterion's outlier-variance measure, [true] iff
-    the minimal fraction of variance explainable by outliers is at least 0.5
-    (criterion's [Severe] grade). A [true] marks the trial unstable; what an
-    unstable trial may support is [Verdict]'s rule.
+(** [severe_outlier_inflation_sorted v] is [true] iff the minimal fraction of
+    [v]'s variance that outliers can explain is at least one half, by
+    criterion's outlier-variance measure (its [Severe] grade). [v] holds raw
+    per-call values, not logarithms, since the measure is not
+    translation-invariant. A vector with zero variance is [false].
 
-    [v] must contain raw (nonnegative) per-call values, not logs: the measure
-    compares the sample mean against dispersion and is not
-    translation-invariant. A zero-variance vector is [false].
-
-    Raises [Invalid_argument] if [Array.length v < 3], if [v] is not sorted
-    ascending, or if [v.(0) < 0.]. *)
+    Raises [Invalid_argument] if [v] has fewer than 3 values or is not sorted,
+    or if [v.(0) < 0.]. *)
 
 val drifted : alpha:float -> float array -> bool
-(** [drifted ~alpha v] is [true] iff the first half of the collection-order
-    vector [v] (the first [n / 2] samples) differs in location from the
-    second half by the two-sided Mann–Whitney test at level [alpha]:
-    [mann_whitney_p first_half second_half < alpha] (see {!mann_whitney_p}),
-    with the comparison decided in exact integer arithmetic. The protocol
-    level is α = 0.01.
+(** [drifted ~alpha v] is [true] iff the first [n / 2] values of [v], in
+    collection order, differ in location from the other [n - n / 2] by the
+    two-sided Mann–Whitney test at level [alpha], that is
+    [mann_whitney_p first second < alpha], decided in exact integer arithmetic.
+    A rank test gives the same result on raw values and on their logarithms. The
+    smallest p-value is [2 / C(n, n / 2)], so at [alpha = 0.01] a vector of
+    [n <= 9] values never drifts.
 
-    Rank tests are invariant under monotone transforms, so raw and log-space
-    samples give the same answer. A drifting trial cannot produce a verdict.
+    Raises [Invalid_argument] if [v] has fewer than 3 values or a non-finite
+    value, or if [alpha] is outside \]0;1\[. *)
 
-    Raises [Invalid_argument] if [Array.length v < 3], if [v] contains
-    non-finite values, or if [alpha] is outside ]0;1[. *)
+(** {1:comparison Two-sample comparison} *)
 
 val mann_whitney_p : float array -> float array -> float
 (** [mann_whitney_p x y] is the exact two-sided p-value of the Mann–Whitney rank
-    test of [x] against [y]: [2. *. q] clamped to [1.0], where [q] is the
-    smaller tail probability of the exact (tie-free) null distribution of the U
-    statistic at the observed value. It is symmetric:
-    [mann_whitney_p x y = mann_whitney_p y x].
+    test of [x] against [y]: [2. *. q] clamped to [1.], with [q] the smaller
+    tail probability of the U statistic's exact null distribution without ties.
+    It is symmetric in [x] and [y], and neither needs to be sorted.
 
-    Ties contribute 1/2 to U (midranks); the reference distribution is always
-    the tie-free null, whose support is the integers, so a half-integral U has
-    unambiguous tails ([P(U <= floor U)] below, [P(U >= ceil U)] above). Without
-    ties the result is identical to scipy's [mannwhitneyu(method='exact')]. With
-    ties this is the standard no-tie-correction convention, but the level is
-    only approximate — under heavy ties the exact conditional p-value can be
-    larger. {!drifted} uses it as a screening diagnostic; the confidence
-    intervals, whose tie conservatism is exact, never use midranks (see
-    {!shift}).
+    A tie adds 1/2 to U. The null distribution stays the tie-free one, whose
+    support is the integers, so a half-integral U has unambiguous tails
+    ([P(U <= floor U)] below, [P(U >= ceil U)] above). Without ties it is the
+    p-value of scipy's [mannwhitneyu(method='exact')], up to the rounding of the
+    final division. With ties the level is approximate, and under heavy ties the
+    exact conditional p-value can be larger. The tails are exact integer counts
+    and only the final division rounds.
 
-    Tail probabilities are exact integer counts; only the final quotient is
-    floating-point, so the result is deterministic and accurate to a few ulps.
-    Neither input needs to be sorted.
-
-    Raises [Invalid_argument] if either vector is empty or contains non-finite
-    values. *)
-
-(** {1:comparison Two-sample shift} *)
+    Raises [Invalid_argument] if [x] or [y] is empty or holds a non-finite
+    value. *)
 
 val shift :
   alpha_per_side:float -> baseline:float array -> candidate:float array -> shift
-(** [shift ~alpha_per_side ~baseline ~candidate] estimates the location shift
-    of [candidate] relative to [baseline] from the m·n pairwise differences
-    [candidate.(i) -. baseline.(j)]:
+(** [shift ~alpha_per_side ~baseline ~candidate] is the location shift of
+    [candidate] from [baseline], estimated from the [m * n] differences
+    [candidate.(i) -. baseline.(j)], with [m] and [n] the lengths of [baseline]
+    and [candidate]. The [estimate] is their median (Hodges–Lehmann). The
+    [interval] is their [k]-th smallest and [k]-th largest values (Moses), with
+    [k - 1] the largest count at which the exact Mann–Whitney null distribution
+    function is at most [alpha_per_side]. Each side then misses with probability
+    at most [alpha_per_side].
 
-    - [estimate] is the median of the differences (Hodges–Lehmann);
-    - [interval] is the Moses order-statistic construction: the [k]-th
-      smallest and [k]-th largest difference, where [k - 1] is the largest
-      value at which the exact Mann–Whitney null CDF is at most
-      [alpha_per_side] — the Mann–Whitney test and its confidence interval as
-      one deterministic object, with miss probability at most
-      [alpha_per_side] on each side.
+    [m] and [n] may differ, and neither vector needs to be sorted. For a
+    relative comparison, pass logarithms: the interval then bounds the
+    log-ratio. When no order statistic reaches the level, the interval is the
+    full range of the differences; at [alpha_per_side = 0.005] that is the case
+    while [C(m + n, n) < 200].
 
-    The construction is valid for m <> n — the pooled-2n ratchet makes
-    40-vs-20 the common case — and conservative under ties: the
-    closed interval at the order-statistic endpoints keeps coverage at least
-    the nominal level. The cutoff [k] comes from exact integer arithmetic
-    over the null distribution, never a normal approximation. If no order
-    statistic achieves the coverage (tiny m·n only), the full range of the
-    differences is returned.
-
-    Callers wanting a relative comparison pass log-space samples; the
-    interval then bounds the log-ratio. Neither input needs to be
-    sorted. Protocol levels: [~alpha_per_side:0.005] initial pass, [0.05]
-    confirmation.
-
-    Raises [Invalid_argument] if either vector has fewer than 3 samples or
-    contains non-finite values, or if [alpha_per_side] is outside ]0;0.5[. *)
+    Raises [Invalid_argument] if [baseline] or [candidate] has fewer than 3
+    values or a non-finite value, or if [alpha_per_side] is outside \]0;0.5\[.
+*)
 
 (** {1:aggregation Aggregation} *)
 
 val geometric_mean : float array -> float
-(** [geometric_mean v] is [exp (mean (log v))], the geometric mean of [v] (JSON
-    summary support: the geomean over per-case ratios).
+(** [geometric_mean v] is [exp (mean (log v))]. Unlike the intervals, it depends
+    on the platform's [log] and [exp].
 
-    Raises [Invalid_argument] if [v] is empty or contains a non-positive or
-    non-finite value. *)
+    Raises [Invalid_argument] if [v] is empty or holds a value that is not
+    positive and finite. *)
