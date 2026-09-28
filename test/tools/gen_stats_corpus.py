@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy>=1.24", "scipy>=1.11"]
 # ///
-"""Generates and verifies the golden statistics corpus (test/golden/stats.tsv).
+"""Generates and verifies the golden statistics corpus (test/unit/golden/stats.tsv).
 
 The corpus pins lib/stats.ml (doc/dev/statistics.md) against independent
 reference implementations:
@@ -61,7 +61,7 @@ try:
 except ImportError:  # degraded mode: corpus still exact, cross-checks skipped
     HAVE_SCIPY = False
 
-CORPUS = Path(__file__).resolve().parent.parent / "golden" / "stats.tsv"
+CORPUS = Path(__file__).resolve().parent.parent / "unit" / "golden" / "stats.tsv"
 
 # ----------------------------------------------------------------------------
 # Deterministic data: a fixed 64-bit LCG, values on the dyadic grid k/2^16.

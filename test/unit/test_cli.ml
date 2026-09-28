@@ -1712,7 +1712,7 @@ let rerun_names_the_executable_from_the_cwd () =
    into the repo source tree is removed again before the test returns. *)
 let default_path_lands_next_to_the_source () =
   let start_cwd = Sys.getcwd () in
-  let exe = Filename.concat start_cwd "cram/fixture/bench_fixture.exe" in
+  let exe = Filename.concat start_cwd "../cram/fixture/bench_fixture.exe" in
   match (Sys.getenv_opt "INSIDE_DUNE", Sys.getenv_opt "DUNE_SOURCEROOT") with
   | None, _ | _, None -> skip ~reason:"not run by dune" ()
   | Some context, Some root ->

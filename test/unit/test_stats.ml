@@ -6,7 +6,7 @@
 (* Stats test suite.
 
    Three layers:
-   - the committed golden corpus (test/golden/stats.tsv), generated and
+   - the committed golden corpus (test/unit/golden/stats.tsv), generated and
      scipy-cross-checked by test/tools/gen_stats_corpus.py. Quantities that
      are order-statistic-exact (medians, interval endpoints, HL estimates,
      counts, booleans) are compared bit-for-bit; libm-dependent quantities

@@ -16,7 +16,7 @@ a duration.
 
 ## Layout
 
-One windtrap suite per module under `test/`: `test_stats`,
+One windtrap suite per module under `test/unit/`: `test_stats`,
 `test_metric`, `test_budget`, `test_config`, `test_run`, `test_bench`,
 `test_env`, `test_baseline`, `test_measure`, `test_verdict`,
 `test_check`, `test_cli`, plus `test_thumper` (facade smoke through
@@ -27,7 +27,7 @@ unconstrained re-export, existing for exactly this purpose
 (`thumper.mli`). The library is built once and linked; no test
 compiles its own copy of a unit, so an edit to any `lib/` source
 rebuilds exactly the tests that depend on it, under the library's own
-flags (`test/dune`'s header comment).
+flags (`test/unit/dune`'s header comment).
 
 The laws of [`architecture.md`](architecture.md) are the test
 obligations. The pure-core laws are windtrap properties — notably the
@@ -42,9 +42,9 @@ honest exits) are cram scenarios.
 
 `stats.ml` is the highest-validation-risk module: novel numerics with
 no OCaml reference. Its suite has three layers (see the header of
-`test/test_stats.ml`):
+`test/unit/test_stats.ml`):
 
-1. **The committed corpus** — `test/golden/stats.tsv`, generated and
+1. **The committed corpus** — `test/unit/golden/stats.tsv`, generated and
    scipy-cross-checked by `test/tools/gen_stats_corpus.py`.
    Order-statistic-exact quantities (medians, interval endpoints, HL
    estimates, counts, booleans) are compared bit-for-bit;
