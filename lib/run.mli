@@ -3,147 +3,120 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Collected measurement evidence.
+(** Measurement evidence.
 
-    A {e trial} is one case's evidence: the frozen batch size k, one sorted
-    sample vector per sampled metric, one proven integer per exact metric, plus
-    the drift flag and warnings recorded at measurement time. A {e run} is an
-    ordered list of (case id, trial) pairs — the value measurement produces and
-    judgment consumes. Pure data: no judgment, no I/O, no host identity
-    (identity is [Env]'s business and travels beside the run, not in it).
+    A {{!Trial}trial} is one case's evidence: its batch size, one sorted sample
+    vector per sampled metric, one integer per exact metric, and its warnings. A
+    {{!type:t}run} is the trials of the measured cases, in measurement order.
+    Both are data: no judgment, no I/O, and no host identity, which travels
+    beside a run. [Measure] builds trials; [Verdict] and the report read them.
 
-    The one quality flag, [drifted], is computed by [Stats] at measurement time
-    and stored as data: its rank test needs the collection order, which dies
-    when the vector is sorted. Everything else judgment asks of a trial (outlier
-    inflation included) it derives from the sorted vector itself, for baseline
-    rows and trials alike. *)
+    A trial stores the one quality flag that needs the collection order,
+    [drifted]. Judgment derives every other reading from the sorted values, for
+    a baseline row and a trial alike. A new flag that needs the collection order
+    must be computed by [Measure] before sorting and carried both in
+    {!type:sampled} and in the worker's [samples] line ({!Measure.Protocol}).
+
+    [Thumper.Run] re-exports {!type:t}, {!case_ids} and the
+    {{!projections}projections} with their user contract, and nothing else of
+    this module. *)
 
 (** {1:sampled Sampled evidence} *)
 
 type sampled = private {
   sorted : float array;
-      (** Per-call values, sorted ascending, all finite. Owned by the evidence
-          value: consumers read it in place and must never mutate it. *)
+      (** The per-call values, ascending and finite, at least 3 of them. The
+          array is shared: a reader must not mutate it. *)
   drifted : bool;
-      (** [true] iff the first and second halves of the samples
-          {e in collection order} differed by the Mann–Whitney rank test at α =
-          0.01. *)
+      (** Whether {!Stats.drifted} found the values drifting in collection
+          order, as [Measure] computed it before sorting. *)
 }
-(** The type for one sampled metric's evidence. The record is private: only
-    {!val:sampled} constructs it, so every value reaching judgment or the
-    baseline codec holds at least 3 finite samples in ascending order — the
-    precondition of [Stats]'s judgment battery. Consumers project fields
-    directly. *)
+(** The type for one sampled metric's evidence. Only {!val:sampled} builds one,
+    so every value holds [sorted]'s invariant, which [Stats]' functions require.
+*)
 
 val sampled : sorted:float array -> drifted:bool -> sampled
-(** [sampled ~sorted ~drifted] is validated sampled evidence. The constructor
-    copies [sorted] before validating; the result does not alias the argument,
-    so a caller mutating its array afterwards cannot invalidate evidence already
-    constructed, and the invariants are checked on the array actually stored. (A
-    vector is a few dozen floats at the preset sample counts — the copy is
-    nothing next to the measurement that produced it.)
+(** [sampled ~sorted ~drifted] is the evidence of a copy of [sorted]: a later
+    change to [sorted] does not reach it, and the checks apply to the copy.
 
-    Raises [Invalid_argument] if [sorted] has fewer than 3 samples (measurement
-    guarantees n >= 3), contains a non-finite value, or is not ascending.
-
-    Non-finite entries are rejected here, at the evidence boundary, because
-    nothing downstream reliably excludes them: an infinity sits in ascending
-    positions ([[| 1.; 2.; infinity |]] {e is} sorted), and the order-only
-    validation guarding half of [Stats]'s judgment battery would compute with it
-    silently — a median never looks at the tails. Per-call values are finite by
-    construction — a clock interval or counter difference divided by k — so a
-    non-finite sample is always a harness error, never data. *)
+    Raises [Invalid_argument] if [sorted] has fewer than 3 values, holds a
+    non-finite value, or is not ascending. *)
 
 (** {1:measurements Measurements} *)
 
-(** The type for one metric's evidence. Which form a metric gets is decided per
-    run: an exact-capable metric whose probe fails is downgraded to [Samples]
-    for that run. *)
+(** The type for one metric's evidence in a trial. A time metric's is always
+    [Samples]; a counter metric's is [Exact] when its probe succeeds and
+    [Samples] when it fails. *)
 type measurement =
   | Samples of sampled  (** Evidence compared statistically. *)
   | Exact of int
-      (** A per-call integer proven exact by the k/2k probe this run. *)
+      (** A per-call count that [Measure]'s probe proved for this trial. *)
 
 (** {1:trials Trials} *)
 
 (** One case's evidence. *)
 module Trial : sig
   type t
-  (** The type for trials: a frozen batch size, per-metric measurements, and
-      measurement-time warnings. Immutable. *)
+  (** The type for trials. *)
 
   val make :
     k:int -> ?warnings:string list -> (Metric.t * measurement) list -> t
-  (** [make ~k ~warnings ms] is a trial measured at batch size [k] with
-      measurements [ms], whose order is preserved. [warnings] defaults to [[]].
+  (** [make ~k ~warnings ms] is the trial measured at batch size [k] with the
+      measurements [ms], in that order. [warnings] defaults to [[]]. It does not
+      check that [ms] covers the case's metrics.
 
-      Raises [Invalid_argument] if [k < 1], if two measurements share a metric
-      identity ({!Metric.equal}, i.e. the same id), or if an [Exact _]
-      measurement is paired with a metric that is not {!Metric.is_counter}:
-      exactness is proven per run by the k/2k counter probe, so exact
-      evidence for a clock metric is a corrupted parse, not data. The converse
-      is legal — sampled evidence for an exact-capable metric is the probe's
-      downgrade path. *)
+      Raises [Invalid_argument] if [k < 1], if two of [ms] share a {!Metric.id},
+      or if an [Exact] measurement belongs to a metric that is not a counter
+      ({!Metric.is_counter}). *)
 
   val k : t -> int
-  (** [k t] is the batch size every sample in [t] was measured at — the k a
-      baseline row freezes. *)
+  (** [k t] is the batch size of every batch behind [t]'s samples, which a
+      baseline row records as its batch size. *)
 
   val measurements : t -> (Metric.t * measurement) list
   (** [measurements t] is [t]'s evidence, one entry per metric, in the order
       given to {!make}. *)
 
   val measurement : t -> Metric.t -> measurement option
-  (** [measurement t m] is [t]'s evidence for [m], or [None] if [m] was not
-      measured. Metrics compare by identity ({!Metric.equal}). *)
+  (** [measurement t m] is [t]'s evidence for [m] ({!Metric.equal}), or [None]
+      if [t] did not measure [m]. *)
 
   val warnings : t -> string list
-  (** [warnings t] is the measurement-time warnings for [t]'s case (probe
-      downgrades, constant-fold suspicion, ...), in emission order. *)
+  (** [warnings t] is the warnings [Measure] recorded for [t]'s case: a
+      suspected constant fold, then each failed probe in metric order, then each
+      changed GC parameter. *)
 end
 
 (** {1:runs Runs} *)
 
 type t
-(** The type for run results: an ordered association of case ids to trials. The
-    order is the measurement order; {!trials} and {!case_ids} preserve it. *)
+(** The type for runs: trials keyed by case id, in measurement order. *)
 
 val create : (string * Trial.t) list -> t
-(** [create trials] is a run holding [trials] in the given order.
+(** [create trials] is the run of [trials], in that order.
 
-    Raises [Invalid_argument] if two entries share a case id: {!trial} keys on
-    the id, so a duplicate would shadow evidence. [Bench.resolve] rejects
-    duplicate ids before anything is measured; tripping this here is a harness
-    bug. *)
+    Raises [Invalid_argument] if two of [trials] share a case id. *)
 
 val trials : t -> (string * Trial.t) list
 (** [trials r] is [r]'s (case id, trial) pairs, in run order. *)
 
 val trial : t -> string -> Trial.t option
-(** [trial r id] is the trial of the case named [id], or [None] if [id] was not
-    measured. *)
+(** [trial r id] is the trial of the case with id [id] in [r], if any. *)
 
 val case_ids : t -> string list
-(** [case_ids r] is the measured case ids, in run order. *)
+(** [case_ids r] is [r]'s case ids, in run order. *)
 
-(** {2:projections Projections}
-
-    One-step access for the programmatic API: run, case id, and metric
-    to that metric's evidence. Both projections are [None] when the case is
-    absent, the metric was not measured, or its evidence has the other form. *)
+(** {2:projections Projections} *)
 
 val samples : t -> case:string -> Metric.t -> float array option
-(** [samples r ~case m] is the sorted per-call sample vector of [m] for [case],
-    if [case] was measured and [m]'s evidence is [Samples _]. The array is
-    fresh: mutating it does not affect [r]. *)
+(** [samples r ~case m] is a copy of [m]'s sorted values in [case]'s trial, or
+    [None] if [r] has no trial for [case], or its evidence for [m] is absent or
+    exact. *)
 
 val exact : t -> case:string -> Metric.t -> int option
-(** [exact r ~case m] is the proven per-call integer of [m] for [case], if
-    [case] was measured and [m]'s evidence this run is [Exact _]. *)
+(** [exact r ~case m] is [m]'s exact count in [case]'s trial, or [None] if [r]
+    has no trial for [case], or its evidence for [m] is absent or sampled. *)
 
 val warnings : t -> case:string -> string list
-(** [warnings r ~case] is [case]'s measurement-time warnings (probe
-    downgrades, constant-fold suspicion, ...), in emission order; [[]] when
-    [case] was not measured or its trial warned about nothing. Evidence
-    quality travels with the evidence: a caller screening its own numbers
-    reads the same warnings the CLI renders. *)
+(** [warnings r ~case] is {!Trial.warnings} of [case]'s trial, or [[]] if [r]
+    has no trial for [case]. *)

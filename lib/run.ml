@@ -13,6 +13,10 @@ let sampled ~sorted ~drifted =
      stored, by construction — never for a caller's alias whose mutation could
      revoke the invariant between check and store. *)
   let sorted = Array.copy sorted in
+  (* Non-finite values are refused here, at the evidence boundary: an
+     infinity sits in ascending position ([| 1.; 2.; infinity |] is sorted),
+     and [Stats]' order-only checks, which guard the median and the outlier
+     test, would compute with it silently. *)
   let n = Array.length sorted in
   if n < 3 then
     invalid_arg (Printf.sprintf "Run.sampled: %d samples, need at least 3" n);
