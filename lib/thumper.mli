@@ -435,8 +435,9 @@ val run :
     The header is [<name>: ] followed by the run's subject: [check]'s number of
     cases and the baseline it compared them with, or why it compared none (no
     baseline for this machine, or a stale section), and [bless]'s number of
-    cases. A loaded host adds a [warning:] line below it, which names the load
-    average and the one at which a host is loaded, half a task per core.
+    cases. On a loaded host, a [warning:] line follows the header of a compared
+    run or of a forced [bless], and names the load average and the one at which
+    a host is loaded, half a task per core.
 
     A row opens on its case's outcome and ends with the case's id, bold when the
     case fails. The outcome is [REGRESSED] when the case fails, the report's
