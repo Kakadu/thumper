@@ -48,41 +48,59 @@ let check () =
   let baseline = Baseline.read_exn file in
   let v = Check.run ?baseline "programmatic" suite in
   print_endline (Verdict.to_json v);
-  Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
   exit (Verdict.exit_code v)
 ```
 
 `Check.run` measures the suite, judges it against this machine's section,
-and is the verdict. `Verdict.to_json` is the [JSON document](json.md),
-`Verdict.corrected` the corrected file when there is one, and
-`Verdict.exit_code` the exit code `check` returns for the verdict.
+and is the verdict. It writes no file. `Verdict.to_json` is the [JSON
+document](json.md), and `Verdict.exit_code` the exit code `check` returns
+for the verdict.
 
-The example prints its evidence, then checks. Its first run finds no
-`programmatic.thumper`, so every metric is proposed, and it writes the
-corrected file, which `mv` accepts:
+## Recording a baseline from a program
 
+To record a suite's baseline, measure it, pass the evidence to
+`Baseline.record`, and write the result:
+
+`examples/07-programmatic/programmatic.ml`:
+
+```ocaml
+let bless () =
+  let baseline = Baseline.read_exn file in
+  let run = measure suite in
+  Baseline.write file (Baseline.record ?baseline "programmatic" run)
+```
+
+`Baseline.record` records the run's trials in this machine's section, as
+`bless` records a selection, and keeps every other row and section.
+`Baseline.write` writes the file atomically. The example records when its
+argument is `bless`, and checks otherwise. Its first run finds no
+`programmatic.thumper`, so every metric is proposed, and its `bless`
+records the file:
+
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/programmatic.exe
 rev: 1400.2 ns, 3000 w
 sum: 2888.9 ns, 0 w
 {"overall":"pass","machine":"5c1e0a7f3b9d2486","summary":{"wall_time":{"n_improved":0,"n_regressed":0,"n_equivalent":0,"n_inconclusive":2,"geomean_delta":null},"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":0,"n_inconclusive":2,"geomean_delta":null}},"cases":[{"id":"rev","full_name":"rev","overall":"pass","metrics":[{"metric":"wall_time","relation":null,"status":"pass","reason":"missing_baseline","delta":null,"lower_delta":null,"upper_delta":null},{"metric":"alloc_words","relation":null,"status":"pass","reason":"missing_baseline","delta":null,"lower_delta":null,"upper_delta":null}]},{"id":"sum","full_name":"sum","overall":"pass","metrics":[{"metric":"wall_time","relation":null,"status":"pass","reason":"missing_baseline","delta":null,"lower_delta":null,"upper_delta":null},{"metric":"alloc_words","relation":null,"status":"pass","reason":"missing_baseline","delta":null,"lower_delta":null,"upper_delta":null}]}]}
-$ mv programmatic.thumper.corrected programmatic.thumper
+$ dune exec bench/programmatic.exe -- bless
 ```
 
-The second run compares both cases with the baseline:
+The next run compares both cases with the baseline:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/programmatic.exe
 rev: 1388.0 ns, 3000 w
-sum: 3546.8 ns, 0 w
-{"overall":"inconclusive","machine":"5c1e0a7f3b9d2486","summary":{"wall_time":{"n_improved":0,"n_regressed":0,"n_equivalent":0,"n_inconclusive":2,"geomean_delta":0.11253177093505529},"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":2,"n_inconclusive":0,"geomean_delta":0}},"cases":[{"id":"rev","full_name":"rev","overall":"inconclusive","metrics":[{"metric":"wall_time","relation":"inconclusive","status":"inconclusive","reason":"environment","confirmed":false,"n":20,"delta":0.0082840018410610308,"lower_delta":-0.0097659712987588371,"upper_delta":0.019792093113173655},{"metric":"alloc_words","relation":"equivalent","status":"pass","reason":null,"exact":true,"delta":0,"lower_delta":null,"upper_delta":null}]},{"id":"sum","full_name":"sum","overall":"inconclusive","metrics":[{"metric":"wall_time","relation":"inconclusive","status":"inconclusive","reason":"environment","confirmed":false,"n":20,"delta":0.22755784985170982,"lower_delta":0.0034913996618063164,"upper_delta":0.78245574521346828},{"metric":"alloc_words","relation":"equivalent","status":"pass","reason":null,"exact":true,"delta":0,"lower_delta":null,"upper_delta":null}]}]}
+sum: 2890.4 ns, 0 w
+{"overall":"pass","machine":"5c1e0a7f3b9d2486","summary":{"wall_time":{"n_improved":0,"n_regressed":0,"n_equivalent":2,"n_inconclusive":0,"geomean_delta":0.0021738071102339312},"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":2,"n_inconclusive":0,"geomean_delta":0}},"cases":[{"id":"rev","full_name":"rev","overall":"pass","metrics":[{"metric":"wall_time","relation":"equivalent","status":"pass","reason":null,"confirmed":false,"n":20,"delta":0.0032840018410610308,"lower_delta":-0.0047659712987588371,"upper_delta":0.0097920931131736551},{"metric":"alloc_words","relation":"equivalent","status":"pass","reason":null,"exact":true,"delta":0,"lower_delta":null,"upper_delta":null}]},{"id":"sum","full_name":"sum","overall":"pass","metrics":[{"metric":"wall_time","relation":"equivalent","status":"pass","reason":null,"confirmed":false,"n":20,"delta":0.0010655784985170982,"lower_delta":-0.0034913996618063164,"upper_delta":0.0082457452134682814},{"metric":"alloc_words","relation":"equivalent","status":"pass","reason":null,"exact":true,"delta":0,"lower_delta":null,"upper_delta":null}]}]}
 $ echo $?
 0
 ```
 
-To check part of a suite against a shared baseline, pass `Check.run` that
-part. In a current section, its corrected file keeps every row it did not
-judge.
+To record part of a suite in a shared baseline, measure that part.
+`Baseline.record` replaces the rows of the cases it measured and keeps the
+rest.
 
 ## Handling errors
 
@@ -115,7 +133,7 @@ Which value raises what is part of each contract in
 The library has no counterpart for these parts of `Thumper.run`:
 
 - the report, the status line and the notices on stderr;
-- `bless`;
+- `bless`'s refusal of a loaded host;
 - `--wait-quiet`;
 - the default baseline path;
 - the removal of the rows of cases the suite no longer has;
@@ -124,5 +142,6 @@ The library has no counterpart for these parts of `Thumper.run`:
 `measure` and `Check.run` print nothing, and a program renders the
 verdict itself. `Check.run` samples the load once it holds the
 measurement lock, and again before any second trials, and never waits
-for a quiet host. A program names its baseline, and a relative name
+for a quiet host. `Baseline.record` records every trial as measured,
+whatever the load. A program names its baseline, and a relative name
 resolves in its working directory.
