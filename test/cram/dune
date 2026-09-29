@@ -6,8 +6,11 @@
 ; measurements, and a dozen concurrent spinning workers would push the load
 ; average over the environment gate's threshold on any host — the suite would
 ; flake itself into inconclusive. The timing verdicts, which only a quiet
-; host earns, are in quiet/, outside @runtest.
+; host earns, are in quiet/, outside @runtest. A session that hangs (a
+; deadline the fixture's hang mode fails to meet, a nested dune build) is
+; stopped after 300 s.
 
 (cram
  (locks measurement)
- (deps prelude.sh fixture/bench_fixture.exe fixture/hold_lease.exe))
+ (timeout 300)
+ (deps prelude.sh fixture/bench_fixture.exe fixture/hold_lock.exe))

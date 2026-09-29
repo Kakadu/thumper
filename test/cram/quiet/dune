@@ -8,4 +8,5 @@
  (runtest_alias false)
  (alias quiet)
  (locks ../measurement)
+ (timeout 300)
  (deps ../prelude.sh ../fixture/bench_fixture.exe))

@@ -152,7 +152,7 @@ measurements never share the host with a cram session's.
 `test/cram/` is the executable specification of the CLI: one scenario
 per subcommand × state (NEW, PASS, FAIL, inconclusive, exact
 allocation, stale, corrupt, selection, JSON, bless,
-list, lease, worker death, machine env, usage). Scenarios assert **exit codes, file
+list, lock, worker death, machine env, usage). Scenarios assert **exit codes, file
 effects, and grep'd output shapes — never timings**.
 
 The determinism kit:
@@ -176,6 +176,13 @@ The determinism kit:
   `INSIDE_DUNE`, `DUNE_SOURCEROOT`, `CI`, `GITHUB_ACTIONS`, `NO_COLOR`
   and `TERM` unset. It keeps dune's `INSIDE_DUNE` in `CONTEXT`, for the
   sessions about a rule action's environment.
+- **The lock holder** — `test/cram/fixture/hold_lock.exe HELD
+  RELEASE` takes the measurement lock, creates `HELD`, and holds it
+  until the session creates `RELEASE`, so `lock.t`'s contention steps
+  follow files, not time. It gives up after 60 s, and a session waits
+  for a file or a line with `prelude.sh`'s `wait_for`, which gives up
+  after 60 s of wall clock too: a failed session never leaves a process
+  or a loop behind. Both cram stanzas stop a session after 300 s.
 - **`(locks measurement)`** in `test/cram/dune` serializes the
   scenarios: a dozen concurrent spinning workers would push the load
   average over the gate's threshold and the suite would flake itself

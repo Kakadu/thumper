@@ -1,22 +1,17 @@
-A budget on a metric its scope does not collect is a contradiction in the
-suite, not a measurement outcome: check, bless and list refuse it with exit 2
-before the lease, so a held lease cannot delay the refusal.
+A budget on a metric its case does not collect is a contradiction in the
+suite, not a measurement outcome: check, bless and list refuse it with exit
+2 before they take the lock.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ export THUMPER_FIXTURE_MODE=uncollected
   $ FIX=./fixture/bench_fixture.exe
 
-Another process holds the lease. A watchdog releases it after a minute, so a
-refusal that waited for the lease would print the waiting notice below
-instead of hanging the session.
+Another process holds the lock. A refusal that waited for it would print
+the waiting line and wait until the holder gives up, after 60 s.
 
-  $ ./fixture/hold_lease.exe held release &
-  $ while [ ! -e held ]; do sleep 0.02; done
-  $ (sleep 60; touch release) > /dev/null 2>&1 &
-  $ WATCHDOG=$!
+  $ ./fixture/hold_lock.exe held release &
+  $ HOLDER=$!
+  $ wait_for test -e held
 
   $ $FIX check --quick
   thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
@@ -28,12 +23,10 @@ instead of hanging the session.
   thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
   [2]
 
-Nothing was measured and no candidate was written.
+Nothing was measured and no corrected file was written.
 
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
 
-  $ kill $WATCHDOG; wait $WATCHDOG 2> /dev/null
-  [143]
   $ touch release
-  $ wait
+  $ wait $HOLDER
