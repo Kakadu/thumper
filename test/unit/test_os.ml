@@ -31,7 +31,8 @@ let drain r =
   loop ();
   Buffer.contents b
 
-(* More than a pipe holds, and more than one of [Unix.write]'s 64 KiB chunks. *)
+(* More than a pipe holds, and more than one of [Unix.write]'s 64 KiB
+   chunks. *)
 let long = String.init (1 lsl 18) (fun i -> Char.chr (i land 0xff))
 
 (* [draining r got f] runs [f] while a [SIGALRM] every millisecond empties [r]
@@ -90,8 +91,8 @@ let a_full_pipe_holds_a_prefix () =
   else
     let r, w = pipe () in
     Unix.set_nonblock w;
-    raises
-      (Unix.Unix_error (Unix.EAGAIN, "write", ""))
+    raises_match
+      (function Unix.Unix_error (Unix.EAGAIN, _, _) -> true | _ -> false)
       (fun () -> Os.write_all w long);
     let got = drain r in
     less int ~than:(String.length long) (String.length got);
@@ -119,10 +120,8 @@ let an_interrupted_write_restarts () =
     at_least int ~than:1 alarms;
     equal string (String.make filled 'x' ^ "restarted") (Buffer.contents got)
 
-(* [Unix.write_substring] writes a string longer than its 64 KiB chunk in
-   several calls, and raises [EINTR] from a later call having written the
-   earlier ones; [write_all] then writes them again, and never gets past the
-   first chunk. *)
+(* The string spans several of the pipe's fills, so alarms interrupt the
+   write after part of it went through. *)
 let an_interrupted_long_write_writes_each_byte_once () =
   if Sys.win32 then skip ~reason:"no signals" ()
   else
@@ -143,12 +142,8 @@ let write_all =
         a_full_pipe_holds_a_prefix;
       test "a write a signal interrupts is restarted"
         an_interrupted_write_restarts;
-      xfail
-        ~reason:
-          "lib/os.ml: write_all restarts EINTR from Unix.write_substring, \
-           which may have written part of the string before it raised"
-        (test "a long write a signal interrupts writes each byte once"
-           an_interrupted_long_write_writes_each_byte_once);
+      test "a long write a signal interrupts writes each byte once"
+        an_interrupted_long_write_writes_each_byte_once;
     ]
 
 (* write_atomic *)

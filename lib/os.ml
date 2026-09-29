@@ -7,10 +7,13 @@
    and deadlines read the vendored one. *)
 let monotonic_s () = float_of_int (Thumper_clock.now_ns ()) *. 1e-9
 
+(* One [write] per call: [Unix.write_substring] loops over 64 KiB chunks and
+   raises [EINTR] from a later chunk after the earlier ones were written, so
+   restarting it would write them again. *)
 let write_all fd s =
   let rec loop off len =
     if len > 0 then
-      match Unix.write_substring fd s off len with
+      match Unix.single_write_substring fd s off len with
       | 0 -> raise (Unix.Unix_error (Unix.EIO, "write", ""))
       | n -> loop (off + n) (len - n)
       | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop off len
