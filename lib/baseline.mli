@@ -12,11 +12,10 @@
     [doc/manual/baseline-format.md], which tools may rely on, so a change to
     what this module reads or prints is a change to that specification. Read a
     file with {!read} or {!of_string}, observe it with {!val-section} and
-    {!val-rows}, build one with {!set_section} or {!update_rows}, and record a
-    run into it with {!record}, the write path of [bless]. Everything read
-    prints back byte for byte, so a written file differs from the one read only
-    in the rows and sections a write adds, replaces or removes, and in the
-    annotations it appends. *)
+    {!find_row}, and record a run into it with {!record}, the write path of
+    [bless]. Everything read prints back byte for byte, so a written file
+    differs from the one read only in the rows and sections a write adds,
+    replaces or removes, and in the annotations it appends. *)
 
 (** {1:types Types, errors and quoting} *)
 
@@ -118,8 +117,8 @@ val of_string : string -> (t, error) result
     finite float that [float_of_string] reads, and a count, a [batch=] or an
     [n=] value is any run of decimal digits, leading zeros included, up to
     [max_int]; a larger one is refused as out of range. A row edited by hand may
-    therefore differ from the line {!sampled_row} prints. Every accepted [s]
-    prints back as [s]: [to_string t = s] when the result is [Ok t]. *)
+    therefore differ from the line {!record} prints. Every accepted [s] prints
+    back as [s]: [to_string t = s] when the result is [Ok t]. *)
 
 val to_string : t -> string
 (** [to_string t] is [t]'s file text: what was read, byte for byte, and what was
@@ -166,9 +165,6 @@ val ocaml_of : section -> string
 (** [ocaml_of s] is the body of [s]'s [# ocaml:] line. {!Verdict} compares it
     with the running program's identity to decide staleness. *)
 
-val rows : section -> row list
-(** [rows s] is [s]'s rows, in ascending (id, metric) order. *)
-
 val find_row : section -> id:string -> metric:string -> row option
 (** [find_row s ~id ~metric] is [s]'s row for case [id] and metric [metric], if
     any. *)
@@ -193,86 +189,17 @@ type evidence =
               least three of them, all finite; they may be zero or negative. *)
     }
 
-val row_id : row -> string
-(** [row_id r] is [r]'s case id. *)
-
-val row_metric : row -> string
-(** [row_metric r] is [r]'s metric id. *)
-
 val row_evidence : row -> evidence
 (** [row_evidence r] is [r]'s evidence. A [Sampled] array is a fresh copy, so
     mutating it leaves [r] unchanged. *)
 
-(** {1:editing Building files}
-
-    {!record} builds a file from these values. {!set_section} and {!update_rows}
-    return a new file that keeps the canonical order and every byte they do not
-    replace. Every function here refuses what the grammar refuses, so a file
-    built from them always prints to a text {!of_string} accepts. *)
+(** {1:recording Recording} *)
 
 type identity = { machine : string; host : string; ocaml : string }
 (** The type for a section's identity header, which {!Env} computes. [machine]
     is the key; [host] is the body of the [# host:] line, only displayed;
     [ocaml] is the body of the [# ocaml:] line, compared byte for byte for
     staleness. *)
-
-val exact_row : id:string -> metric:string -> int -> row
-(** [exact_row ~id ~metric n] is the row [id], [metric], [exact], [n], separated
-    by tabs.
-
-    Raises [Invalid_argument] if [id] is not ['/']-separated segments, if
-    [metric] is not a segment, or if [n] is negative. *)
-
-val sampled_row :
-  id:string -> metric:string -> k:int -> samples:float array -> row
-(** [sampled_row ~id ~metric ~k ~samples] is the row of [samples] measured at
-    batch size [k]. Each sample is stored as its [%.3e] text read back, so the
-    row's evidence is what its line holds and a print and parse leave it
-    unchanged; the median is derived from the stored samples. [samples] must
-    hold at least three finite values in ascending order, and [k] must be at
-    least [1].
-
-    Raises [Invalid_argument] if [id] or [metric] is invalid (as for
-    {!exact_row}), if [k < 1], or if [samples] breaks its requirement. *)
-
-val set_section : ?annotations:string list -> t -> identity -> row list -> t
-(** [set_section ?annotations t identity rows] is [t] with the section of
-    [identity.machine] replaced, or added at its place in key order, by a
-    section with [identity]'s header, [annotations] as its annotation lines
-    ([[]] by default), and [rows] in canonical order whatever order they come
-    in. The old section's annotations are dropped; every other section keeps its
-    bytes.
-
-    Raises [Invalid_argument] if [t] has no suite header (start from {!empty}),
-    if [identity.machine] is not a segment, if [identity.host] or
-    [identity.ocaml] is empty or holds a newline, if an annotation holds a
-    newline or starts with [machine:], [host:], [ocaml:] or [suite:], or if two
-    rows share a case id and a metric. *)
-
-val update_rows :
-  ?annotations:string list ->
-  t ->
-  machine:string ->
-  replace:row list ->
-  remove:(string * string) list ->
-  t
-(** [update_rows ?annotations t ~machine ~replace ~remove] is [t] with the
-    section of [machine] edited in place:
-    - each row of [replace] replaces the row with its case id and metric, or is
-      inserted in order;
-    - the row of each (id, metric) pair of [remove] is removed, and a pair
-      without a row is ignored;
-    - [annotations], [[]] by default, are appended after the section's
-      annotations.
-
-    The header lines, [# host:] and [# ocaml:] included, every other row and
-    every other section keep their bytes.
-
-    Raises [Invalid_argument] if an annotation is refused as by {!set_section},
-    if [replace] holds two rows with one case id and metric, if a pair is in
-    both [replace] and [remove], or if [t] has no section for [machine]. *)
-
-(** {1:recording Recording} *)
 
 val record :
   ?annotations:string list ->
@@ -286,21 +213,30 @@ val record :
     trials recorded in the section of [identity.machine]. [selection] must
     describe [run], [`Full] iff [run] holds every case of the suite.
 
+    A trial's exact count is a row [<id>\t<metric>\texact\t<n>]. Its samples are
+    a row at the trial's batch size, each sample stored as its [%.3e] text read
+    back, so the row's evidence is what its line holds, and the median derived
+    from the stored samples.
+
     Under a [`Partial] selection of a current section, one whose [# ocaml:] line
-    is [identity.ocaml], only the rows of [run]'s cases change ({!update_rows}):
-    each case's rows become its trial's, and its rows for metrics the trial did
-    not measure are removed. The header lines, [# host:] included, and every
-    other row keep their bytes, and [annotations] are appended to the section's.
+    is [identity.ocaml], only the rows of [run]'s cases change: each case's rows
+    become its trial's, and its rows for metrics the trial did not measure are
+    removed. The header lines, [# host:] included, and every other row keep
+    their bytes, and [annotations] are appended to the section's.
 
     Otherwise, under a [`Full] selection or on a missing or stale section, the
-    section is replaced ({!set_section}) by one with [identity]'s header,
-    [annotations] as its only annotations and the rows of [run]'s trials, so the
-    rows of the cases [run] lacks are removed. A [t] with no header is replaced
-    by [empty ~suite] first.
+    section is replaced, or added at its place in key order, by one with
+    [identity]'s header, [annotations] as its only annotations and the rows of
+    [run]'s trials, so the rows of the cases [run] lacks are removed. A [t] with
+    no header is replaced by [empty ~suite] first.
 
-    [annotations] defaults to [[]]. Other sections keep their bytes. Every trial
-    is recorded as measured, whatever the host's load was.
+    [annotations] defaults to [[]]. Rows are in canonical order and other
+    sections keep their bytes, so the result prints to a text {!of_string}
+    accepts. Every trial is recorded as measured, whatever the host's load was.
 
     Raises [Invalid_argument] if [t]'s suite header is not [suite], if {!empty}
-    refuses [suite], or if [identity], an annotation or a trial breaks the file
-    grammar ({!set_section}, {!sampled_row}, {!exact_row}). *)
+    refuses [suite], if [identity.machine] is not a segment, if [identity.host]
+    or [identity.ocaml] is empty or holds a newline, if an annotation holds a
+    newline or starts with [machine:], [host:], [ocaml:] or [suite:], if a case
+    id of [run] is not ['/']-separated segments, or if an exact count is
+    negative. *)

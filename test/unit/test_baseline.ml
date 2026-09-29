@@ -67,13 +67,36 @@ let identity key =
   }
 
 let empty = Baseline.empty ~suite:"s"
-let with_section key rows t = Baseline.set_section t (identity key) rows
-let exact ?(metric = "m") id n = Baseline.exact_row ~id ~metric n
 
-let sampled ?(metric = "m") ?(k = 1) id samples =
-  Baseline.sampled_row ~id ~metric ~k ~samples
+(* Fixture rows: case [id]'s evidence for [metric], measured at batch size
+   [k]. *)
+let exact ?(metric = Metric.alloc_words) id n = (id, 1, metric, Run.Exact n)
 
-let wall_row id samples = sampled ~metric:"wall_time" ~k:8 id samples
+let sampled ?(metric = Metric.wall_time) ?(k = 1) id samples =
+  (id, k, metric, Run.Samples (Run.sampled ~sorted:samples ~drifted:false))
+
+let wall_row id samples = sampled ~k:8 id samples
+
+(* The run of [rows], the rows of one case as one trial, at the batch size of
+   the case's first row. *)
+let run_of rows =
+  let ids =
+    List.fold_left
+      (fun acc (id, _, _, _) -> if List.mem id acc then acc else acc @ [ id ])
+      [] rows
+  in
+  let trial id =
+    let own = List.filter (fun (id', _, _, _) -> String.equal id id') rows in
+    let k = match own with (_, k, _, _) :: _ -> k | [] -> 1 in
+    (id, Run.Trial.make ~k (List.map (fun (_, _, m, e) -> (m, e)) own))
+  in
+  Run.create (List.map trial ids)
+
+(* [t] with [rows] recorded as the whole section of [key]. *)
+let with_section ?annotations key rows t =
+  Baseline.record ?annotations ~identity:(identity key)
+    ~suite:(Option.value (Baseline.suite t) ~default:"s")
+    ~selection:`Full ~run:(run_of rows) t
 
 (* Evidence as the file writes it, the samples in hexadecimal, so two print
    alike only when they are equal. *)
@@ -87,13 +110,28 @@ let evidence =
                (List.map (Printf.sprintf "%h") (Array.to_list samples))))
     string
 
-let key r = (Baseline.row_id r, Baseline.row_metric r)
-let keys s = List.map key (Baseline.rows s)
+(* The (id, metric) of each row of [key]'s section in the text [t] prints,
+   in file order. *)
+let keys t key =
+  let rec skip = function
+    | [] -> []
+    | l :: rest when String.equal l ("# machine: " ^ key) -> take rest
+    | _ :: rest -> skip rest
+  and take = function
+    | l :: _ when String.starts_with ~prefix:"# machine: " l -> []
+    | l :: rest when l = "" || l.[0] = '#' -> take rest
+    | l :: rest -> (
+        match String.split_on_char '\t' l with
+        | id :: metric :: _ -> (id, metric) :: take rest
+        | _ -> take rest)
+    | [] -> []
+  in
+  skip (String.split_on_char '\n' (printed t))
 
-let row =
-  Testable.contramap
-    (fun r -> (key r, Baseline.row_evidence r))
-    (pair (pair string string) evidence)
+(* The evidence of the row of [id] and [metric] in [key]'s section. *)
+let evidence_of t key (id, metric) =
+  Option.map Baseline.row_evidence
+    (Baseline.find_row (section t key) ~id ~metric)
 
 (* The text after the last line break of [text]'s body: its last row. *)
 let last_line text =
@@ -122,26 +160,34 @@ let gen_samples =
       a)
     (Gen.list ~size:(Gen.int_range 3 12) (Gen.float_range 1e-9 1.0))
 
-let gen_row =
+(* A trial of one to three metrics; only a counter metric can be exact. *)
+let gen_trial =
   let open Gen in
-  let* id = gen_id in
-  let* metric = of_list [ "wall_time"; "cpu_time"; "alloc_words" ] in
-  let* is_exact = bool in
-  if is_exact then
-    let+ n = int_range 0 1_000_000 in
-    exact ~metric id n
-  else
-    let* k = int_range 1 10_000 in
-    let+ samples = gen_samples in
-    sampled ~metric ~k id samples
-
-(* The first row of each (id, metric). *)
-let distinct rows =
-  List.rev
-    (List.fold_left
-       (fun acc r ->
-         if List.exists (fun r' -> key r' = key r) acc then acc else r :: acc)
-       [] rows)
+  let measurement metric =
+    let* is_exact = bool in
+    if is_exact && Metric.is_counter metric then
+      let+ n = int_range 0 1_000_000 in
+      Run.Exact n
+    else
+      let+ samples = gen_samples in
+      Run.Samples (Run.sampled ~sorted:samples ~drifted:false)
+  in
+  let* metrics =
+    map
+      (List.sort_uniq Metric.compare)
+      (list ~size:(int_range 1 3)
+         (of_list [ Metric.wall_time; Metric.cpu_time; Metric.alloc_words ]))
+  in
+  let* k = int_range 1 10_000 in
+  let+ ms =
+    List.fold_right
+      (fun m acc ->
+        let* rest = acc in
+        let+ v = measurement m in
+        (m, v) :: rest)
+      metrics (constant [])
+  in
+  Run.Trial.make ~k ms
 
 let gen_section =
   let open Gen in
@@ -150,11 +196,17 @@ let gen_section =
   let* annotations =
     list ~size:(int_range 0 2) (of_list [ "forced"; "note x" ])
   in
-  let+ rows = list ~size:(int_range 0 6) gen_row in
+  let* ids =
+    map (List.sort_uniq String.compare) (list ~size:(int_range 0 4) gen_id)
+  in
+  let+ trials = list ~size:(constant (List.length ids)) gen_trial in
   fun key t ->
-    Baseline.set_section ~annotations t
-      { Baseline.machine = key; host; ocaml }
-      (distinct rows)
+    Baseline.record ~annotations
+      ~identity:{ Baseline.machine = key; host; ocaml }
+      ~suite:(Option.value (Baseline.suite t) ~default:"s")
+      ~selection:`Full
+      ~run:(Run.create (List.combine ids trials))
+      t
 
 let gen_baseline =
   let open Gen in
@@ -246,7 +298,7 @@ let the_sample_parses () =
       ("sha256/string-64", "alloc_words");
       ("sha256/string-64", "wall_time");
     ]
-    (keys (section t sample_machine))
+    (keys t sample_machine)
 
 let the_empty_string_has_no_suite_and_no_section () =
   let t = parsed "" in
@@ -613,10 +665,14 @@ let structure =
       ( Baseline.suite t,
         List.map
           (fun key ->
-            let s = section t key in
-            (key, Baseline.ocaml_of s, Baseline.rows s))
+            ( key,
+              Baseline.ocaml_of (section t key),
+              List.map (fun k -> (k, evidence_of t key k)) (keys t key) ))
           (Baseline.machines t) ))
-    (pair (option string) (list (triple string string (list row))))
+    (pair (option string)
+       (list
+          (triple string string
+             (list (pair (pair string string) (option evidence))))))
 
 (* Adding 1 modulo 10 to a digit always changes it. *)
 let flip_first_digit median =
@@ -625,9 +681,7 @@ let flip_first_digit median =
   ^ String.sub median 1 (String.length median - 1)
 
 let a_median_one_digit_off_is_refused (id, k) =
-  let r =
-    sampled ~metric:"wall_time" ~k id [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |]
-  in
+  let r = sampled ~k id [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |] in
   let line =
     String.split_on_char '\t'
       (last_line (printed (with_section "key" [ r ] empty)))
@@ -826,21 +880,26 @@ let files =
 
 (* Section observers *)
 
+(* A sampled row of case [id] and [metric] at batch size [k]. One trial has
+   one batch size, so a case of two is written as text. *)
+let sampled_line id metric k =
+  Printf.sprintf
+    "%s\t%s\tbatch=%d\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00" id metric
+    k
+
 let frozen_ks =
   [
     ( "the first sampled row decides",
       [
-        exact ~metric:"alloc_words" "a" 7;
-        sampled ~metric:"cpu_time" ~k:2 "a" [| 1.; 2.; 3. |];
-        sampled ~metric:"wall_time" ~k:8 "a" [| 1.; 2.; 3. |];
+        "a\talloc_words\texact\t7";
+        sampled_line "a" "cpu_time" 2;
+        sampled_line "a" "wall_time" 8;
       ],
       Some 2 );
-    ("exact rows alone give none", [ exact ~metric:"alloc_words" "a" 7 ], None);
-    ( "another case's rows give none",
-      [ sampled ~k:4 "b" [| 1.; 2.; 3. |] ],
-      None );
+    ("exact rows alone give none", [ "a\talloc_words\texact\t7" ], None);
+    ("another case's rows give none", [ sampled_line "b" "m" 4 ], None);
     ( "the rows of an earlier case are skipped",
-      [ sampled ~k:4 "0" [| 1.; 2.; 3. |]; sampled ~k:8 "a" [| 1.; 2.; 3. |] ],
+      [ sampled_line "0" "m" 4; sampled_line "a" "m" 8 ],
       Some 8 );
   ]
 
@@ -865,7 +924,7 @@ let section_observers =
         (fun (_, rows, k) ->
           equal (option int) k
             (Baseline.case_frozen_k
-               (section (with_section "key" rows empty) "key")
+               (section (parsed (with_rows rows)) "key")
                ~id:"a"));
     ]
 
@@ -877,24 +936,36 @@ let stored_samples line =
   |> String.split_on_char ' ' |> List.map float_of_string |> Array.of_list
 
 let the_rows_hold_their_evidence () =
-  let s = section (parsed sample) sample_machine in
+  let t = parsed sample in
   let lines = String.split_on_char '\n' sample in
-  equal (list evidence)
+  equal
+    (list (option evidence))
     [
-      Baseline.Exact_int 399;
-      Baseline.Sampled { k = 1; samples = stored_samples (List.nth lines 8) };
-      Baseline.Exact_int 54;
-      Baseline.Sampled
-        { k = 8192; samples = stored_samples (List.nth lines 10) };
+      Some (Baseline.Exact_int 399);
+      Some
+        (Baseline.Sampled { k = 1; samples = stored_samples (List.nth lines 8) });
+      Some (Baseline.Exact_int 54);
+      Some
+        (Baseline.Sampled
+           { k = 8192; samples = stored_samples (List.nth lines 10) });
     ]
-    (List.map Baseline.row_evidence (Baseline.rows s))
+    (List.map (evidence_of t sample_machine) (keys t sample_machine))
 
 let row_observers =
   group "Row observers"
     [
       test "the manual's rows hold their evidence" the_rows_hold_their_evidence;
       test "row_evidence's samples are a copy" (fun () ->
-          let r = sampled "a" [| 1.0; 2.0; 3.0 |] in
+          let r =
+            require_some
+              (Baseline.find_row
+                 (section
+                    (with_section "key"
+                       [ sampled "a" [| 1.0; 2.0; 3.0 |] ]
+                       empty)
+                    "key")
+                 ~id:"a" ~metric:"wall_time")
+          in
           let samples =
             require_match
               (function
@@ -908,57 +979,89 @@ let row_observers =
             (Baseline.row_evidence r));
     ]
 
-(* Building files *)
+(* Recording *)
 
-let row_refusals =
-  let samples = [| 1.0; 2.0; 3.0 |] in
+let current = identity "key"
+let stale = { current with Baseline.ocaml = "5.4.0 · 64-bit · release" }
+let ties n v = Array.make n v
+
+(* Case "a" at batch size 8: its wall time sampled, its allocation exact. *)
+let rows_a = [ wall_row "a" (ties 5 2.); exact "a" 100 ]
+
+let record ?annotations ?(identity = current) selection t =
+  Baseline.record ?annotations ~identity ~suite:"s" ~selection
+    ~run:(run_of rows_a) t
+
+let refusals =
+  let bad_id id () = ignore (with_section "key" [ exact id 1 ] empty) in
+  let with_identity ?annotations identity () =
+    ignore (record ?annotations ~identity `Full empty)
+  in
   [
     ( "an id with a space",
-      (fun () -> exact "a b" 1),
-      {|Baseline.exact_row: invalid id "a b" ('/'-separated segments of [A-Za-z0-9._-])|}
+      bad_id "a b",
+      {|Baseline.record: invalid id "a b" ('/'-separated segments of [A-Za-z0-9._-])|}
     );
     ( "an empty id",
-      (fun () -> exact "" 1),
-      {|Baseline.exact_row: invalid id "" ('/'-separated segments of [A-Za-z0-9._-])|}
+      bad_id "",
+      {|Baseline.record: invalid id "" ('/'-separated segments of [A-Za-z0-9._-])|}
     );
     ( "an id with an empty segment",
-      (fun () -> exact "a//b" 1),
-      {|Baseline.exact_row: invalid id "a//b" ('/'-separated segments of [A-Za-z0-9._-])|}
+      bad_id "a//b",
+      {|Baseline.record: invalid id "a//b" ('/'-separated segments of [A-Za-z0-9._-])|}
     );
     ( "an id ending in a slash",
-      (fun () -> exact "a/" 1),
-      {|Baseline.exact_row: invalid id "a/" ('/'-separated segments of [A-Za-z0-9._-])|}
-    );
-    ( "a metric with a space",
-      (fun () -> exact ~metric:"w t" "a" 1),
-      {|Baseline.exact_row: invalid metric id "w t" (must be [A-Za-z0-9._-]+)|}
-    );
-    ( "a metric with a slash",
-      (fun () -> exact ~metric:"a/b" "a" 1),
-      {|Baseline.exact_row: invalid metric id "a/b" (must be [A-Za-z0-9._-]+)|}
+      bad_id "a/",
+      {|Baseline.record: invalid id "a/" ('/'-separated segments of [A-Za-z0-9._-])|}
     );
     ( "a negative count",
-      (fun () -> exact "a" (-1)),
-      "Baseline.exact_row: negative count -1" );
-    ( "a sampled row's invalid id",
-      (fun () -> sampled "a b" samples),
-      {|Baseline.sampled_row: invalid id "a b" ('/'-separated segments of [A-Za-z0-9._-])|}
+      (fun () -> ignore (with_section "key" [ exact "a" (-1) ] empty)),
+      "Baseline.record: negative count -1 for a alloc_words" );
+    ( "a machine key with a space",
+      with_identity (identity "no space"),
+      {|Baseline.record: invalid machine key "no space" (must be [A-Za-z0-9._-]+)|}
     );
-    ( "a batch size of 0",
-      (fun () -> sampled ~k:0 "a" samples),
-      "Baseline.sampled_row: batch size 0 < 1" );
-    ( "two samples",
-      (fun () -> sampled "a" [| 1.0; 2.0 |]),
-      "Baseline.sampled_row: 2 samples (at least 3 required)" );
-    ( "samples out of order",
-      (fun () -> sampled "a" [| 2.0; 1.0; 3.0 |]),
-      "Baseline.sampled_row: samples are not sorted ascending" );
-    ( "a NaN sample",
-      (fun () -> sampled "a" [| 1.0; Float.nan; 3.0 |]),
-      "Baseline.sampled_row: non-finite sample nan" );
-    ( "an infinite sample",
-      (fun () -> sampled "a" [| 1.0; 2.0; Float.infinity |]),
-      "Baseline.sampled_row: non-finite sample infinity" );
+    ( "an empty host",
+      with_identity { current with Baseline.host = "" },
+      "Baseline.record: empty host" );
+    ( "an empty ocaml",
+      with_identity { current with Baseline.ocaml = "" },
+      "Baseline.record: empty ocaml" );
+    ( "a host of two lines",
+      with_identity { current with Baseline.host = "a\nb" },
+      {|Baseline.record: newline in host "a\nb"|} );
+    ( "an ocaml of two lines",
+      with_identity { current with Baseline.ocaml = "a\nb" },
+      {|Baseline.record: newline in ocaml "a\nb"|} );
+    ( "an annotation of two lines",
+      with_identity ~annotations:[ "two\nlines" ] current,
+      {|Baseline.record: multi-line annotation "two\nlines"|} );
+    ( "an annotation spelling machine:",
+      with_identity ~annotations:[ "machine: fake" ] current,
+      {|Baseline.record: annotation "machine: fake" starts with a reserved header word|}
+    );
+    ( "an annotation spelling host:",
+      with_identity ~annotations:[ "host:x" ] current,
+      {|Baseline.record: annotation "host:x" starts with a reserved header word|}
+    );
+    ( "an annotation spelling ocaml:",
+      with_identity ~annotations:[ "ocaml: x" ] current,
+      {|Baseline.record: annotation "ocaml: x" starts with a reserved header word|}
+    );
+    ( "an annotation spelling suite:",
+      with_identity ~annotations:[ "suite: x" ] current,
+      {|Baseline.record: annotation "suite: x" starts with a reserved header word|}
+    );
+    ( "a file of another suite",
+      (fun () -> ignore (record `Full (Baseline.empty ~suite:"x"))),
+      "Thumper.Baseline.record: baseline is for suite 'x', not 's'" );
+    ( "a file with no header, under a suite name empty can refuse",
+      (fun () ->
+        ignore
+          (Baseline.record ~identity:current ~suite:"" ~selection:`Full
+             ~run:(run_of rows_a) (parsed ""))),
+      "Baseline.empty: suite name must be non-empty and single-line (it heads \
+       fresh baselines)" );
   ]
 
 (* The samples' texts are what the row stores, so its median is derived from
@@ -967,29 +1070,25 @@ let sampled_lines =
   [
     ( "a sample rounds to its %.3e text",
       [| 1.23456e-3; 2.0e-3; 3.0e-3 |],
-      "a\tm\tbatch=1\tn=3\t2.000e-03\t1.235e-03 2.000e-03 3.000e-03" );
+      "a\twall_time\tbatch=1\tn=3\t2.000e-03\t1.235e-03 2.000e-03 3.000e-03" );
     ( "the median of the stored samples, not of the given ones",
       [| 1.0e-3; 1.0e-3; 1.00049e-2; 1.00049e-2 |],
-      "a\tm\tbatch=1\tn=4\t5.500e-03\t1.000e-03 1.000e-03 1.000e-02 1.000e-02"
-    );
+      "a\twall_time\tbatch=1\tn=4\t5.500e-03\t1.000e-03 1.000e-03 1.000e-02 \
+       1.000e-02" );
     ( "an even count's median stays finite near max_float",
       [| 1.7e308; 1.7e308; 1.7e308; 1.7e308 |],
-      "a\tm\tbatch=1\tn=4\t1.700e+308\t1.700e+308 1.700e+308 1.700e+308 \
-       1.700e+308" );
+      "a\twall_time\tbatch=1\tn=4\t1.700e+308\t1.700e+308 1.700e+308 \
+       1.700e+308 1.700e+308" );
     ( "two-digit exponents down at 1e-10",
       [| 1e-10; 2e-10; 3e-10 |],
-      "a\tm\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10" );
+      "a\twall_time\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10" );
   ]
 
-let a_built_file_prints_in_the_print_format () =
+let a_recorded_file_prints_in_the_print_format () =
   let t =
-    Baseline.set_section
+    with_section "testkey"
+      [ exact "z/case" 54; sampled ~k:2 "a/case" [| 1e-3; 2e-3; 3e-3; 4e-3 |] ]
       (Baseline.empty ~suite:"digest")
-      (identity "testkey")
-      [
-        exact ~metric:"alloc_words" "z/case" 54;
-        sampled ~metric:"wall_time" ~k:2 "a/case" [| 1e-3; 2e-3; 3e-3; 4e-3 |];
-      ]
   in
   equal string
     (file
@@ -1022,7 +1121,7 @@ let chunks text =
   in
   go 0 [] 0
 
-let set_section_keeps_every_other_section () =
+let record_keeps_every_other_section () =
   let t =
     empty
     |> with_section "aa" [ exact "a" 1 ]
@@ -1033,291 +1132,14 @@ let set_section_keeps_every_other_section () =
     (chunks (printed t))
     (List.filteri (fun i _ -> i <> 2) (chunks (printed t')))
 
-let set_section_refusals =
-  let row = exact "a" 1 in
-  let set ?annotations ?(t = empty) id rows () =
-    Baseline.set_section ?annotations t id rows
-  in
-  let ok = identity "key" in
-  [
-    ( "a file without a suite header",
-      set ~t:(parsed "") ok [ row ],
-      "Baseline.set_section: baseline has no suite header; start from \
-       Baseline.empty ~suite" );
-    ( "a machine key with a space",
-      set (identity "no space") [ row ],
-      {|Baseline.set_section: invalid machine key "no space" (must be [A-Za-z0-9._-]+)|}
-    );
-    ( "an empty host",
-      set { ok with Baseline.host = "" } [ row ],
-      "Baseline.set_section: empty host" );
-    ( "an empty ocaml",
-      set { ok with Baseline.ocaml = "" } [ row ],
-      "Baseline.set_section: empty ocaml" );
-    ( "a host of two lines",
-      set { ok with Baseline.host = "a\nb" } [ row ],
-      {|Baseline.set_section: newline in host "a\nb"|} );
-    ( "an ocaml of two lines",
-      set { ok with Baseline.ocaml = "a\nb" } [ row ],
-      {|Baseline.set_section: newline in ocaml "a\nb"|} );
-    ( "an annotation of two lines",
-      set ~annotations:[ "two\nlines" ] ok [ row ],
-      {|Baseline.set_section: multi-line annotation "two\nlines"|} );
-    ( "an annotation spelling machine:",
-      set ~annotations:[ "machine: fake" ] ok [ row ],
-      {|Baseline.set_section: annotation "machine: fake" starts with a reserved header word|}
-    );
-    ( "an annotation spelling host:",
-      set ~annotations:[ "host:x" ] ok [ row ],
-      {|Baseline.set_section: annotation "host:x" starts with a reserved header word|}
-    );
-    ( "an annotation spelling ocaml:",
-      set ~annotations:[ "ocaml: x" ] ok [ row ],
-      {|Baseline.set_section: annotation "ocaml: x" starts with a reserved header word|}
-    );
-    ( "an annotation spelling suite:",
-      set ~annotations:[ "suite: x" ] ok [ row ],
-      {|Baseline.set_section: annotation "suite: x" starts with a reserved header word|}
-    );
-    ( "two rows for one case and metric",
-      set ok [ row; row ],
-      "Baseline.set_section: duplicate row for a m" );
-  ]
-
-let two_rows = with_section "key" [ exact "a" 1; exact "b" 2 ] empty
-
-let update_rows_refusals =
-  let row = exact "a" 5 in
-  let update ?annotations ?(machine = "key") ?(replace = []) ?(remove = []) () =
-    Baseline.update_rows ?annotations two_rows ~machine ~replace ~remove
-  in
-  [
-    ( "a machine without a section",
-      (fun () -> update ~machine:"missing" ()),
-      {|Baseline.update_rows: no section for machine "missing"|} );
-    ( "two replacing rows for one case and metric",
-      (fun () -> update ~replace:[ row; row ] ()),
-      "Baseline.update_rows: duplicate row for a m" );
-    ( "a row both replaced and removed",
-      (fun () -> update ~replace:[ row ] ~remove:[ ("a", "m") ] ()),
-      "Baseline.update_rows: a m is both replaced and removed" );
-    ( "an annotation spelling machine:",
-      (fun () -> update ~annotations:[ "machine: x" ] ()),
-      {|Baseline.update_rows: annotation "machine: x" starts with a reserved header word|}
-    );
-    ( "an annotation of two lines",
-      (fun () -> update ~annotations:[ "two\nlines" ] ()),
-      {|Baseline.update_rows: multi-line annotation "two\nlines"|} );
-  ]
-
-(* Three sections, and a row that replaces one of the middle section's rows
-   or is new to it. *)
-let gen_update =
-  let open Gen in
-  let* sections = list ~size:(constant 3) gen_section in
-  let* fresh = gen_row in
-  let+ replace = bool in
-  let t =
-    List.fold_left2
-      (fun t key add -> add key t)
-      empty [ "aaa1"; "bbb2"; "ccc3" ] sections
-  in
-  let replacing =
-    match Baseline.rows (section t "bbb2") with
-    | existing :: _ when replace ->
-        exact
-          ~metric:(Baseline.row_metric existing)
-          (Baseline.row_id existing) 424242
-    | _ -> fresh
-  in
-  (t, replacing)
-
-let update_t =
-  Gen.with_pp
-    (fun ppf (t, r) ->
-      Format.fprintf ppf "(%S, %s %s)" (printed t) (Baseline.row_id r)
-        (Baseline.row_metric r))
-    gen_update
-
-(* Every line of the file but the blank ones and the replaced row's, in
-   order: a row inserted into a section without rows brings a blank line. *)
-let other_lines r text =
-  let prefix = Baseline.row_id r ^ "\t" ^ Baseline.row_metric r ^ "\t" in
-  List.filter
-    (fun line -> line <> "" && not (String.starts_with ~prefix line))
-    (String.split_on_char '\n' text)
-
-let update_rows_keeps_every_other_byte (t, replacing) =
-  let t' =
-    Baseline.update_rows t ~machine:"bbb2" ~replace:[ replacing ] ~remove:[]
-  in
-  equal (list string)
-    (other_lines replacing (printed t))
-    (other_lines replacing (printed t'))
-
-let building =
-  group "Building files"
-    [
-      cases "a row constructor refuses"
-        ~name:(fun (name, _, _) -> name)
-        row_refusals
-        (fun (_, make, message) -> raises (Invalid_argument message) make);
-      cases "sampled_row prints"
-        ~name:(fun (name, _, _) -> name)
-        sampled_lines
-        (fun (_, samples, line) ->
-          let text =
-            printed (with_section "key" [ sampled "a" samples ] empty)
-          in
-          equal string line (last_line text);
-          equal string text (reprinted text));
-      test "sampled_row stores what its line holds" (fun () ->
-          equal evidence
-            (Baseline.Sampled
-               {
-                 k = 1;
-                 samples = [| float_of_string "1.235e-03"; 2e-3; 3e-3 |];
-               })
-            (Baseline.row_evidence (sampled "a" [| 1.23456e-3; 2e-3; 3e-3 |])));
-      test "a built file prints in the print format"
-        a_built_file_prints_in_the_print_format;
-      test "set_section places sections in key order and replaces one whole"
-        (fun () ->
-          let t =
-            empty
-            |> with_section "mm" [ exact "a" 1 ]
-            |> with_section "zz" [] |> with_section "aa" []
-          in
-          equal (list string) [ "aa"; "mm"; "zz" ] (Baseline.machines t);
-          equal
-            (list (pair string string))
-            [ ("b", "m") ]
-            (keys (section (with_section "mm" [ exact "b" 2 ] t) "mm")));
-      test "set_section sorts the rows" (fun () ->
-          equal
-            (list (pair string string))
-            [ ("a", "m"); ("a", "z"); ("b", "m") ]
-            (keys
-               (section
-                  (with_section "key"
-                     [ exact "b" 1; exact ~metric:"z" "a" 1; exact "a" 1 ]
-                     empty)
-                  "key")));
-      test "set_section keeps every other section's bytes"
-        set_section_keeps_every_other_section;
-      test "set_section writes annotations below the header" (fun () ->
-          let t =
-            Baseline.set_section ~annotations:[ "forced: load 7.9/8" ] empty
-              { Baseline.machine = "key"; host = "h"; ocaml = "o" }
-              [ exact "a" 1 ]
-          in
-          equal string
-            (file
-               (preamble
-               @ [
-                   "# machine: key";
-                   "# host: h";
-                   "# ocaml: o";
-                   "# forced: load 7.9/8";
-                   "";
-                   "a\tm\texact\t1";
-                 ]))
-            (printed t));
-      cases "set_section refuses"
-        ~name:(fun (name, _, _) -> name)
-        set_section_refusals
-        (fun (_, set, message) -> raises (Invalid_argument message) set);
-      test "update_rows replaces and inserts rows in order" (fun () ->
-          let t =
-            Baseline.update_rows two_rows ~machine:"key"
-              ~replace:[ exact "b" 3; exact "aa" 9 ]
-              ~remove:[]
-          in
-          equal (list row)
-            [ exact "a" 1; exact "aa" 9; exact "b" 3 ]
-            (Baseline.rows (section t "key")));
-      test "update_rows removes a present row and ignores an absent one"
-        (fun () ->
-          let t =
-            Baseline.update_rows two_rows ~machine:"key" ~replace:[]
-              ~remove:[ ("b", "m"); ("ghost", "m") ]
-          in
-          equal
-            (list (pair string string))
-            [ ("a", "m") ]
-            (keys (section t "key")));
-      test "update_rows keeps a row's text, however spelled" (fun () ->
-          let text =
-            with_rows [ "a\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0" ]
-          in
-          let t =
-            Baseline.update_rows (parsed text) ~machine:"key"
-              ~replace:[ exact "b" 1 ]
-              ~remove:[]
-          in
-          equal string (text ^ "b\tm\texact\t1\n") (printed t));
-      test "update_rows appends annotations to the section's" (fun () ->
-          let t =
-            Baseline.set_section ~annotations:[ "first" ] empty
-              { Baseline.machine = "key"; host = "h"; ocaml = "o" }
-              [ exact "a" 1 ]
-          in
-          equal string
-            (file
-               (preamble
-               @ [
-                   "# machine: key";
-                   "# host: h";
-                   "# ocaml: o";
-                   "# first";
-                   "# second";
-                   "";
-                   "a\tm\texact\t1";
-                 ]))
-            (printed
-               (Baseline.update_rows ~annotations:[ "second" ] t ~machine:"key"
-                  ~replace:[] ~remove:[])));
-      cases "update_rows refuses"
-        ~name:(fun (name, _, _) -> name)
-        update_rows_refusals
-        (fun (_, update, message) -> raises (Invalid_argument message) update);
-      prop "update_rows keeps every line but the replaced row's" update_t
-        update_rows_keeps_every_other_byte;
-    ]
-
-(* Recording *)
-
-let current = identity "key"
-let stale = { current with Baseline.ocaml = "5.4.0 · 64-bit · release" }
-let ties n v = Array.make n v
-
-(* Case "a" measured at batch size 8: its wall time sampled, its allocation
-   exact. *)
-let run_a () =
-  Run.create
-    [
-      ( "a",
-        Run.Trial.make ~k:8
-          [
-            ( Metric.wall_time,
-              Run.Samples (Run.sampled ~sorted:(ties 5 2.) ~drifted:false) );
-            (Metric.alloc_words, Run.Exact 100);
-          ] );
-    ]
-
-let rows_a = [ exact ~metric:"alloc_words" "a" 100; wall_row "a" (ties 5 2.) ]
-
-let record ?annotations ?(identity = current) selection t =
-  Baseline.record ?annotations ~identity ~suite:"s" ~selection ~run:(run_a ()) t
-
 (* Each file holds "a" and "old" in this machine's section, and "z" in
    another's. *)
 let replaced =
   let file identity () =
-    Baseline.set_section ~annotations:[ "forced: earlier" ]
+    Baseline.record ~annotations:[ "forced: earlier" ] ~identity ~suite:"s"
+      ~selection:`Full
+      ~run:(run_of [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ])
       (with_section "other" [ exact "z" 1 ] empty)
-      identity
-      [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ]
   in
   [
     ("a full selection of a current section", `Full, file current);
@@ -1328,24 +1150,30 @@ let replaced =
       fun () -> with_section "other" [ exact "z" 1 ] empty );
   ]
 
+(* The section recorded whole is the one a file without it gets. *)
 let a_section_is_replaced_by_the_run (_, selection, file) =
-  let file = file () in
   equal string
     (printed
-       (Baseline.set_section ~annotations:[ "forced: now" ] file current rows_a))
-    (printed (record ~annotations:[ "forced: now" ] selection file))
+       (with_section ~annotations:[ "forced: now" ] "key" rows_a
+          (with_section "other" [ exact "z" 1 ] empty)))
+    (printed (record ~annotations:[ "forced: now" ] selection (file ())))
 
 (* The header keeps its host and its annotations, every unselected row keeps
-   its bytes, and "a"'s rows are replaced by case id: its new metric is
-   added and the metric it no longer collects is removed. *)
+   its bytes, however spelled, and "a"'s rows are replaced by case id: its
+   new metric is added and the metric it no longer collects is removed. *)
 let a_partial_selection_replaces_the_selected_rows () =
   let before =
-    with_rows [ "a\tcpu_time\texact\t3"; "a\tm\texact\t4"; "b\tm\texact\t5" ]
+    with_rows
+      [
+        "a\tcpu_time\texact\t3";
+        "a\tm\texact\t4";
+        "b\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0";
+      ]
   in
   let identity = { Baseline.machine = "key"; host = "renamed"; ocaml = "o" } in
   let after =
     Baseline.record ~annotations:[ "forced: now" ] ~identity ~suite:"s"
-      ~selection:`Partial ~run:(run_a ()) (parsed before)
+      ~selection:`Partial ~run:(run_of rows_a) (parsed before)
   in
   equal string
     (file
@@ -1359,30 +1187,150 @@ let a_partial_selection_replaces_the_selected_rows () =
            "a\talloc_words\texact\t100";
            last_line
              (printed (with_section "key" [ wall_row "a" (ties 5 2.) ] empty));
-           "b\tm\texact\t5";
+           "b\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0";
          ]))
     (printed after)
 
-let a_headerless_file_takes_the_suite () =
-  equal string
-    (printed (Baseline.set_section empty current rows_a))
-    (printed (record `Partial (parsed "")))
+(* Three sections, and a trial recorded into the middle one under a partial
+   selection, for one of its cases or a new one. *)
+let gen_partial =
+  let open Gen in
+  let* sections = list ~size:(constant 3) gen_section in
+  let* trial = gen_trial in
+  let+ existing = bool in
+  let t =
+    List.fold_left2
+      (fun t key add -> add key t)
+      empty [ "aaa1"; "bbb2"; "ccc3" ] sections
+  in
+  let id =
+    match keys t "bbb2" with
+    | (id, _) :: _ when existing -> id
+    | _ -> "zz/fresh"
+  in
+  (t, id, trial)
+
+let partial_t =
+  Gen.with_pp
+    (fun ppf (t, id, _) -> Format.fprintf ppf "(%S, %s)" (printed t) id)
+    gen_partial
+
+(* Every line of the file but the blank ones and the rows of case [id], in
+   order: a row inserted into a section without rows brings a blank line. *)
+let other_lines id text =
+  List.filter
+    (fun line ->
+      line <> "" && not (String.starts_with ~prefix:(id ^ "\t") line))
+    (String.split_on_char '\n' text)
+
+let a_partial_record_keeps_every_other_line (t, id, trial) =
+  let identity =
+    {
+      Baseline.machine = "bbb2";
+      host = "another host";
+      ocaml = Baseline.ocaml_of (section t "bbb2");
+    }
+  in
+  let t' =
+    Baseline.record ~identity ~suite:"s" ~selection:`Partial
+      ~run:(Run.create [ (id, trial) ])
+      t
+  in
+  equal (list string) (other_lines id (printed t)) (other_lines id (printed t'))
 
 let recording =
   group "Recording"
     [
+      cases "record refuses"
+        ~name:(fun (name, _, _) -> name)
+        refusals
+        (fun (_, record, message) -> raises (Invalid_argument message) record);
+      cases "record prints a sample as its text"
+        ~name:(fun (name, _, _) -> name)
+        sampled_lines
+        (fun (_, samples, line) ->
+          let text =
+            printed (with_section "key" [ sampled "a" samples ] empty)
+          in
+          equal string line (last_line text);
+          equal string text (reprinted text));
+      test "record stores what a row's line holds" (fun () ->
+          let t =
+            with_section "key"
+              [ sampled "a" [| 1.23456e-3; 2e-3; 3e-3 |] ]
+              empty
+          in
+          equal (option evidence)
+            (Some
+               (Baseline.Sampled
+                  {
+                    k = 1;
+                    samples = [| float_of_string "1.235e-03"; 2e-3; 3e-3 |];
+                  }))
+            (Option.map Baseline.row_evidence
+               (Baseline.find_row (section t "key") ~id:"a" ~metric:"wall_time")));
+      test "a recorded file prints in the print format"
+        a_recorded_file_prints_in_the_print_format;
+      test "record places sections in key order and replaces one whole"
+        (fun () ->
+          let t =
+            empty
+            |> with_section "mm" [ exact "a" 1 ]
+            |> with_section "zz" [] |> with_section "aa" []
+          in
+          equal (list string) [ "aa"; "mm"; "zz" ] (Baseline.machines t);
+          equal
+            (list (pair string string))
+            [ ("b", "alloc_words") ]
+            (keys (with_section "mm" [ exact "b" 2 ] t) "mm"));
+      test "record sorts the rows" (fun () ->
+          equal
+            (list (pair string string))
+            [
+              ("a", "alloc_words"); ("a", "promoted_words"); ("b", "alloc_words");
+            ]
+            (keys
+               (with_section "key"
+                  [
+                    exact "b" 1;
+                    exact ~metric:Metric.promoted_words "a" 1;
+                    exact "a" 1;
+                  ]
+                  empty)
+               "key"));
+      test "record keeps every other section's bytes"
+        record_keeps_every_other_section;
+      test "record writes annotations below the header" (fun () ->
+          let t =
+            Baseline.record ~annotations:[ "forced: load 7.9/8" ]
+              ~identity:{ Baseline.machine = "key"; host = "h"; ocaml = "o" }
+              ~suite:"s" ~selection:`Full
+              ~run:(run_of [ exact "a" 1 ])
+              empty
+          in
+          equal string
+            (file
+               (preamble
+               @ [
+                   "# machine: key";
+                   "# host: h";
+                   "# ocaml: o";
+                   "# forced: load 7.9/8";
+                   "";
+                   "a\talloc_words\texact\t1";
+                 ]))
+            (printed t));
       cases "record replaces the section"
         ~name:(fun (name, _, _) -> name)
         replaced a_section_is_replaced_by_the_run;
       test "record under a partial selection replaces the selected rows alone"
         a_partial_selection_replaces_the_selected_rows;
-      test "record heads a file with no header with the suite"
-        a_headerless_file_takes_the_suite;
-      test "record refuses a file of another suite" (fun () ->
-          raises
-            (Invalid_argument
-               "Thumper.Baseline.record: baseline is for suite 'x', not 's'")
-            (fun () -> record `Full (Baseline.empty ~suite:"x")));
+      prop "record under a partial selection keeps every other line" partial_t
+        a_partial_record_keeps_every_other_line;
+      test "record heads a file with no header with the suite" (fun () ->
+          equal string
+            (printed (with_section "key" rows_a empty))
+            (printed (record `Partial (parsed ""))));
     ]
 
 let () =
@@ -1396,6 +1344,5 @@ let () =
          files;
          section_observers;
          row_observers;
-         building;
          recording;
        ])

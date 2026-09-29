@@ -21,6 +21,7 @@ module Cli = Thumper.Private.Cli
 module Config = Thumper.Private.Config
 module Env = Thumper.Private.Env
 module Metric = Thumper.Private.Metric
+module Run = Thumper.Private.Run
 
 (* The stated environment: the machine key is given, the lock lives in the
    test's own directory, nothing else the command line reads is inherited, and
@@ -143,11 +144,16 @@ let current_identity () =
     ocaml = Env.ocaml_identity ();
   }
 
-let write_baseline ?(identity = current_identity ()) path rows =
+(* A file whose section of [identity] records each case of [counts] as an
+   exact allocation count, written by [Baseline.record]. *)
+let write_baseline ?(identity = current_identity ()) path counts =
+  let trial n = Run.Trial.make ~k:1 [ (Metric.alloc_words, Run.Exact n) ] in
   Baseline.write path
-    (Baseline.set_section (Baseline.empty ~suite:"digest") identity rows)
+    (Baseline.record ~identity ~suite:"digest" ~selection:`Full
+       ~run:(Run.create (List.map (fun (id, n) -> (id, trial n)) counts))
+       (Baseline.empty ~suite:"digest"))
 
-let alloc_row id n = Baseline.exact_row ~id ~metric:"alloc_words" n
+let alloc_row id n = (id, n)
 
 (* A usage error, a stop or a listing: the exit code and what was printed. *)
 type outcome = { args : string list; code : int; expected : pos * string }
@@ -927,12 +933,18 @@ let stops_before_the_lock () =
 
 (* Runs that measure *)
 
+(* The rows of the file at [path], each as its tab-separated fields. *)
+let row_fields path =
+  List.filter_map
+    (fun line ->
+      if line = "" || line.[0] = '#' then None
+      else Some (String.split_on_char '\t' line))
+    (String.split_on_char '\n' (read_file path))
+
 let baseline_rows path =
-  let file = require_some (require_ok (Baseline.read path)) in
-  let section = require_some (Baseline.section file "testkey") in
   List.map
-    (fun r -> Baseline.row_id r ^ " " ^ Baseline.row_metric r)
-    (Baseline.rows section)
+    (function id :: metric :: _ -> id ^ " " ^ metric | _ -> "")
+    (row_fields path)
 
 let presets =
   [
@@ -952,20 +964,13 @@ let samples_of_a_preset (_, args, n) =
        ~benches:[ Bench.bench "alpha" (fun () -> incr calls) ]
        ("bless" :: "--force" :: args));
   at_least ~msg:"calls in this process" int ~than:1 !calls;
-  let file = require_some (require_ok (Baseline.read "digest.thumper")) in
-  let rows = Baseline.rows (require_some (Baseline.section file "testkey")) in
   equal
-    (list (pair string int))
-    [ ("alpha wall_time", n) ]
+    (list (list string))
+    [ [ "alpha"; "wall_time"; "n=" ^ string_of_int n ] ]
     (List.map
-       (fun r ->
-         ( Baseline.row_id r ^ " " ^ Baseline.row_metric r,
-           require_match
-             (function
-               | Baseline.Sampled { samples; _ } -> Some (Array.length samples)
-               | Baseline.Exact_int _ -> None)
-             (Baseline.row_evidence r) ))
-       rows)
+       (function
+         | id :: metric :: _ :: count :: _ -> [ id; metric; count ] | l -> l)
+       (row_fields "digest.thumper"))
 
 let alpha = [ Bench.bench "alpha" ignore ]
 

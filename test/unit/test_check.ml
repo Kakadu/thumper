@@ -102,12 +102,45 @@ let identity () =
     ocaml = Env.ocaml_identity ();
   }
 
-let baseline_of rows =
-  Baseline.set_section (Baseline.empty ~suite:"digest") (identity ()) rows
+(* A fixture row: case [id]'s evidence for [metric], measured at batch size
+   [k]. *)
+let row ?(k = 8) ~metric id evidence = (id, k, metric, evidence)
 
-let wall_row ?(k = 8) id per_call =
-  Baseline.sampled_row ~id ~metric:"wall_time" ~k
-    ~samples:(Array.make 5 per_call)
+(* [file] with [rows] recorded as [identity]'s whole section by
+   [Baseline.record], the rows of one case as one trial. Its sampled rows
+   share one batch size; a file of mixed batch sizes is written as text. *)
+let with_rows ?(identity = identity ()) ?annotations rows file =
+  let ids =
+    List.fold_left
+      (fun acc (id, _, _, _) -> if List.mem id acc then acc else acc @ [ id ])
+      [] rows
+  in
+  let trial id =
+    let own = List.filter (fun (id', _, _, _) -> String.equal id id') rows in
+    let ks =
+      List.sort_uniq Int.compare
+        (List.filter_map
+           (fun (_, k, _, e) ->
+             match e with Run.Samples _ -> Some k | Run.Exact _ -> None)
+           own)
+    in
+    let k = match ks with [] -> 8 | [ k ] -> k | _ -> failwith "mixed k" in
+    (id, Run.Trial.make ~k (List.map (fun (_, _, m, e) -> (m, e)) own))
+  in
+  Baseline.record ?annotations ~identity
+    ~suite:(Option.value (Baseline.suite file) ~default:"digest")
+    ~selection:`Full
+    ~run:(Run.create (List.map trial ids))
+    file
+
+let baseline_of ?identity rows =
+  with_rows ?identity rows (Baseline.empty ~suite:"digest")
+
+let wall_row ?k id per_call =
+  row ?k ~metric:Metric.wall_time id
+    (Run.Samples (Run.sampled ~sorted:(Array.make 5 per_call) ~drifted:false))
+
+let alloc_row id n = row ~metric:Metric.alloc_words id (Run.Exact n)
 
 (* Verdicts *)
 
@@ -431,9 +464,8 @@ let the_sweep_freezes_the_row_k () =
 let a_stale_section_freezes_nothing () =
   let w = world () in
   let stale =
-    Baseline.set_section
-      (Baseline.empty ~suite:"digest")
-      { (identity ()) with Baseline.ocaml = "4.14.0 64-bit release" }
+    baseline_of
+      ~identity:{ (identity ()) with Baseline.ocaml = "4.14.0 64-bit release" }
       [ wall_row ~k:4 "a" 1e-3 ]
   in
   let v = check ~baseline:stale w [ bench w "a" ms_ns ] in
@@ -444,30 +476,41 @@ let a_stale_section_freezes_nothing () =
     (Verdict.comparison v);
   equal int 8 (trial_k v ~case:"a")
 
-(* Rows sort by id then metric, so cpu_time's row is the case's first. *)
+(* Rows sort by id then metric, so cpu_time's row is the case's first. One
+   trial has one batch size, so the file of two is text. *)
 let the_freeze_reads_the_first_sampled_row () =
   let w = world () in
   let config =
     Config.(scripted_config |> metrics [ Metric.wall_time; Metric.cpu_time ])
   in
-  let rows =
-    [
-      Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:2
-        ~samples:(Array.make 5 1e-3);
-      wall_row ~k:8 "a" 1e-3;
-    ]
+  let id = identity () in
+  let samples =
+    "1.000e-03\t1.000e-03 1.000e-03 1.000e-03 1.000e-03 1.000e-03"
   in
-  let v = check ~config ~baseline:(baseline_of rows) w [ bench w "a" ms_ns ] in
+  let baseline =
+    require_ok
+      (Baseline.of_string
+         (String.concat "\n"
+            [
+              "# thumper baseline v1";
+              "# suite: digest";
+              "";
+              "# machine: " ^ id.Baseline.machine;
+              "# host: " ^ id.Baseline.host;
+              "# ocaml: " ^ id.Baseline.ocaml;
+              "";
+              "a\tcpu_time\tbatch=2\tn=5\t" ^ samples;
+              "a\twall_time\tbatch=8\tn=5\t" ^ samples;
+              "";
+            ]))
+  in
+  let v = check ~config ~baseline w [ bench w "a" ms_ns ] in
   equal int 2 (trial_k v ~case:"a")
 
 (* alloc_words' exact row sorts first and has no batch size. *)
 let the_freeze_skips_exact_rows () =
   let w = world () in
-  let rows =
-    [
-      Baseline.exact_row ~id:"a" ~metric:"alloc_words" 7; wall_row ~k:4 "a" 1e-3;
-    ]
-  in
+  let rows = [ alloc_row "a" 7; wall_row ~k:4 "a" 1e-3 ] in
   let v = check ~baseline:(baseline_of rows) w [ bench w "a" ms_ns ] in
   equal int 4 (trial_k v ~case:"a")
 
@@ -509,12 +552,7 @@ let a_recalibrated_confirmation_is_unconfirmed () =
    k = 1. *)
 let exact_count_under_a_recalibration ~row_k =
   let w = world () in
-  let rows =
-    [
-      Baseline.exact_row ~id:"a" ~metric:"alloc_words" 6;
-      wall_row ~k:row_k "a" 1e-3;
-    ]
-  in
+  let rows = [ alloc_row "a" 6; wall_row ~k:row_k "a" 1e-3 ] in
   let case =
     Bench.bench "a" (fun () ->
         stepper w (fun _ -> 6_500_000) ();

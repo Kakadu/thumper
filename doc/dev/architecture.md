@@ -19,7 +19,7 @@ reading; the **adapters** own paths, argv, and rendering.
 | `config` | pure | the protocol knob container (private record): n, batch floor, warmup, deadline, metrics, fork |
 | `bench` | pure | authoring constructors, id validation, inheritance, the filter algebra, `resolve`, `prepare` |
 | `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, the drift flag, warnings), `Run.t` |
-| `baseline` | pure¹ | the format-v1 codec: strict parse with the median checksum, byte-identical re-emission, the mechanical mutators `set_section`/`update_rows`, the one write path `record`, one atomic `write` |
+| `baseline` | pure¹ | the format-v1 codec: strict parse with the median checksum, byte-identical re-emission, the one write path `record`, one atomic `write` |
 | `verdict` | pure | judgment (`judge`/`confirmations`/`decide`), relations with confirmation evidence in the type, JSON, exit codes |
 | `os` | OS edge | `monotonic_s` (the clock that waits and deadlines read), the full write that restarts on EINTR, the atomic file replace (temp + fsync + rename) that the baseline and the JSON document use. It depends on no module of the library |
 | `env` | OS edge | the machine key, the host and compiler identity strings, the load sample (`load`, `wait_quiet`), and the measurement lock (`Lock`) |
@@ -60,7 +60,8 @@ around it; `check` writes no baseline.
 run, the trials of `bless`, into the parsed file: the selected cases'
 rows, or the whole section when the selection is full or the section
 missing or stale. A verdict never reaches it, so no judgment decides
-which rows change; `set_section` and `update_rows` place them.
+which rows change, and its rows come from trials, so every file it
+builds is one the parser accepts.
 
 **The measurement seam.** `Measure.instruments` (clock, CPU clock, GC
 counters) is the injectable seam: scripted instruments make

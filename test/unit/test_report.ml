@@ -57,13 +57,44 @@ let sampled_alloc ?(wall = ties 5 1e-6) words =
       (m_alloc, Run.Samples (sam (ties 5 words)));
     ]
 
-let wall_row ?(k = 8) id samples =
-  Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples
+(* A fixture row: case [id]'s evidence for [metric], measured at batch size
+   [k]. *)
+let row ?(k = 8) ~metric id evidence = (id, k, metric, evidence)
 
-let alloc_row id n = Baseline.exact_row ~id ~metric:"alloc_words" n
+(* [file] with [rows] recorded as [identity]'s whole section by
+   [Baseline.record], the rows of one case as one trial. Its sampled rows
+   share one batch size; a file of mixed batch sizes is written as text. *)
+let with_rows ?(identity = ident) ?annotations rows file =
+  let ids =
+    List.fold_left
+      (fun acc (id, _, _, _) -> if List.mem id acc then acc else acc @ [ id ])
+      [] rows
+  in
+  let trial id =
+    let own = List.filter (fun (id', _, _, _) -> String.equal id id') rows in
+    let ks =
+      List.sort_uniq Int.compare
+        (List.filter_map
+           (fun (_, k, _, e) ->
+             match e with Run.Samples _ -> Some k | Run.Exact _ -> None)
+           own)
+    in
+    let k = match ks with [] -> 8 | [ k ] -> k | _ -> failwith "mixed k" in
+    (id, Run.Trial.make ~k (List.map (fun (_, _, m, e) -> (m, e)) own))
+  in
+  Baseline.record ?annotations ~identity
+    ~suite:(Option.value (Baseline.suite file) ~default:"digest")
+    ~selection:`Full
+    ~run:(Run.create (List.map trial ids))
+    file
 
-let file_of ?(identity = ident) rows =
-  Baseline.set_section (Baseline.empty ~suite:"digest") identity rows
+let file_of ?identity rows =
+  with_rows ?identity rows (Baseline.empty ~suite:"digest")
+
+let wall_row ?k id samples =
+  row ?k ~metric:m_wall id (Run.Samples (sam samples))
+
+let alloc_row id n = row ~metric:m_alloc id (Run.Exact n)
 
 (* The baseline of an empty file, which has no header and no section. *)
 let empty_file () = require_ok (Baseline.of_string "")
@@ -201,8 +232,7 @@ let failing_first () =
     file_of
       [
         wall_row "alpha" (ties 5 1e-6);
-        Baseline.sampled_row ~id:"alpha" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 100.0);
+        row ~metric:m_alloc "alpha" (Run.Samples (sam (ties 5 100.0)));
       ]
   in
   let both () = sampled_alloc ~wall:(ties 5 2e-6) 200.0 in
@@ -224,8 +254,7 @@ let default_budget () =
         wall_row "passes" (ties 5 1e-6);
         alloc_row "passes" 54;
         wall_row "waits" (ties 5 1e-6);
-        Baseline.sampled_row ~id:"waits" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 100.0);
+        row ~metric:m_alloc "waits" (Run.Samples (sam (ties 5 100.0)));
       ]
   in
   verdict_of_cases ~file
@@ -360,8 +389,7 @@ let over_cap_sampled () =
     file_of
       [
         wall_row "alpha" (ties 5 1e-6);
-        Baseline.sampled_row ~id:"alpha" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 100.0);
+        row ~metric:m_alloc "alpha" (Run.Samples (sam (ties 5 100.0)));
       ]
   in
   verdict_of ~file

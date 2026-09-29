@@ -105,76 +105,11 @@ let compare_key (id, metric) (id', metric') =
 
 let row_key r = (r.r_id, r.r_metric)
 let compare_rows a b = compare_key (row_key a) (row_key b)
-let row_id r = r.r_id
-let row_metric r = r.r_metric
 
 let row_evidence r =
   match r.r_evidence with
   | Exact_int _ as e -> e
   | Sampled { k; samples } -> Sampled { k; samples = Array.copy samples }
-
-let check_row_names fname ~id ~metric =
-  if not (valid_id id) then
-    invalid_arg
-      (strf "%s: invalid id %S ('/'-separated segments of [A-Za-z0-9._-])" fname
-         id);
-  if not (valid_metric metric) then
-    invalid_arg
-      (strf "%s: invalid metric id %S (must be [A-Za-z0-9._-]+)" fname metric)
-
-let exact_row ~id ~metric n =
-  let fname = "Baseline.exact_row" in
-  check_row_names fname ~id ~metric;
-  if n < 0 then invalid_arg (strf "%s: negative count %d" fname n);
-  {
-    r_id = id;
-    r_metric = metric;
-    r_evidence = Exact_int n;
-    r_text = strf "%s\t%s\texact\t%d" id metric n;
-  }
-
-let sampled_row ~id ~metric ~k ~samples =
-  let fname = "Baseline.sampled_row" in
-  check_row_names fname ~id ~metric;
-  if k < 1 then invalid_arg (strf "%s: batch size %d < 1" fname k);
-  let n = Array.length samples in
-  if n < 3 then
-    invalid_arg (strf "%s: %d samples (at least 3 required)" fname n);
-  Array.iter
-    (fun x ->
-      if not (Float.is_finite x) then
-        invalid_arg (strf "%s: non-finite sample %h" fname x))
-    samples;
-  for i = 0 to n - 2 do
-    if samples.(i) > samples.(i + 1) then
-      invalid_arg (fname ^ ": samples are not sorted ascending")
-  done;
-  (* Read back from the texts, so the evidence is what the line holds. *)
-  let texts = Array.map e3 samples in
-  let stored = Array.map float_of_string texts in
-  let text =
-    strf "%s\t%s\tbatch=%d\tn=%d\t%s\t%s" id metric k n (derived_median stored)
-      (String.concat " " (Array.to_list texts))
-  in
-  {
-    r_id = id;
-    r_metric = metric;
-    r_evidence = Sampled { k; samples = stored };
-    r_text = text;
-  }
-
-let sort_rows fname rows =
-  let sorted = List.stable_sort compare_rows rows in
-  let rec check = function
-    | a :: (b :: _ as rest) ->
-        if compare_rows a b = 0 then
-          invalid_arg
-            (strf "%s: duplicate row for %s %s" fname a.r_id a.r_metric);
-        check rest
-    | _ -> ()
-  in
-  check sorted;
-  sorted
 
 let quote s =
   let b = Buffer.create (String.length s + 2) in
@@ -491,7 +426,6 @@ let section t key =
   List.find_opt (fun s -> String.equal s.s_machine key) t.t_sections
 
 let ocaml_of s = s.s_ocaml
-let rows s = s.s_rows
 
 let find_row s ~id ~metric =
   List.find_opt (fun r -> compare_key (row_key r) (id, metric) = 0) s.s_rows
@@ -506,114 +440,67 @@ let case_frozen_k s ~id =
         | Exact_int _ -> None)
     s.s_rows
 
-(* The write-path primitives *)
+(* Recording *)
 
 type identity = { machine : string; host : string; ocaml : string }
 
-let check_annotations fname annotations =
-  List.iter
-    (fun a ->
-      if String.contains a '\n' then
-        invalid_arg (strf "%s: multi-line annotation %S" fname a);
-      if reserved_annotation a then
-        invalid_arg
-          (strf "%s: annotation %S starts with a reserved header word" fname a))
-    annotations
+let err_record fmt =
+  Printf.ksprintf (fun m -> invalid_arg ("Baseline.record: " ^ m)) fmt
 
-let set_section ?(annotations = []) t identity row_list =
-  let fname = "Baseline.set_section" in
-  if Option.is_none t.t_suite then
-    invalid_arg
-      (fname
-     ^ ": baseline has no suite header; start from Baseline.empty ~suite");
+let check_identity identity =
   if not (valid_key identity.machine) then
-    invalid_arg
-      (strf "%s: invalid machine key %S (must be [A-Za-z0-9._-]+)" fname
-         identity.machine);
+    err_record "invalid machine key %S (must be [A-Za-z0-9._-]+)"
+      identity.machine;
   List.iter
     (fun (what, value) ->
-      if value = "" then invalid_arg (strf "%s: empty %s" fname what);
+      if value = "" then err_record "empty %s" what;
       if String.contains value '\n' then
-        invalid_arg (strf "%s: newline in %s %S" fname what value))
-    [ ("host", identity.host); ("ocaml", identity.ocaml) ];
-  check_annotations fname annotations;
-  let sec =
-    {
-      s_machine = identity.machine;
-      s_host = identity.host;
-      s_ocaml = identity.ocaml;
-      s_annotations = annotations;
-      s_rows = sort_rows fname row_list;
-    }
-  in
-  let rec place = function
-    | [] -> [ sec ]
-    | s :: rest -> (
-        match String.compare identity.machine s.s_machine with
-        | 0 -> sec :: rest
-        | c when c < 0 -> sec :: s :: rest
-        | _ -> s :: place rest)
-  in
-  { t with t_sections = place t.t_sections }
+        err_record "newline in %s %S" what value)
+    [ ("host", identity.host); ("ocaml", identity.ocaml) ]
 
-let update_rows ?(annotations = []) t ~machine ~replace ~remove =
-  let fname = "Baseline.update_rows" in
-  check_annotations fname annotations;
-  let replace = sort_rows fname replace in
-  let replaced key =
-    List.exists (fun r -> compare_key (row_key r) key = 0) replace
-  in
+let check_annotations annotations =
   List.iter
-    (fun (id, metric) ->
-      if replaced (id, metric) then
-        invalid_arg
-          (strf "%s: %s %s is both replaced and removed" fname id metric))
-    remove;
-  let removed key = List.exists (fun k -> compare_key k key = 0) remove in
-  let edit sec =
-    let kept =
-      List.filter
-        (fun r ->
-          let key = row_key r in
-          not (replaced key || removed key))
-        sec.s_rows
-    in
-    (* Both inputs are ascending and key-disjoint, so a merge preserves the
-       canonical order and every kept row's verbatim text. *)
-    let rec merge kept replace =
-      match (kept, replace) with
-      | rows, [] | [], rows -> rows
-      | k :: ks, r :: rs ->
-          if compare_rows k r <= 0 then k :: merge ks (r :: rs)
-          else r :: merge (k :: ks) rs
-    in
-    {
-      sec with
-      s_annotations = sec.s_annotations @ annotations;
-      s_rows = merge kept replace;
-    }
-  in
-  let rec update = function
-    | [] -> invalid_arg (strf "%s: no section for machine %S" fname machine)
-    | s :: rest ->
-        if String.equal s.s_machine machine then edit s :: rest
-        else s :: update rest
-  in
-  { t with t_sections = update t.t_sections }
+    (fun a ->
+      if String.contains a '\n' then err_record "multi-line annotation %S" a;
+      if reserved_annotation a then
+        err_record "annotation %S starts with a reserved header word" a)
+    annotations
 
-(* Recording *)
+(* A sample is stored as its [%.3e] text read back, so the row's evidence is
+   what its line holds. Rounding is monotone, so the stored samples keep the
+   trial's ascending order. *)
+let row_of ~id ~k metric measurement =
+  let metric = Metric.id metric in
+  match measurement with
+  | Run.Exact n ->
+      if n < 0 then err_record "negative count %d for %s %s" n id metric;
+      {
+        r_id = id;
+        r_metric = metric;
+        r_evidence = Exact_int n;
+        r_text = strf "%s\t%s\texact\t%d" id metric n;
+      }
+  | Run.Samples s ->
+      let texts = Array.map e3 s.Run.sorted in
+      let stored = Array.map float_of_string texts in
+      {
+        r_id = id;
+        r_metric = metric;
+        r_evidence = Sampled { k; samples = stored };
+        r_text =
+          strf "%s\t%s\tbatch=%d\tn=%d\t%s\t%s" id metric k
+            (Array.length stored) (derived_median stored)
+            (String.concat " " (Array.to_list texts));
+      }
 
 let rows_of_trial id trial =
+  if not (valid_id id) then
+    err_record "invalid id %S ('/'-separated segments of [A-Za-z0-9._-])" id;
   List.map
-    (fun (metric, measurement) ->
-      let metric = Metric.id metric in
-      match measurement with
-      | Run.Exact n -> exact_row ~id ~metric n
-      | Run.Samples s ->
-          sampled_row ~id ~metric ~k:(Run.Trial.k trial) ~samples:s.Run.sorted)
+    (fun (metric, m) -> row_of ~id ~k:(Run.Trial.k trial) metric m)
     (Run.Trial.measurements trial)
 
-let record ?annotations ~identity ~suite ~selection ~run t =
+let record ?(annotations = []) ~identity ~suite ~selection ~run t =
   let t =
     match t.t_suite with
     | None -> empty ~suite
@@ -623,24 +510,43 @@ let record ?annotations ~identity ~suite ~selection ~run t =
           (strf "Thumper.Baseline.record: baseline is for suite %s, not %s"
              (quote s) (quote suite))
   in
+  check_identity identity;
+  check_annotations annotations;
   let trials = Run.trials run in
   let rows =
     List.concat_map (fun (id, trial) -> rows_of_trial id trial) trials
   in
-  match (selection, section t identity.machine) with
-  | `Partial, Some s when String.equal s.s_ocaml identity.ocaml ->
-      (* A selected case's rows are replaced by case id, so a metric it no
-         longer collects loses its row too. *)
-      let ids = List.map fst trials in
-      let recorded = List.map row_key rows in
-      let remove =
-        List.filter_map
-          (fun r ->
-            let key = row_key r in
-            if List.mem r.r_id ids && not (List.mem key recorded) then Some key
-            else None)
-          s.s_rows
-      in
-      update_rows ?annotations t ~machine:identity.machine ~replace:rows ~remove
-  | (`Partial | `Full), (Some _ | None) ->
-      set_section ?annotations t identity rows
+  (* [Run] holds each case once and each metric once per trial, so the rows'
+     (id, metric) pairs are distinct and a sort puts them in canonical
+     order. *)
+  let sec =
+    match (selection, section t identity.machine) with
+    | `Partial, Some s when String.equal s.s_ocaml identity.ocaml ->
+        (* A recorded case loses every row, so a metric it no longer
+           collects loses its row too. *)
+        let kept =
+          List.filter (fun r -> not (List.mem_assoc r.r_id trials)) s.s_rows
+        in
+        {
+          s with
+          s_annotations = s.s_annotations @ annotations;
+          s_rows = List.stable_sort compare_rows (kept @ rows);
+        }
+    | (`Partial | `Full), (Some _ | None) ->
+        {
+          s_machine = identity.machine;
+          s_host = identity.host;
+          s_ocaml = identity.ocaml;
+          s_annotations = annotations;
+          s_rows = List.stable_sort compare_rows rows;
+        }
+  in
+  let rec place = function
+    | [] -> [ sec ]
+    | s :: rest -> (
+        match String.compare sec.s_machine s.s_machine with
+        | 0 -> sec :: rest
+        | c when c < 0 -> sec :: s :: rest
+        | _ -> s :: place rest)
+  in
+  { t with t_sections = place t.t_sections }

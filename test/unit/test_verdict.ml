@@ -68,16 +68,42 @@ let case ?budgets name =
     (function Ok [ c ] -> Some c | Ok _ | Error _ -> None)
     (Bench.resolve [ Bench.bench ?budgets name ignore ])
 
-let wall_row ?(k = 8) id samples =
-  Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples
+(* A fixture row: case [id]'s evidence for [metric], measured at batch size
+   [k]. *)
+let row ?(k = 8) ~metric id evidence = (id, k, metric, evidence)
 
-let alloc_row id n = Baseline.exact_row ~id ~metric:"alloc_words" n
+(* [file] with [rows] recorded as [identity]'s whole section by
+   [Baseline.record], the rows of one case as one trial. Its sampled rows
+   share one batch size; a file of mixed batch sizes is written as text. *)
+let with_rows ?(identity = ident) ?annotations rows file =
+  let ids =
+    List.fold_left
+      (fun acc (id, _, _, _) -> if List.mem id acc then acc else acc @ [ id ])
+      [] rows
+  in
+  let trial id =
+    let own = List.filter (fun (id', _, _, _) -> String.equal id id') rows in
+    let ks =
+      List.sort_uniq Int.compare
+        (List.filter_map
+           (fun (_, k, _, e) ->
+             match e with Run.Samples _ -> Some k | Run.Exact _ -> None)
+           own)
+    in
+    let k = match ks with [] -> 8 | [ k ] -> k | _ -> failwith "mixed k" in
+    (id, Run.Trial.make ~k (List.map (fun (_, _, m, e) -> (m, e)) own))
+  in
+  Baseline.record ?annotations ~identity
+    ~suite:(Option.value (Baseline.suite file) ~default:"digest")
+    ~selection:`Full
+    ~run:(Run.create (List.map trial ids))
+    file
 
-let file_of ?(identity = ident) ?annotations rows =
-  Baseline.set_section ?annotations
-    (Baseline.empty ~suite:"digest")
-    identity rows
+let file_of ?identity ?annotations rows =
+  with_rows ?identity ?annotations rows (Baseline.empty ~suite:"digest")
 
+let wall_row ?k id samples = row ?k ~metric:wall_time id (sampled samples)
+let alloc_row id n = row ~metric:alloc_words id (Run.Exact n)
 let empty_file () = require_ok (Baseline.of_string "")
 
 (* Verdicts *)
@@ -372,9 +398,14 @@ let judgment_follows_the_port (r, (baseline, cand, conf)) =
   let baseline =
     require_match
       (function
-        | Baseline.Sampled { samples; _ } -> Some samples
-        | Baseline.Exact_int _ -> None)
-      (Baseline.row_evidence row)
+        | Some r -> (
+            match Baseline.row_evidence r with
+            | Baseline.Sampled { samples; _ } -> Some samples
+            | Baseline.Exact_int _ -> None)
+        | None -> None)
+      (Option.bind
+         (Baseline.section (file_of [ row ]) ident.Baseline.machine)
+         (Baseline.find_row ~id:"a" ~metric:"wall_time"))
   in
   let t =
     one
@@ -556,8 +587,7 @@ let moved_batch_sizes =
     ("a shift beyond 2e is judged", 16, ties 5 0.5, "improved, confirmed");
   ]
 
-let sampled_alloc_row samples =
-  Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8 ~samples
+let sampled_alloc_row samples = row ~metric:alloc_words "a" (sampled samples)
 
 let exactness =
   [
@@ -757,10 +787,7 @@ let files =
       Some "5.5.0 64-bit release" );
     ( "a section of this compiler in another suite's file",
       (fun () ->
-        Baseline.set_section
-          (Baseline.empty ~suite:"other")
-          ident
-          [ wall_row "a" (ties 5 1.) ]),
+        with_rows [ wall_row "a" (ties 5 1.) ] (Baseline.empty ~suite:"other")),
       "compared",
       Some "5.5.0 64-bit release" );
   ]
@@ -909,8 +936,7 @@ let a_case_with_two_pending_metrics_is_listed_once () =
       ~file:
         (file_of
            [
-             Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-               ~samples:(ties 5 1.);
+             row ~metric:cpu_time "a" (sampled (ties 5 1.));
              wall_row "a" (ties 5 1.);
            ])
       [
@@ -1291,11 +1317,7 @@ let failing =
     ( "a confirmed regression under the default budget",
       (fun () ->
         one
-          ~rows:
-            [
-              Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-                ~samples:(ties 5 1.);
-            ]
+          ~rows:[ row ~metric:cpu_time "a" (sampled (ties 5 1.)) ]
           (trial [ (cpu_time, sampled (ties 5 2.)) ])),
       true );
   ]
