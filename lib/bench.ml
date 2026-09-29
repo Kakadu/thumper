@@ -16,8 +16,9 @@ type case = {
   prepare : unit -> prepared;
 }
 
-(* An authored node: the validated id segment, the display name, and the
-   scope's own (uninherited) tags/metrics/budgets. *)
+(* An authored node: its validated id segments, '/'-joined (several when a
+   name holds a '/'), the display name, and the scope's own (uninherited)
+   tags/metrics/budgets. *)
 type spec = {
   seg : string;
   name : string;
@@ -59,15 +60,21 @@ let segment ~ctor ~id ~name =
               (groups join segments with '/')"
              ctor id);
       id
-  | None ->
-      let s = slug name in
-      if s = "" then
-        invalid_arg
-          (strf
-             "%s: name %S has no [A-Za-z0-9._-] characters to slug into an id; \
-              pass ~id"
-             ctor name);
-      s
+  | None -> (
+      match List.map slug (String.split_on_char '/' name) with
+      | [ "" ] ->
+          invalid_arg
+            (strf
+               "%s: name %S has no [A-Za-z0-9._-] characters to slug into an \
+                id; pass ~id"
+               ctor name)
+      | segs when List.mem "" segs ->
+          invalid_arg
+            (strf
+               "%s: name %S has a '/'-separated part with no [A-Za-z0-9._-] \
+                characters to slug into an id segment; pass ~id"
+               ctor name)
+      | segs -> String.concat "/" segs)
 
 let check_metrics ~ctor = function
   | None -> ()

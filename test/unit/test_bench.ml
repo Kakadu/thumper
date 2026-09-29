@@ -61,7 +61,8 @@ let slugs =
     ("a space becomes a hyphen", "hello world", "hello-world");
     ("a run of other characters becomes one hyphen", "a + b", "a-b");
     ("runs at either end are dropped", " (parens) ", "parens");
-    ("a slash is not an id character", "a/b", "a-b");
+    ("a slash separates segments", "a/b", "a/b");
+    ("each part between slashes is slugged", "fnv1a / 4 KiB", "fnv1a/4-KiB");
     ("hyphens at either end are kept", "-pre set", "-pre-set");
   ]
 
@@ -69,6 +70,7 @@ let explicit_ids =
   [
     ("over a name that slugs", "Custom.Id", "some display name");
     ("over a name with no id character", "ok", "!!!");
+    ("over a name with a slash, as one segment", "one", "a/b");
   ]
 
 let invalid_id id =
@@ -104,6 +106,16 @@ let refusals =
       Invalid_argument
         "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug \
          into an id; pass ~id" );
+    ( "a name with an empty part",
+      (fun () -> Bench.bench "a//b" noop),
+      Invalid_argument
+        "Thumper.bench: name \"a//b\" has a '/'-separated part with no \
+         [A-Za-z0-9._-] characters to slug into an id segment; pass ~id" );
+    ( "a group name with a part that has no id character",
+      (fun () -> Bench.group "a/ () " []),
+      Invalid_argument
+        "Thumper.group: name \"a/ () \" has a '/'-separated part with no \
+         [A-Za-z0-9._-] characters to slug into an id segment; pass ~id" );
     ( "an empty metrics list",
       (fun () -> Bench.bench ~metrics:[] "x" noop),
       Invalid_argument "Thumper.bench: empty ~metrics list (omit it to inherit)"
@@ -292,6 +304,17 @@ let duplicates =
     ( "two names with one slug",
       (fun () -> [ Bench.bench "a b" noop; Bench.bench "a-b" noop ]),
       "a-b" );
+    ( "a '/' in a name and a group",
+      (fun () ->
+        [ Bench.bench "a/b" noop; Bench.group "a" [ Bench.bench "b" noop ] ]),
+      "a/b" );
+    ( "a '/' in a group's name and nested groups",
+      (fun () ->
+        [
+          Bench.group "a/b" [ Bench.bench "c" noop ];
+          Bench.group "a" [ Bench.group "b" [ Bench.bench "c" noop ] ];
+        ]),
+      "a/b/c" );
     ( "an explicit id and a slug",
       (fun () -> [ Bench.bench ~id:"x" "first" noop; Bench.bench "x" noop ]),
       "x" );
@@ -462,6 +485,9 @@ let paths =
     ( "a group's segment is its slug, its full name part its name",
       (fun () -> Bench.group "Hash Functions" [ Bench.bench "md5" noop ]),
       ("Hash-Functions/md5", "Hash Functions/md5") );
+    ( "a '/' in a group's name separates its segments",
+      (fun () -> Bench.group "Hash / MD" [ Bench.bench "5" noop ]),
+      ("Hash/MD/5", "Hash / MD/5") );
     ( "a group's explicit id is its segment",
       (fun () ->
         Bench.group ~id:"sha" "SHA-256 family" [ Bench.bench "x" noop ]),
@@ -472,17 +498,17 @@ let paths =
       ("outer/inner/leaf", "outer/inner/leaf") );
   ]
 
-(* A group named "a/b" slugs to the segment "a-b": its id cannot be that of
-   the groups "a" and "b" nested, though its full name is. *)
-let a_slash_in_a_name_forges_no_id () =
+(* The group named "a/b" with the id "ab" has the full name of the groups "a"
+   and "b" nested, not their id. *)
+let an_id_can_share_a_full_name () =
   let cases =
     resolved
       [
-        Bench.group "a/b" [ Bench.bench "c" noop ];
+        Bench.group ~id:"ab" "a/b" [ Bench.bench "c" noop ];
         Bench.group "a" [ Bench.group "b" [ Bench.bench "c" noop ] ];
       ]
   in
-  equal (list string) [ "a-b/c"; "a/b/c" ] (List.map Bench.id cases);
+  equal (list string) [ "ab/c"; "a/b/c" ] (List.map Bench.id cases);
   equal (list string) [ "a/b/c"; "a/b/c" ] (List.map Bench.full_name cases)
 
 let metric_scopes =
@@ -563,7 +589,8 @@ let case_observers =
         (fun (_, tree, expected) ->
           let c = the_case [ tree () ] in
           equal (pair string string) expected (Bench.id c, Bench.full_name c));
-      test "a '/' in a group's name forges no id" a_slash_in_a_name_forges_no_id;
+      test "an explicit id can give two cases one full name"
+        an_id_can_share_a_full_name;
       cases "metrics"
         ~name:(fun (name, _, _) -> name)
         metric_scopes

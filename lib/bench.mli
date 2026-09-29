@@ -36,7 +36,8 @@ type case
     and the first that fails raises:
     + [name] is empty.
     + [id] is not one segment.
-    + [id] is absent and [name] holds no character a segment allows.
+    + [id] is absent and [name], or a part of it between ['/'] characters, holds
+      no character a segment allows.
     + [metrics] is empty or names one metric twice.
     + [budgets] holds two budgets for one metric ({!Budget.check_distinct}).
 
@@ -51,9 +52,10 @@ val bench :
   (unit -> 'a) ->
   t
 (** [bench name f] is the case [name] whose batch of [k] calls applies [f] [k]
-    times ({!prepared}). [id] defaults to the slug of [name], and [tags] to
-    [[]]. Without [metrics] or [budgets] the case inherits its groups'; an empty
-    [budgets] list inherits the same way. *)
+    times ({!prepared}). [id] defaults to the slug of [name], one segment for
+    each part between ['/'] characters, and [tags] to [[]]. Without [metrics] or
+    [budgets] the case inherits its groups'; an empty [budgets] list inherits
+    the same way. *)
 
 val bench_with_setup :
   ?id:string ->
@@ -80,9 +82,9 @@ val group :
   t list ->
   t
 (** [group name children] is the group [name] over [children]. Each child's id
-    is prefixed with the group's segment and ['/'], its display name with [name]
-    and ['/'], and it inherits the group's tags, metrics and budgets. An empty
-    [children] resolves to no case. *)
+    is prefixed with the group's segments and ['/'], its display name with
+    [name] and ['/'], and it inherits the group's tags, metrics and budgets. An
+    empty [children] resolves to no case. *)
 
 (** {1:selection Selection} *)
 
@@ -152,8 +154,8 @@ val id : case -> string
 
 val full_name : case -> string
 (** [full_name c] is the ['/']-joined display names of [c]'s groups and [c]. The
-    JSON document carries it, but nothing keys on it: a name that contains ['/']
-    can make two cases' full names equal. *)
+    JSON document carries it, but nothing keys on it: two cases can share a full
+    name when an [id] replaces a name that contains ['/']. *)
 
 val metrics : case -> Metric.t list option
 (** [metrics c] is the [metrics] of the nearest scope that gave one, or [None]

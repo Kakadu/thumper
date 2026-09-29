@@ -270,15 +270,17 @@ end
     started a domain cannot fork, and the run then stops at its first case
     ({!Check.Error}).
 
-    {b Ids.} Every case has an id: the ['/']-joined segments of its group path,
-    each a nonempty run of [[A-Za-z0-9._-]]. Ids appear verbatim in baseline
-    rows and in the JSON document, and [-f] selects by them. A node's segment is
-    its [?id] when given, else the slug of its name: a name that is already a
+    {b Ids.} Every case has an id: the ['/']-joined segments of its group path
+    and its own, each a nonempty run of [[A-Za-z0-9._-]]. Ids appear verbatim in
+    baseline rows and in the JSON document, and [-f] selects by them. A node's
+    segment is its [?id] when given. Otherwise a ['/'] in its name separates
+    segments, and each part between them is slugged: a part that is already a
     valid segment is used as is, otherwise every maximal run of other characters
     becomes one ['-'] and runs at either end are dropped. The name's own
     [[A-Za-z0-9._-]] characters, hyphens at either end included, are always
-    kept. [bench "1 MiB copy"] has id ["1-MiB-copy"], and [bench " (parens) "]
-    has id ["parens"].
+    kept. [bench "1 MiB copy"] has id ["1-MiB-copy"], [bench " (parens) "] has
+    id ["parens"], and [bench "fnv1a/4 KiB"] has id ["fnv1a/4-KiB"], as
+    [group "fnv1a" [bench "4 KiB" f]] does.
 
     {b Inheritance.} A group's [?tags], [?metrics] and [?budgets] reach its
     descendants:
@@ -296,10 +298,11 @@ end
 
     {b Errors.} Each constructor raises [Invalid_argument] if its name is empty,
     if [id] is not one valid segment (a ['/'] included), if [id] is absent and
-    the name has no [[A-Za-z0-9._-]] character, if [metrics] is [[]] or names a
-    metric twice, or if [budgets] holds two budgets for one metric. Two cases
-    with one id make the suite invalid: {!measure} and {!Check.run} raise
-    {!Check.Error}, and {!run} returns 2, before measuring. *)
+    the name, or a part of it between ['/'] characters, has no [[A-Za-z0-9._-]]
+    character, if [metrics] is [[]] or names a metric twice, or if [budgets]
+    holds two budgets for one metric. Two cases with one id make the suite
+    invalid: {!measure} and {!Check.run} raise {!Check.Error}, and {!run}
+    returns 2, before measuring. *)
 
 type bench
 (** The type for benchmark trees: a case or a group. *)
@@ -317,8 +320,8 @@ val bench :
     code. The compiler may still fold a computation over an input it can see. A
     case whose median call takes under 1 ns is warned as possibly folded
     ({!Run.warnings}). Prefer {!black_box} around such an input.
-    - [id] is the case's segment, defaults to the slug of [name]
-      ({{!benchmarks}ids}).
+    - [id] is the case's segment, defaults to the slug of [name], in which a
+      ['/'] separates segments ({{!benchmarks}ids}).
     - [tags] label the case for [`Tag] selection, defaults to [[]]. Any string
       is a tag.
     - [metrics] and [budgets] default to the inherited ones
@@ -356,9 +359,9 @@ val group :
   bench list ->
   bench
 (** [group name children] is a group of [children]. Their segments are prefixed
-    with the group's segment ([id], defaulting to the slug of [name]) and ['/'],
-    their names with [name] and ['/'] (the JSON document's [full_name]), and
-    [tags], [metrics] and [budgets] reach them as described under
+    with the group's segments ([id], defaulting to the slug of [name]) and
+    ['/'], their names with [name] and ['/'] (the JSON document's [full_name]),
+    and [tags], [metrics] and [budgets] reach them as described under
     {{!benchmarks}inheritance}. Groups nest, and [children] may be empty.
 
     Raises [Invalid_argument] as described under {{!benchmarks}errors}. *)
