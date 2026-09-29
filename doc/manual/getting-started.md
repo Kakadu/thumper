@@ -68,89 +68,73 @@ We attach the executable to its own alias, `bench`, next to its stanza
 (rule
  (alias bench)
  (locks %{project_root}/bench)
+ (deps
+  (glob_files *.thumper))
  (action
-  (progn
-   (run %{exe:bench_digest.exe})
-   (diff? digest.thumper digest.thumper.corrected))))
+  (run %{exe:bench_digest.exe})))
 ```
 
 `(locks %{project_root}/bench)` keeps two benchmark rules from measuring
-at once: a lock's name is a path, so every suite of the project names
-the same lock. `diff?` shows the corrected file a run writes as a diff
-to accept.
+at once. A lock's name is a path, so every suite of the project names
+the same lock. `(deps (glob_files *.thumper))` makes the baseline visible
+to the run once it exists, and dune reruns the rule when it changes.
 
 ## The first run
 
 The transcripts below run the example in that `bench/` directory, their
 numbers are one run's, and [the report](report.md) explains their columns
-and words, such as `±`, `w` and `inconclusive`. With no baseline yet,
-every row reads `proposed`, and dune shows the corrected file as a diff
-and fails the build:
+and words, such as `±`, `w` and `proposed`. With no baseline yet, every
+row reads `proposed`, the build passes, and the `accept:` line names the
+command that records the baseline:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
-thumper: digest — no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
+digest: no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
 
-  proposed  343.96 ns  ±386.2%  4 w  md5/string-64
-  proposed   25.01 ns   ±76.2%  0 w  fib/10
-  proposed   11.42 ns  ±222.3%  0 w  fib/20
+  proposed  199.01 ns  ±0.9%  4 w  md5/string-64
+  proposed    6.54 ns  ±0.5%  0 w  fib/10
+  proposed   10.82 ns  ±0.2%  0 w  fib/20
 
-  accept:  dune promote
-  warning: load 96.0 on 10 cores; prefer a quiet host before accepting
-File "bench/digest.thumper", line 1, characters 0-0:
-diff --git a/_build/default/bench/digest.thumper.corrected b/_build/default/bench/digest.thumper.corrected
-new file mode 100644
-index 0000000..88f581b
---- /dev/null
-+++ b/_build/default/bench/digest.thumper.corrected
-@@ -0,0 +1,13 @@
-+# thumper baseline v1
-+# suite: digest
-+
-+# machine: 5c1e0a7f3b9d2486
-+# host: laptop · Apple M1 Max · arm64 · macos
-+# ocaml: 5.5.1 · 64-bit · release
-+
-+fib/10	alloc_words	exact	0
-+fib/10	wall_time	batch=1048576	n=20	2.501e-08	6.767e-09 6.771e-09 6.789e-09 6.793e-09 6.845e-09 6.861e-09 6.930e-09 1.552e-08 2.076e-08 2.219e-08 2.783e-08 3.107e-08 3.940e-08 4.417e-08 4.499e-08 6.509e-08 1.032e-07 1.206e-07 1.325e-07 2.282e-07
-+fib/20	alloc_words	exact	0
-+fib/20	wall_time	batch=524288	n=20	1.143e-08	1.132e-08 1.133e-08 1.135e-08 1.137e-08 1.138e-08 1.139e-08 1.140e-08 1.140e-08 1.141e-08 1.142e-08 1.143e-08 1.525e-08 2.027e-08 3.302e-08 6.216e-08 1.364e-07 1.423e-07 1.560e-07 1.997e-07 2.481e-07
-+md5/string-64	alloc_words	exact	4
-+md5/string-64	wall_time	batch=16384	n=20	3.440e-07	2.016e-07 2.043e-07 2.056e-07 2.057e-07 2.063e-07 2.063e-07 2.064e-07 2.070e-07 2.080e-07 3.434e-07 3.445e-07 5.689e-07 5.952e-07 2.831e-06 2.863e-06 3.026e-06 3.533e-06 3.845e-06 4.404e-06 5.565e-06
+accept: ./_build/default/bench/bench_digest.exe bless
+3 proposed in 0.9s.
 ```
 
-## Accepting the baseline
+## Recording the baseline
 
-`dune promote` accepts the corrected file as `bench/digest.thumper`, the
-baseline we commit:
+We paste the `accept:` line. `bless` measures the cases again and records
+them in `bench/digest.thumper`, the baseline we commit:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
-$ dune promote
-Promoting _build/default/bench/digest.thumper.corrected to
-  bench/digest.thumper.
+$ ./_build/default/bench/bench_digest.exe bless
+digest: 3 cases for machine 5c1e0a7f3b9d2486
+
+  blessed  199.40 ns  ±0.6%  4 w  md5/string-64
+  blessed    6.55 ns  ±0.3%  0 w  fib/10
+  blessed   10.83 ns  ±0.2%  0 w  fib/20
+
+3 blessed into bench/digest.thumper in 0.9s.
 ```
 
 The next run compares every case with the baseline, and all three pass:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 97.4 on 10 cores; timing verdicts degraded
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  201.26 ns    ±0.3%  4 w  md5/string-64
-      environment  -3.3% [-71.7, -1.7]; equivalent (alloc exact)
-  inconclusive    6.83 ns  ±169.8%  0 w  fib/10
-      environment  -32.8% [-82.7, +0.8]; equivalent (alloc exact)
-  inconclusive   11.34 ns    ±0.3%  0 w  fib/20
-      environment  -0.8% [-81.6, -0.1]; equivalent (alloc exact)
+  passed  199.12 ns  ±0.7%  4 w  md5/string-64
+  passed    6.56 ns  ±0.4%  0 w  fib/10
+  passed   10.84 ns  ±0.3%  0 w  fib/20
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 0.9s.
 ```
 
 ## A regression
 
-We make each `fib` case do twice the work. In
-`examples/02-getting-started/bench_digest.ml`, the call
+We make each `fib` case do twice the work. In `bench/bench_digest.ml`,
+the call
 `fib (Thumper.black_box n)` becomes:
 
 ```ocaml
@@ -160,38 +144,43 @@ fib (2 * Thumper.black_box n)
 The two `fib` rows now read `REGRESSED`, beside the change and its budget,
 and the build fails:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 97.6 on 10 cores; timing verdicts degraded
+File "bench/dune", lines 5-11, characters 0-127:
+ 5 | (rule
+ 6 |  (alias bench)
+ 7 |  (locks %{project_root}/bench)
+ 8 |  (deps
+ 9 |   (glob_files *.thumper))
+10 |  (action
+11 |   (run %{exe:bench_digest.exe})))
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  202.29 ns   ±1.6%  4 w  md5/string-64
-      environment  -40.8% [-92.9, -1.7]; equivalent (alloc exact)
-  inconclusive   11.62 ns  ±12.9%  0 w  fib/10
-      environment  -44.2% [-73.8, +70.1]; equivalent (alloc exact)
-  inconclusive   21.46 ns  ±10.4%  0 w  fib/20
-      environment  +80.2% [-62.7, +103.1]; equivalent (alloc exact)
+  passed     199.31 ns  ±0.5%  4 w  md5/string-64
+  REGRESSED   13.07 ns  ±0.3%  0 w  fib/10
+      +99.5% [+99.1, +99.9]  budget +5%
+  REGRESSED   21.63 ns  ±0.2%  0 w  fib/20
+      +99.7% [+99.5, +99.9]  budget +5%
 
-  3 cases: 0 passed, 3 inconclusive.
+rerun: ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
+1 passed, 2 regressed in 1.6s.
 ```
 
 ## The fix
 
 We undo the edit, and the next run passes again:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 97.6 on 10 cores; timing verdicts degraded
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  208.12 ns  ±5.2%  4 w  md5/string-64
-      environment  -39.5% [-92.7, +0.5]; equivalent (alloc exact)
-  inconclusive    7.00 ns  ±7.6%  0 w  fib/10
-      environment  -68.7% [-84.7, +0.8]; equivalent (alloc exact)
-  inconclusive   11.48 ns  ±8.2%  0 w  fib/20
-      environment  -0.4% [-81.6, +2.0]; equivalent (alloc exact)
+  passed  199.25 ns  ±0.6%  4 w  md5/string-64
+  passed    6.55 ns  ±0.4%  0 w  fib/10
+  passed   10.83 ns  ±0.2%  0 w  fib/20
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 0.9s.
 ```
 
 ## Where to go next
@@ -199,7 +188,7 @@ warning: load 97.6 on 10 cores; timing verdicts degraded
 - [Writing benchmarks](writing-benchmarks.md) budgets groups and cases,
   keeps fixtures out of the timed region, and tags cases.
 - [Running checks](running-checks.md) measures one case while iterating,
-  accepts an intended slowdown, and checks on CI runners and loaded hosts.
+  records an intended slowdown, and checks on CI runners and loaded hosts.
 - [Programmatic use](programmatic.md) measures and checks from an OCaml
   program.
 
