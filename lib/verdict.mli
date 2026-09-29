@@ -287,10 +287,10 @@ val load : t -> Env.load
 
 val exit_code : ?strict:bool -> t -> int
 (** [exit_code ~strict t] is [1] if [overall t] is [`Fail] and [0] otherwise.
-    With [strict], [false] by default, it is also [1] if [overall t] is
-    [`Inconclusive], if the section is not [Compared], or if some metric is
-    [Proposed]. It is never [2], the code the caller gives an operational
-    failure. *)
+    With [strict], [false] by default, it is also [1] if some metric is
+    [Proposed], as every metric is on a missing or stale section; an
+    [`Inconclusive] verdict is [0] either way. It is never [2], the code the
+    caller gives an operational failure. *)
 
 val to_json : t -> string
 (** [to_json t] is [t]'s JSON document, on one line without a final newline. Its

@@ -45,8 +45,8 @@ alone and is distributed under the ISC license.
   wait for a quiet host.
 - A per-user measurement lock that keeps two measurements on one host from
   overlapping.
-- `--json` for a JSON document of the verdict, `--strict` to fail on
-  inconclusive and proposed rows, and GitHub annotations under
+- `--json` for a JSON document of the verdict, `--strict` to fail on a
+  metric with no baseline row, and GitHub annotations under
   `GITHUB_ACTIONS`.
 - `measure`, which collects measurements without files, `Check.run` and
   `Verdict.to_json`, which build a check in OCaml, and `Baseline.record`,

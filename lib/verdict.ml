@@ -530,14 +530,7 @@ let has_proposed t =
 let exit_code ?(strict = false) t =
   match overall t with
   | `Fail -> 1
-  | `Inconclusive -> if strict then 1 else 0
-  | `Pass ->
-      let non_compared =
-        match t.core.cr_comparison with
-        | Compared -> false
-        | No_baseline | Stale _ -> true
-      in
-      if strict && (non_compared || has_proposed t) then 1 else 0
+  | `Inconclusive | `Pass -> if strict && has_proposed t then 1 else 0
 
 (* JSON *)
 

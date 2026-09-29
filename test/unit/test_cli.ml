@@ -364,7 +364,7 @@ let help_prints_every_flag () =
       --baseline PATH    baseline file (default: <suite>.thumper next to
                          the benchmark's source)
       --json PATH        check: write the verdict document to PATH
-      --strict           check: inconclusive, proposed, and stale exit 1
+      --strict           check: a metric with no baseline row exits 1
       --wait-quiet SECS  wait up to SECS for a quiet host before measuring
       --force            bless despite a loaded host (recorded)
       --color MODE       color the report: auto (default), always, never

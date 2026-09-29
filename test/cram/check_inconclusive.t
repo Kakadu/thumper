@@ -18,7 +18,7 @@ Inconclusive exits 0, the reason is named, and the summary counts it.
   1 case: 0 passed, 1 inconclusive.
   $ cmp fixture.thumper before.thumper
 
---strict turns inconclusive into failure.
+--strict fails a proposed metric only, so an inconclusive case still
+exits 0.
 
   $ THUMPER_FIXTURE_MODE=alloc_grow $FIX check --quick -f alloc/list --strict > out.log 2>&1
-  [1]

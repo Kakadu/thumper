@@ -727,8 +727,12 @@ let summary_colours =
       loaded_regression,
       false,
       "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m" );
-    ( "red when --strict fails the run",
+    ( "yellow when --strict meets an inconclusive case",
       loaded_regression,
+      true,
+      "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m" );
+    ( "red when --strict fails a proposed metric",
+      loaded_proposed,
       true,
       "\027[31m1 case: 0 passed, 1 inconclusive; failed under --strict.\027[0m"
     );

@@ -638,8 +638,8 @@ let check r v =
         recorded
   in
   (* Summary, compared runs only. Its color is the outcome's: red iff the run
-     exits 1, so a [--strict] run that fails on inconclusive cases does not
-     end on a yellow line. *)
+     exits 1, so a [--strict] run that fails on a proposed case does not end
+     on a green line. *)
   let summary =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> []

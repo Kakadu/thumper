@@ -710,8 +710,8 @@ module Verdict : sig
 
   val exit_code : ?strict:bool -> t -> int
   (** [exit_code t] is [1] when {!overall} is [`Fail], and [0] otherwise. With
-      [strict] (defaults to [false]) it is also [1] when {!overall} is
-      [`Inconclusive] or some metric is proposed. *)
+      [strict] (defaults to [false]) it is also [1] when some metric is
+      proposed; an inconclusive verdict is [0] either way. *)
 
   val to_json : t -> string
   (** [to_json t] is [t] as a JSON document on one line, with no final newline.

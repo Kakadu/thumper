@@ -126,7 +126,8 @@ for the pure-core laws, cram for the rest ([`testing.md`](testing.md)).
    which cannot be re-judged when the method changes; corrupt files
    passing silently.
 10. **Only a failure exits 1.** The process exits 0 when rows are
-    proposed or inconclusive; only `--strict` changes that.
+    proposed or inconclusive; only `--strict` changes that, and for a
+    proposed row alone.
     *Prevents:* training users to ignore a check that fails on noise.
 
 ## Dependency policy

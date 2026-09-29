@@ -1417,8 +1417,18 @@ let exit_codes =
           ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
           ~rows:[ sampled_alloc_row (ties 5 100.) ]
           (trial [ (alloc_words, sampled (ties 5 200.)) ])),
+      (0, 0) );
+    ("an inconclusive run", (fun () -> one (wall spread)), (0, 0));
+    ( "an inconclusive run with a proposed metric",
+      (fun () ->
+        decided
+          ~file:(file_of [ wall_row "a" (ties 5 1.) ])
+          [
+            ( case "a",
+              trial [ (wall_time, sampled spread); (alloc_words, Run.Exact 54) ]
+            );
+          ]),
       (0, 1) );
-    ("an inconclusive run", (fun () -> one (wall spread)), (0, 1));
     ( "a missing section",
       (fun () -> decided [ (case "a", wall (ties 5 1.)) ]),
       (0, 1) );
