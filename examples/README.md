@@ -6,9 +6,9 @@ to a build-failing regression gate, to the library underneath the CLI.
 
 - `01-first-benchmark` — the smallest suite: `run` + `bench` in one
   executable; a bare run is the whole flow. A benchmark is an executable.
-- `02-getting-started` — the manual `@bench` rule with `(locks bench)` and
-  `diff?`: the first run proposes the baseline, `dune promote` accepts it,
-  confirmed regressions fail the build (the gate cycle, below).
+- `02-getting-started` — the manual `@bench` rule, with its lock and the
+  baseline as a dependency: the first run proposes the baseline, `bless`
+  records it, confirmed regressions fail the build (the gate cycle, below).
 - `03-budgets` — per-metric contracts: `no_slower_than`, the
   `no_more_alloc_than 0.0` allocation pin, an absolute `at_most` cap, and
   per-metric inheritance — a case that relaxes wall time keeps its group's

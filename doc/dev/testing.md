@@ -349,7 +349,8 @@ run asserts them:
 `examples/` holds seven graded suites (first benchmark, getting
 started, budgets, fixtures, tags, protocol, programmatic);
 `02-getting-started` carries the rule the manual teaches: the `@bench`
-alias, `(locks bench)` and `diff?`. Nothing in `examples/` measures under
+alias, `(locks %{project_root}/bench)`, `(deps (glob_files *.thumper))` and
+a bare `run`. Nothing in `examples/` measures under
 runtest, since the `@bench` alias is manual. `doc/manual/snippets/`
 compiles every OCaml snippet in the manual and runs none of them; a
 snippet that rots breaks the build.
