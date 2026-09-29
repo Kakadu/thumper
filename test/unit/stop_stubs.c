@@ -39,14 +39,16 @@ CAMLprim value thumper_test_stop_traced (value unit)
 #endif
 }
 
-/* Whether SIGKILL ends a stopped traced child while its tracer lives.
-   Darwin delivers it only once the tracer exits or resumes the child. */
+/* Whether SIGKILL is known to end a stopped traced child while its tracer
+   lives. Linux does; Darwin delivers it only once the tracer exits or
+   resumes the child; on the BSDs it is unverified, so the test checks the
+   report there and not the reap. */
 CAMLprim value thumper_test_sigkill_ends_tracee (value unit)
 {
   (void) unit;
-#if defined(__APPLE__)
-  return Val_false;
-#else
+#if defined(__linux__)
   return Val_true;
+#else
+  return Val_false;
 #endif
 }
