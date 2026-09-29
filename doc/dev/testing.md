@@ -1,9 +1,10 @@
 # Testing thumper
 
-How thumper tests itself. `dune runtest` runs everything; no test
-sleeps on host speed or asserts a timing — every suite is engineered
-to be deterministic on a loaded machine, because the machine running
-CI is exactly the kind of host the product distrusts.
+How thumper tests itself. `dune runtest` runs everything but the
+`@quiet` sessions (under "Cram conventions"); no test it runs sleeps
+on host speed or asserts a timing — every suite is engineered to be
+deterministic on a loaded machine, because the machine running CI is
+exactly the kind of host the product distrusts.
 
 Three deliberate exceptions, all about subjects that *are* the clock:
 `test_clock` sleeps and compares the clock's interval with the wall
@@ -179,18 +180,18 @@ The determinism kit:
   scenarios: a dozen concurrent spinning workers would push the load
   average over the gate's threshold and the suite would flake itself
   into inconclusive.
-- **Two-leg load-tolerant scenarios.** Timing verdicts are earned only
-  on a quiet host, and CI hosts are not reliably quiet. Scenarios that
-  need a judged outcome retry behind `--wait-quiet`, then accept
-  either leg explicitly: the quiet-host outcome with its strong
-  assertions, or the specified degradation
-  (`inconclusive`, reason `environment`, exit 0) as a visible skip. A run that
-  judged on a quiet gate and still got the wrong exit code matches
-  neither leg and fails. Invariants that hold on both legs (the
-  baseline is never written; a candidate never carries regressed,
-  inconclusive, or unconfirmed evidence — a FAIL run can still write
-  one advancing a genuinely improved case) are asserted
-  unconditionally.
+- **Timing verdicts on a quiet host.** Only a quiet host earns a timing
+  verdict: under load the gate reads it inconclusive, exit 0, by
+  contract. The sessions that need one — a confirmed regression failing
+  the build, an improvement pooled across both sweeps, an unchanged
+  suite passing, noise staying inconclusive — are in
+  `test/cram/quiet/`, on the `@quiet` alias outside `@runtest`. Each
+  run, the baseline's recording too, waits up to 60 s for a quiet host
+  (`--wait-quiet 60`); the judged runs then assert the quiet-host
+  outcome alone. Run `dune build @quiet` on a
+  quiet machine before a release. `test_check` pins the same decisions
+  in process on scripted clocks; the sessions add that the real path
+  agrees.
 
 ## Docs and examples
 

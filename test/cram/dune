@@ -5,10 +5,9 @@
 ; (locks measurement) serializes the scenarios: each one runs real (if tiny)
 ; measurements, and a dozen concurrent spinning workers would push the load
 ; average over the environment gate's threshold on any host — the suite would
-; flake itself into inconclusive. Scenarios whose assertions need a quiet
-; host additionally pass --wait-quiet to ride out ambient load spikes.
+; flake itself into inconclusive. The timing verdicts, which only a quiet
+; host earns, are in quiet/, outside @runtest.
 
 (cram
- (applies_to :whole_subtree)
  (locks measurement)
  (deps prelude.sh fixture/bench_fixture.exe fixture/hold_lease.exe))

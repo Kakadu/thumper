@@ -1,0 +1,11 @@
+; Timing verdicts, which only a quiet host earns: on a loaded one the gate
+; reads them inconclusive, exit 0, by contract. These sessions are outside
+; @runtest and run with `dune build @quiet` on a quiet host, before a
+; release. Each run, the recording of the baseline too, first waits up to
+; 60 s for the host to quiet.
+
+(cram
+ (runtest_alias false)
+ (alias quiet)
+ (locks ../measurement)
+ (deps ../prelude.sh ../fixture/bench_fixture.exe))
