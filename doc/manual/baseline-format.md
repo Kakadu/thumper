@@ -8,9 +8,9 @@ a machine key and a stale section are is in the Baselines section of
 
 ## A complete file
 
-This is the baseline of `examples/02-getting-started/` after its first
-run was accepted. The transcripts on this page run the example as a
-project's `bench/` directory, and their numbers are one run's.
+This is the baseline of `examples/02-getting-started/` after `bless`
+recorded it. The transcripts on this page run the example as a project's
+`bench/` directory, and their numbers are one run's.
 
 ```
 $ cat bench/digest.thumper
@@ -127,20 +127,20 @@ Other header lines are annotations. Thumper writes one kind, the
   partial.
 
 `<load>` is the load average with one decimal and `<cores>` the host's
-core count. Here a forced `bless` re-records this machine's section of a
+core count. Here a forced `bless` records this machine's section of a
 baseline that also holds a section for the key `ci-macos`:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe -- bless --force
-thumper: digest — blessed 3 cases for machine 5c1e0a7f3b9d2486
+digest: 3 cases for machine 5c1e0a7f3b9d2486
+warning: load 32.2 on 10 cores, over 5.0; recorded under --force
 
-  proposed  204.70 ns  ±1.9%  4 w  md5/string-64
-  proposed    6.57 ns  ±1.9%  0 w  fib/10
-  proposed   10.84 ns  ±1.9%  0 w  fib/20
+  blessed  204.70 ns  ±1.9%  4 w  md5/string-64
+  blessed    6.57 ns  ±1.9%  0 w  fib/10
+  blessed   10.84 ns  ±1.9%  0 w  fib/20
 
-  warning: blessed under load 32.2 on 10 cores (--force recorded)
-  accept:  mv bench/digest.thumper.corrected bench/digest.thumper
-$ mv bench/digest.thumper.corrected bench/digest.thumper
+3 blessed into bench/digest.thumper in 0.9s.
 ```
 
 ```
@@ -172,11 +172,11 @@ md5/string-64	alloc_words	exact	4
 md5/string-64	wall_time	batch=32768	n=20	2.013e-07	1.959e-07 1.962e-07 1.963e-07 1.963e-07 1.990e-07 1.993e-07 1.993e-07 1.993e-07 1.994e-07 2.012e-07 2.014e-07 2.031e-07 2.043e-07 2.051e-07 2.054e-07 2.055e-07 2.056e-07 2.058e-07 2.060e-07 2.061e-07
 ```
 
-A full `bless`, and any write that records a missing or stale section,
-replaces the section and drops its annotations. A partial `bless` on a
-current section appends its `# forced:` line after them, and `check`
-keeps them. The reader accepts any other annotation, and
-writes keep it by the same rules.
+A `bless` of every case, and a `bless` on a missing or stale section,
+replaces the section and drops its annotations. A `bless` of some cases on
+a current section keeps them, and appends its own `# forced:` line after
+them. The reader accepts any other annotation, and `bless` keeps it by the
+same rules.
 
 ## Rows
 
@@ -197,11 +197,9 @@ TAB <samples>`, holds:
   seconds for a time metric, words for an allocation metric, and a count
   for a collection metric. A sample may be zero or negative.
 
-A row that a confirmed improvement advanced reads `n=40` under
-`Config.default` ([`Verdict.corrected`](../../lib/thumper.mli)). A `bless`
-writes all of a case's rows at one batch size. The sampled rows of one
-case hold different batch sizes when one of them was later advanced at
-another.
+`bless` records all of a case's rows from one trial, so the sampled rows
+of one case share its batch size and its `n`, which is 20 under
+`Config.default`.
 
 ## The median
 
@@ -223,10 +221,10 @@ decimal with no leading zero, and each sample printed `%.3e`. The reader
 is lenient on counts and samples. It accepts leading zeros in a count,
 and any finite sample that OCaml's `float_of_string` reads.
 
-A write keeps every line it does not replace byte for byte, number
-spellings included. The diff between a baseline and its corrected file
-therefore shows only the rows and sections that changed. Which rows a
-check advances, adds or removes is `Verdict.corrected`'s contract in
+`bless` keeps every line it does not replace byte for byte, number
+spellings included, so the diff of a `bless` shows only the rows and
+sections that changed. Which rows it replaces and removes is `bless`'s
+contract, and `Baseline.record`'s, in
 [`lib/thumper.mli`](../../lib/thumper.mli).
 
 ## Reading outcomes
@@ -257,7 +255,7 @@ A tool may rely on:
 - the fields of the header lines, of which thumper reads only the
   machine key and `# ocaml:`;
 - the ascending order of samples, rows and sections, and the median rule;
-- a write keeping every line it does not replace byte for byte.
+- a `bless` keeping every line it does not replace byte for byte.
 
 Which files thumper writes, and when, is under Files in
 [`lib/thumper.mli`](../../lib/thumper.mli).
