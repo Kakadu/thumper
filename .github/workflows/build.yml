@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# windtrap 0.2.0 is not on opam until ocaml/opam-repository#30817 merges. A
+# pin without a version takes the version opam knows (0.1.0), so the pin
+# names it. Remove this, the steps that use it and dune-project's (pin) once
+# #30817 merges.
+env:
+  WINDTRAP_PIN: windtrap.0.2.0 git+https://github.com/invariant-hq/windtrap.git#v0.2.0
+
 jobs:
   build:
     strategy:
@@ -15,15 +22,11 @@ jobs:
           # Unix-only by design (fork-per-case measurement, lockf lease).
           - ubuntu-latest
           - macos-latest
-        ocaml-compiler:
-          - 5
-        include:
-          # The lowest OCaml that thumper.opam accepts.
-          - os: ubuntu-latest
-            ocaml-compiler: "5.2"
+        # 5.2 is the lowest OCaml thumper.opam accepts.
+        ocaml-compiler: [ "5.2", "5.4", "5.5" ]
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout tree
@@ -34,31 +37,22 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
-      # The tests need windtrap 0.2.0, which is not on opam yet. A pin
-      # without a version takes the version opam already knows (0.1.0), so
-      # the pin names it.
       - name: Pin windtrap
-        run: opam pin add -n windtrap.0.2.0 git+https://github.com/invariant-hq/windtrap.git#v0.2.0
+        run: opam pin add -n ${{ env.WINDTRAP_PIN }}
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test
 
-      - name: Build and test
-        run: |
-          opam exec -- dune build
-          opam exec -- dune build @runtest
+      - name: Build
+        run: opam exec -- dune build
 
-      # The golden stats corpus's dual-use check: regenerate in memory and
-      # byte-compare against the committed file (exit 1 on drift). scipy is
-      # absent on runners; the script degrades to the byte check, which is
-      # the part CI must enforce — testing.md makes it part of the safety
-      # story for the highest-validation-risk module.
-      - name: Verify the stats corpus is generator-identical
-        run: python3 test/unit/stats/gen_stats_corpus.py
+      - name: Test
+        timeout-minutes: 20
+        run: opam exec -- dune build @runtest
 
-  # Builds and tests the package as opam does from a release tarball: the
-  # tree carries the version that dune subst wrote into it, and only the
-  # thumper package is built.
+  # Builds and tests the package as opam does from a release tarball, at the
+  # lowest declared bounds (OCaml 5.2.0, dune 3.21.0): the tree carries the
+  # version dune subst wrote, has no .git, and only thumper is built.
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -70,21 +64,78 @@ jobs:
       - name: Set-up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: "5.2.0"
+
+      - name: Install the lowest dune
+        run: opam install dune.3.21.0
 
       - name: Pin windtrap
-        run: opam pin add -n windtrap.0.2.0 git+https://github.com/invariant-hq/windtrap.git#v0.2.0
+        run: opam pin add -n ${{ env.WINDTRAP_PIN }}
 
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test
 
+      # A dependency must not have made opam upgrade dune.
+      - name: Check the lowest dune
+        run: test "$(opam exec -- dune --version)" = 3.21.0
+
       # dune subst reads the version from git describe, which sees annotated
-      # tags only. The tag stands in for a release tag and stays on the
-      # runner.
-      - name: Substitute the version as a release does
-        run: |
-          git -c user.name=ci -c user.email=ci@localhost tag -a v0.0.0 -m "Release check"
-          opam exec -- dune subst
+      # tags only; the tag stays on the runner. The tracked files, as
+      # substituted, are then copied out of the checkout, as dune-release
+      # packs them.
+      - name: Tag the release check
+        run: git -c user.name=ci -c user.email=ci@localhost tag -a v0.0.0 -m "Release check"
+
+      - name: Substitute the version
+        run: opam exec -- dune subst
+
+      - name: Check that no version placeholder is left
+        run: "! grep -rn '%%VERSION' lib"
+
+      - name: Make the release directory
+        run: mkdir -p _tarball/thumper-0.0.0
+
+      # An explicit bash runs with pipefail, so a failing git ls-files fails
+      # the step.
+      - name: Pack the release tree
+        shell: bash
+        run: git ls-files -z | tar --null -T - -cf - | tar -xf - -C _tarball/thumper-0.0.0
 
       - name: Build and test the package
+        working-directory: _tarball/thumper-0.0.0
+        timeout-minutes: 20
         run: opam exec -- dune build -p thumper @install @runtest
+
+  # Formatting, documentation and the stats corpus: one platform, since none
+  # depends on the OS.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4"
+
+      # The version .ocamlformat pins.
+      - name: Install ocamlformat and odoc
+        run: opam install ocamlformat.0.29.0 odoc
+
+      - name: Check formatting
+        run: opam exec -- dune build @fmt
+
+      # The root dune file makes odoc warnings fatal in the dev profile.
+      - name: Build the documentation
+        run: opam exec -- dune build @doc
+
+      # The golden stats corpus's dual-use check: regenerate in memory and
+      # byte-compare against the committed file (exit 1 on drift). scipy is
+      # absent on runners; the script degrades to the byte check, which is
+      # the part CI must enforce — testing.md makes it part of the safety
+      # story for the highest-validation-risk module.
+      - name: Verify the stats corpus is generator-identical
+        run: python3 test/unit/stats/gen_stats_corpus.py
