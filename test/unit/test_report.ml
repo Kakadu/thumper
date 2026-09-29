@@ -478,8 +478,8 @@ let check_states =
       default_budget;
     check "improved" "an improvement prints its interval" improvement;
     check "within-budget"
-      "within budget prints the interval, or the estimate of a change, and the \
-       budget"
+      "a pass within budget reads passed, with the interval, or the estimate \
+       of a change, and the budget"
       within_budget;
     check "unconfirmed" "an unconfirmed regression names its reason" unconfirmed;
     check "exact-regressed"

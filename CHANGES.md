@@ -29,9 +29,8 @@ alone and is distributed under the ISC license.
   value (`at_most`).
 - Sampled evidence compared by rank statistics, where a regression or
   improvement counts only when a second trial of the case reproduces it.
-- A sampled comparison that passes as `within budget` when its interval
-  ends within the budget; `inconclusive: wide interval` means the noise
-  exceeds the budget.
+- A sampled comparison that passes when its interval ends within the
+  budget; `inconclusive: wide interval` means the noise exceeds the budget.
 - Exact allocation counts, compared as integers when a probe proves that a
   case allocates the same number of words on every call; the probe runs at
   the baseline's batch size.

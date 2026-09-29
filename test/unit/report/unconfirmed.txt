@@ -1,6 +1,6 @@
 thumper: digest — 1 case vs digest.thumper for machine testkey
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
-      unconfirmed; equivalent (alloc exact)
+      unconfirmed
 
   1 case: 0 passed, 1 inconclusive.

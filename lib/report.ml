@@ -311,11 +311,11 @@ let budget_str (mr : Verdict.metric_report) =
   | Budget.Absolute_max v -> "cap " ^ cap_str mr.metric v
 
 (* [(rank, fragment)], the rank ordering fragments most severe first: 0
-   REGRESSED, 1 inconclusive, 2 improved, 3 within budget, 4 proposed, 5 the
-   exact-equal reassurance. A metric that fails its case ranks 0 and one that
-   is inconclusive 1, so the most severe fragment is the case's outcome
-   ([Verdict.case_overall]). A regression and a relation within budget name
-   the budget that judged them. *)
+   REGRESSED, 1 inconclusive, 2 improved, 3 passed with a shift within its
+   budget, 4 proposed. A metric that fails its case ranks 0 and one that is
+   inconclusive 1, so the most severe fragment is the case's outcome
+   ([Verdict.case_overall]). A regression and a
+   relation within budget name the budget that judged them. *)
 let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
     =
   let m = mr.metric in
@@ -350,12 +350,12 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
   | Verdict.Judged (Verdict.Improved strong), _ ->
       Some (2, frag ~style:`Green "improved" (tagged (strong_detail strong)))
   | Verdict.Judged (Verdict.Within_budget s), _ ->
-      Some (3, frag "within budget" (tagged (interval s ^ "  " ^ budget_str mr)))
+      Some (3, frag "passed" (tagged (interval s ^ "  " ^ budget_str mr)))
   | Verdict.Judged (Verdict.Changed_within_budget s), _ ->
       Some
         ( 3,
-          frag "within budget"
-            (tagged (pct s.Verdict.estimate ^ "  " ^ budget_str mr)) )
+          frag "passed" (tagged (pct s.Verdict.estimate ^ "  " ^ budget_str mr))
+        )
   | Verdict.Judged (Verdict.Inconclusive { reason; shift }), None ->
       (* Under load the estimate is printed as information. *)
       let reason =
@@ -370,18 +370,6 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
           else frag ~style:`Yellow "inconclusive" (metric_tag m ^ ": " ^ reason)
         )
   | Verdict.Judged (Verdict.Equivalent _), _ -> None
-
-(* The reassurance exception: when the cell is otherwise non-pass, an
-   exact-equal metric's earned verdict stays visible. *)
-let reassurance_of ~primary (c : Verdict.case_report)
-    (mr : Verdict.metric_report) =
-  match mr.verdict with
-  | Verdict.Judged (Verdict.Equivalent None) when not primary -> (
-      match Run.Trial.measurement c.trial mr.metric with
-      | Some (Run.Exact _) ->
-          Some (5, frag "equivalent" (strf "(%s exact)" (metric_tag mr.metric)))
-      | Some (Run.Samples _) | None -> None)
-  | _ -> None
 
 let check_cell (c : Verdict.case_report) =
   let primary_metric =
@@ -409,27 +397,17 @@ let check_cell (c : Verdict.case_report) =
         (fun mr -> fragment_of ~primary:(is_primary mr) c mr)
         c.reports
     in
-    let non_pass = List.exists (fun (rank, _) -> rank <= 1) notable in
-    let reassure =
-      if non_pass then
-        List.filter_map
-          (fun mr -> reassurance_of ~primary:(is_primary mr) c mr)
-          c.reports
-      else []
-    in
     let ranked =
       List.map snd
-        (List.stable_sort
-           (fun (a, _) (b, _) -> Int.compare a b)
-           (notable @ reassure))
+        (List.stable_sort (fun (a, _) (b, _) -> Int.compare a b) notable)
     in
     match ranked with
-    | [] -> [ frag ~style:`Faint "equivalent" "" ]
+    | [] -> [ frag ~style:`Faint "passed" "" ]
     (* Only a non-time metric is proposed with a detail. Its case passes and
-       no compared relation opens the row, so the row reads [equivalent]
-       before naming what is proposed. *)
+       no compared relation opens the row, so the row reads [passed] before
+       naming what is proposed. *)
     | ({ word = "proposed"; detail; _ } as f) :: rest when detail <> "" ->
-        frag ~style:`Faint "equivalent" "" :: f :: rest
+        frag ~style:`Faint "passed" "" :: f :: rest
     | ranked -> ranked
 
 (* The report *)

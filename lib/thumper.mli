@@ -458,10 +458,11 @@ val run :
     cases [proposed] when no metric has a baseline row, [improved] when its row
     opens on [improved], and [passed] otherwise. A row opens on its case's
     outcome: [REGRESSED] when the case fails, [inconclusive] when a metric is
-    inconclusive, and a passing word otherwise. The row's other relations follow
-    on its detail line, and a regression or a relation within budget names its
-    budget. The summary ends with [; failed under --strict] when [--strict]
-    alone made the run exit 1. *)
+    inconclusive, and otherwise the passing word [improved], [proposed], or
+    [passed] for the relations equivalent and within budget. The row's other
+    relations follow on its detail line, and a regression or a relation within
+    budget names its budget. The summary ends with [; failed under --strict]
+    when [--strict] alone made the run exit 1. *)
 
 (** {2:files Files}
 
