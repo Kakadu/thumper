@@ -41,10 +41,9 @@ including a budget on an uncollected metric and the default, are under
 Inheritance in the Defining benchmarks section of
 [`lib/thumper.mli`](../../lib/thumper.mli).
 
-A time row whose interval lies within the equivalence band reads
-`equivalent`. A time row whose interval shows a slowdown that the budget
-allows reads `within budget`, with the estimate and the interval. Both
-pass. Under `no_more_alloc_than 0.`, one word more fails the case.
+The conditions under which a budgeted row reads `equivalent`, `within
+budget`, `improved` or `regressed` are under Budgets in
+[`lib/thumper.mli`](../../lib/thumper.mli).
 
 The first run of the example writes a corrected file, `mv` accepts it,
 and the second run judges every row against it:
@@ -280,14 +279,15 @@ To change how every case is measured, pass `run` a `~config` built from
 the setter by the problem:
 - A row reads `inconclusive: wide interval`: take more samples with
   `Config.samples`, or `--precise` for one run, or loosen the budget.
-  With `Config.samples` below 10, no trial is found drifted.
-- A row reads `inconclusive: non-positive sample`: a sample was zero or
-  negative, as a `cpu_time` sample is when a batch takes less than one
-  tick of the CPU clock. Raise the batch floor with `Config.batch_floor`, or
-  budget `wall_time` in its place; more samples do not help.
+- A row reads `inconclusive: non-positive sample`
+  ([reasons](report.md#inconclusive-reasons)): raise the batch floor with
+  `Config.batch_floor`, or budget `wall_time` in its place; more samples do
+  not help.
 - A case is killed at its deadline, 10 s by default: raise it with
   `Config.deadline`.
 - To collect another metric, use `Config.metrics`, as above.
+
+With `Config.samples` below 10, no trial is found drifted.
 
 The other setters and their ranges are under Configuration in
 [`lib/thumper.mli`](../../lib/thumper.mli).
