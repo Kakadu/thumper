@@ -6,8 +6,8 @@
 (* Stats test suite.
 
    Three layers:
-   - the committed golden corpus (test/unit/golden/stats.tsv), generated and
-     scipy-cross-checked by test/tools/gen_stats_corpus.py. Quantities that
+   - the committed golden corpus (test/unit/stats/stats.tsv), generated and
+     scipy-cross-checked by test/unit/stats/gen_stats_corpus.py. Quantities that
      are order-statistic-exact (medians, interval endpoints, HL estimates,
      counts, booleans) are compared bit-for-bit; libm-dependent quantities
      (geomean) and big-count quotients (mw_p) with a principled tolerance;
@@ -45,7 +45,7 @@ let vec s =
   String.split_on_char ',' s |> List.map float_of_string |> Array.of_list
 
 let golden_tests () =
-  let lines = read_lines "golden/stats.tsv" in
+  let lines = read_lines "stats/stats.tsv" in
   let tests = ref [] in
   List.iteri
     (fun i line ->

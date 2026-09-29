@@ -100,7 +100,7 @@
 
 (test
  (name test_stats)
- ; The golden corpus is a runtime dependency.
+ ; The corpus is a runtime dependency.
  (modules test_stats)
  (libraries thumper windtrap)
- (deps golden/stats.tsv))
+ (deps stats/stats.tsv))

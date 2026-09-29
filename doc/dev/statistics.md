@@ -166,9 +166,9 @@ Every constant is a named top-level `let` in its owner module.
 
 ## Guardrails when changing `stats.ml`
 
-The golden corpus (`test/unit/golden/stats.tsv`) pins every function
+The golden corpus (`test/unit/stats/stats.tsv`) pins every function
 against scipy-cross-checked reference values and must be regenerated,
-with `uv run test/tools/gen_stats_corpus.py --write`, whenever the
+with `uv run test/unit/stats/gen_stats_corpus.py --write`, whenever the
 method changes. The byte-identity rule and the hand-derived anchor
 layer that catches boundary-convention mutations are described in
 [`testing.md`](testing.md). One convention to know before you read

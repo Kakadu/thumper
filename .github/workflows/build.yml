@@ -54,7 +54,7 @@ jobs:
       # the part CI must enforce — testing.md makes it part of the safety
       # story for the highest-validation-risk module.
       - name: Verify the stats corpus is generator-identical
-        run: python3 test/tools/gen_stats_corpus.py
+        run: python3 test/unit/stats/gen_stats_corpus.py
 
   # Builds and tests the package as opam does from a release tarball: the
   # tree carries the version that dune subst wrote into it, and only the

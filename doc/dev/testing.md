@@ -48,8 +48,8 @@ command line, single write path, honest exits) are cram scenarios.
 no OCaml reference. Its suite has three layers (see the header of
 `test/unit/test_stats.ml`):
 
-1. **The committed corpus** — `test/unit/golden/stats.tsv`, generated and
-   scipy-cross-checked by `test/tools/gen_stats_corpus.py`.
+1. **The committed corpus** — `test/unit/stats/stats.tsv`, generated and
+   scipy-cross-checked by `gen_stats_corpus.py` beside it.
    Order-statistic-exact quantities (medians, interval endpoints, HL
    estimates, counts, booleans) are compared bit-for-bit;
    libm-dependent quantities with a principled tolerance.
@@ -60,11 +60,13 @@ no OCaml reference. Its suite has three layers (see the header of
    enumeration of rank arrangements, independent of both the
    implementation and the generator.
 
-The generator is dual-use: `uv run test/tools/gen_stats_corpus.py`
+The generator is dual-use. `python3 test/unit/stats/gen_stats_corpus.py`
 verifies that a fresh in-memory regeneration is **byte-identical** to
-the committed file and runs the scipy cross-checks; `--write`
-regenerates. Regenerate whenever the statistical method changes, and
-read the diff as a code change.
+the committed file; it needs no scipy, and CI runs it.
+`uv run test/unit/stats/gen_stats_corpus.py --write` regenerates the
+file and runs the scipy cross-checks, which uv installs. Regenerate
+whenever the statistical method changes, and read the diff as a code
+change.
 
 **The mutation practice.** The corpus generator and `stats.ml` mirror
 each other's construction, so a shared misconception passes layer 1 —
