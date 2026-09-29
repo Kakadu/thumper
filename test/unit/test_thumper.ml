@@ -3,325 +3,343 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Public-surface integration tests for the [Thumper] facade.
-
-   Everything here goes through the public API only: authoring constructors,
-   config and budget validation, [Thumper.measure] as a real measurement, and
-   the gate flow (read a baseline, [Check.run], [Verdict.corrected],
-   [Baseline.write]) against a synthetic file. Measurement assertions are
-   about evidence SHAPES — sample counts, exact integers, batch sizes — never
-   about timings. *)
+(* What only the facade shows: that its values are the internal ones, that
+   each refuses under the name a user calls it by, that [run] returns its exit
+   code, and that the documented examples compile and run. What each value
+   does is its owner suite's. The two tests that measure are [slow] and read
+   nothing a timing can move. *)
 
 open Windtrap
 
-let invalid fn =
-  raises_match (function Invalid_argument _ -> true | _ -> false) fn
+(* The stated environment: this machine is [thumpertest], and the lock lives
+   in the test's own directory. *)
+let machine = "thumpertest"
 
-let check_error fn =
-  raises_match
-    (function Thumper.Check.Error _ -> true | _ -> false)
-    (fun () -> ignore (fn ()))
+let state_env () =
+  setenv "THUMPER_MACHINE" (Some machine);
+  setenv "THUMPER_LOCK_DIR" (Some (temp_dir ()));
+  List.iter
+    (fun v -> setenv v None)
+    [
+      "INSIDE_DUNE";
+      "DUNE_SOURCEROOT";
+      "CI";
+      "GITHUB_ACTIONS";
+      "NO_COLOR";
+      "TERM";
+    ]
 
-let contains ~sub s =
-  let n = String.length s and m = String.length sub in
-  let rec go i = i + m <= n && (String.sub s i m = sub || go (i + 1)) in
-  go 0
+(* The message of the [Invalid_argument] that [f ()] raises. *)
+let refusal f =
+  match f () with
+  | () -> failf "no Invalid_argument raised"
+  | exception Invalid_argument m -> m
 
-(* The machine key must be deterministic before anything consults it: the
-   override is read from the environment on every call, and worker forks
-   inherit it harmlessly. *)
-let machine = "thumperfacadetest"
-let () = Unix.putenv "THUMPER_MACHINE" machine
-
-(* Authoring constructors *)
-
-let black_box_is_identity () =
-  let r = ref 7 in
-  is_true ~msg:"physical identity on a boxed value" (Thumper.black_box r == r);
-  equal ~msg:"identity on an immediate" int 42 (Thumper.black_box 42)
-
-let empty_names_raise_everywhere () =
-  invalid (fun () -> ignore (Thumper.bench "" (fun () -> ())));
-  invalid (fun () ->
-      ignore (Thumper.bench_with_setup "" ~setup:(fun () -> ()) (fun () -> ())));
-  invalid (fun () -> ignore (Thumper.group "" []));
-  (* An explicit id does not lift the requirement: the display name always
-     renders. *)
-  invalid (fun () -> ignore (Thumper.bench ~id:"ok" "" (fun () -> ())))
-
-let explicit_id_must_be_one_valid_segment () =
-  invalid (fun () -> ignore (Thumper.bench ~id:"has space" "n" (fun () -> ())));
-  invalid (fun () -> ignore (Thumper.bench ~id:"a/b" "n" (fun () -> ())));
-  invalid (fun () -> ignore (Thumper.group ~id:"" "n" []))
-
-let unsluggable_name_raises () =
-  (* No [A-Za-z0-9._-] characters at all: nothing to derive an id from. *)
-  invalid (fun () -> ignore (Thumper.bench " () " (fun () -> ())))
-
-let metric_list_overrides_are_validated () =
-  invalid (fun () -> ignore (Thumper.bench ~metrics:[] "n" (fun () -> ())));
-  invalid (fun () ->
-      ignore
-        (Thumper.bench
-           ~metrics:[ Thumper.Metric.wall_time; Thumper.Metric.wall_time ] "n"
-           (fun () -> ())))
-
-let duplicate_budgets_for_one_metric_raise () =
-  invalid (fun () ->
-      ignore
-        (Thumper.bench
-           ~budgets:
-             [
-               Thumper.Budget.no_slower_than 0.05;
-               Thumper.Budget.no_slower_than 0.10;
-             ]
-           "n"
-           (fun () -> ())))
-
-(* Budgets *)
-
-let budget_tolerances_are_validated () =
-  invalid (fun () -> ignore (Thumper.Budget.no_slower_than (-0.1)));
-  invalid (fun () -> ignore (Thumper.Budget.no_slower_than Float.nan));
-  invalid (fun () ->
-      ignore (Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words (-1.)))
-
-let band_never_exceeds_its_budget () =
-  invalid (fun () ->
-      ignore
-        (Thumper.Budget.relative ~metric:Thumper.Metric.wall_time
-           ~equivalent_within:0.10 ~max_regression:0.05 ()));
-  (* Equal is legal, and so is zero for both. *)
-  let _ : Thumper.Budget.t =
-    Thumper.Budget.relative ~metric:Thumper.Metric.wall_time
-      ~equivalent_within:0.05 ~max_regression:0.05 ()
-  in
-  let _ : Thumper.Budget.t = Thumper.Budget.no_more_alloc_than 0.0 in
-  is_true true
-
-(* Configuration *)
-
-let config_chain_builds () =
-  let _ : Thumper.Config.t =
-    Thumper.Config.(
-      default |> samples 30 |> deadline 60. |> warmup 0.2 |> batch_floor 0.001
-      |> metrics [ Thumper.Metric.wall_time ])
-  in
-  is_true true
-
-let config_setters_are_validated () =
-  let open Thumper.Config in
-  invalid (fun () -> ignore (samples 2 default));
-  invalid (fun () -> ignore (batch_floor 0. default));
-  invalid (fun () -> ignore (batch_floor infinity default));
-  invalid (fun () -> ignore (warmup (-1.) default));
-  invalid (fun () -> ignore (deadline 0. default));
-  invalid (fun () -> ignore (deadline Float.nan default));
-  invalid (fun () -> ignore (metrics [] default));
-  invalid (fun () ->
-      ignore
-        (metrics [ Thumper.Metric.wall_time; Thumper.Metric.wall_time ] default))
-
-(* Measurement through the facade
-
-   A real 2-case measurement under [Config.quick] (~0.5 s). Both cases are
-   deterministic allocators, so the exactness probe must prove their per-call
-   word counts; the wall-time evidence is asserted by shape only. *)
+(* Each row's call raises [Invalid_argument] whose message starts with the
+   facade name of the value called. The words are the owner's. *)
+let refuses rows =
+  cases ~timeout:30.
+    ~name:(fun (name, _, _) -> name)
+    "each refusal names the value as the facade calls it" rows
+    (fun (_, call, affix) ->
+      state_env ();
+      starts_with ~affix (refusal call))
 
 let suite =
   [
     Thumper.group "facade"
       [
-        Thumper.bench ~tags:[ "lab" ] "alloc2" (fun () -> ref 0);
-        Thumper.bench "str8" (fun () -> String.make 8 'x');
+        Thumper.bench ~tags:[ "lab" ] "ref" (fun () -> ref 0);
+        Thumper.bench "noop" ignore;
       ];
   ]
 
-let measured =
-  fixture (fun () -> Thumper.measure ~config:Thumper.Config.quick suite)
+let wall = Thumper.Metric.wall_time
+let two_budgets = Thumper.Budget.[ no_slower_than 0.05; no_slower_than 0.1 ]
 
-let measure_yields_authoring_order_ids () =
-  equal (list string)
-    [ "facade/alloc2"; "facade/str8" ]
-    (Thumper.Run.case_ids (measured ()))
+(* Budgets *)
 
-let samples_have_quick_shape () =
-  let run = measured () in
-  List.iter
-    (fun case ->
-      match Thumper.Run.samples run ~case Thumper.Metric.wall_time with
-      | None -> failf "%s: no wall_time samples" case
-      | Some s ->
-          equal ~msg:(case ^ ": n") int 11 (Array.length s);
-          Array.iteri
-            (fun i v ->
-              if not (Float.is_finite v && v >= 0.) then
-                failf "%s: sample %d not finite non-negative: %g" case i v;
-              if i > 0 && s.(i - 1) > v then
-                failf "%s: samples not sorted at %d" case i)
-            s)
-    [ "facade/alloc2"; "facade/str8" ]
-
-let run_warnings_are_reachable () =
-  let run = measured () in
-  (* The facade projection exists and answers for measured and unmeasured
-     cases alike; these tiny closures may or may not warn, so only the shape
-     is pinned — the warning texts are measure's own. *)
-  ignore (Thumper.Run.warnings run ~case:"facade/alloc2" : string list);
-  equal ~msg:"unmeasured case warns nothing" (list string) []
-    (Thumper.Run.warnings run ~case:"nosuch")
-
-let deterministic_allocators_prove_exact_words () =
-  let run = measured () in
-  (* [ref 0] is one header + one field; [String.make 8 'x'] is one header +
-     two data words (8 bytes + length padding) on a 64-bit runtime. *)
-  equal ~msg:"ref 0" (option int) (Some 2)
-    (Thumper.Run.exact run ~case:"facade/alloc2" Thumper.Metric.alloc_words);
-  equal ~msg:"String.make 8" (option int) (Some 3)
-    (Thumper.Run.exact run ~case:"facade/str8" Thumper.Metric.alloc_words);
-  (* Exact evidence and sampled evidence are exclusive projections. *)
-  is_none
-    (Thumper.Run.samples run ~case:"facade/alloc2" Thumper.Metric.alloc_words)
-
-let duplicate_ids_surface_as_check_errors () =
-  check_error (fun () ->
-      Thumper.measure
+let budgets =
+  group "Budgets"
+    [
+      refuses
         [
-          Thumper.bench "dup" (fun () -> ()); Thumper.bench "dup" (fun () -> ());
-        ])
+          ( "relative with a band over its budget",
+            (fun () ->
+              ignore
+                (Thumper.Budget.relative ~metric:wall ~equivalent_within:0.1
+                   ~max_regression:0.05 ())),
+            "Thumper.Budget.relative: " );
+          ( "no_slower_than -0.1",
+            (fun () -> ignore (Thumper.Budget.no_slower_than (-0.1))),
+            "Thumper.Budget.no_slower_than: " );
+          ( "no_slower_than nan",
+            (fun () -> ignore (Thumper.Budget.no_slower_than Float.nan)),
+            "Thumper.Budget.no_slower_than: " );
+          ( "no_more_alloc_than -1",
+            (fun () -> ignore (Thumper.Budget.no_more_alloc_than (-1.))),
+            "Thumper.Budget.no_more_alloc_than: " );
+          ( "at_most -1",
+            (fun () ->
+              ignore
+                (Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words (-1.))),
+            "Thumper.Budget.at_most: " );
+        ];
+    ]
 
-let empty_selection_is_an_error () =
-  check_error (fun () -> Thumper.measure ~filter:(`Or []) suite)
+(* Configuration *)
 
-(* The gate flow
+let configuration =
+  let d = Thumper.Config.default in
+  group "Configuration"
+    [
+      refuses
+        [
+          ( "samples 2",
+            (fun () -> ignore (Thumper.Config.samples 2 d)),
+            "Thumper.Config.samples: " );
+          ( "batch_floor 0",
+            (fun () -> ignore (Thumper.Config.batch_floor 0. d)),
+            "Thumper.Config.batch_floor: " );
+          ( "batch_floor infinity",
+            (fun () -> ignore (Thumper.Config.batch_floor infinity d)),
+            "Thumper.Config.batch_floor: " );
+          ( "warmup -1",
+            (fun () -> ignore (Thumper.Config.warmup (-1.) d)),
+            "Thumper.Config.warmup: " );
+          ( "deadline 0",
+            (fun () -> ignore (Thumper.Config.deadline 0. d)),
+            "Thumper.Config.deadline: " );
+          ( "deadline nan",
+            (fun () -> ignore (Thumper.Config.deadline Float.nan d)),
+            "Thumper.Config.deadline: " );
+          ( "metrics []",
+            (fun () -> ignore (Thumper.Config.metrics [] d)),
+            "Thumper.Config.metrics: " );
+          ( "metrics naming wall_time twice",
+            (fun () -> ignore (Thumper.Config.metrics [ wall; wall ] d)),
+            "Thumper.Config.metrics: " );
+        ];
+    ]
 
-   The programmatic gate against a synthetic baseline that has a section for
-   another machine only: this machine's section is NEW, so the flow must exit
-   0, propose a candidate adding this machine's section, and byte-preserve
-   the other machine's section. *)
+(* Defining benchmarks *)
 
-let other_section_row = "facade/alloc2\talloc_words\texact\t2"
+let f () = ()
 
-let synthetic_baseline =
-  "# thumper baseline v1\n\
-   # suite: facade\n\n\
-   # machine: otherkey\n\
-   # host: other-host\n\
-   # ocaml: 5.4.0 64-bit release\n\n" ^ other_section_row ^ "\n"
+let defining_benchmarks =
+  group "Defining benchmarks"
+    [
+      refuses
+        [
+          ( "bench with an empty name",
+            (fun () -> ignore (Thumper.bench "" f)),
+            "Thumper.bench: " );
+          ( "bench_with_setup with an empty name",
+            (fun () -> ignore (Thumper.bench_with_setup "" ~setup:f f)),
+            "Thumper.bench_with_setup: " );
+          ( "group with an empty name",
+            (fun () -> ignore (Thumper.group "" [])),
+            "Thumper.group: " );
+          ( "an empty name beside a valid id",
+            (fun () -> ignore (Thumper.bench ~id:"ok" "" f)),
+            "Thumper.bench: " );
+          ( "an id with a space",
+            (fun () -> ignore (Thumper.bench ~id:"has space" "n" f)),
+            "Thumper.bench: " );
+          ( "an id with a slash",
+            (fun () -> ignore (Thumper.bench ~id:"a/b" "n" f)),
+            "Thumper.bench: " );
+          ( "an empty group id",
+            (fun () -> ignore (Thumper.group ~id:"" "n" [])),
+            "Thumper.group: " );
+          ( "a name with nothing to slug",
+            (fun () -> ignore (Thumper.bench " () " f)),
+            "Thumper.bench: " );
+          ( "an empty metrics list",
+            (fun () -> ignore (Thumper.bench ~metrics:[] "n" f)),
+            "Thumper.bench: " );
+          ( "a metric named twice",
+            (fun () -> ignore (Thumper.bench ~metrics:[ wall; wall ] "n" f)),
+            "Thumper.bench: " );
+          ( "two budgets for one metric",
+            (fun () -> ignore (Thumper.bench ~budgets:two_budgets "n" f)),
+            "Thumper.bench: " );
+          ( "two budgets for one metric in bench_with_setup",
+            (fun () ->
+              ignore
+                (Thumper.bench_with_setup ~budgets:two_budgets "n" ~setup:f f)),
+            "Thumper.bench_with_setup: " );
+          ( "two budgets for one metric in a group",
+            (fun () -> ignore (Thumper.group ~budgets:two_budgets "n" [])),
+            "Thumper.group: " );
+        ];
+      test "black_box is Bench's" (fun () ->
+          is_true (Thumper.black_box == Thumper.Private.Bench.black_box));
+    ]
 
-let with_synthetic_file f =
-  let path = Filename.temp_file "thumper_facade" ".thumper" in
-  Fun.protect
-    ~finally:(fun () ->
-      (try Sys.remove path with Sys_error _ -> ());
-      try Sys.remove (path ^ ".corrected") with Sys_error _ -> ())
-    (fun () ->
-      Out_channel.with_open_bin path (fun oc ->
-          Out_channel.output_string oc synthetic_baseline);
-      f path)
+(* Running benchmarks *)
 
-(* The first [batch=] value in [text], or -1. *)
-let first_batch_k text =
-  let key = "batch=" in
-  let rec find i =
-    if i + String.length key > String.length text then None
-    else if String.sub text i (String.length key) = key then
-      Some (i + String.length key)
-    else find (i + 1)
+(* The argv that would be a usage error if [run] read it: a refusal raised
+   under it was raised before [run] read it. *)
+let usage_error = [| "bench"; "--quick"; "--precise" |]
+
+(* [list] and a usage error measure nothing, and an invalid suite stops before
+   measuring. *)
+let exit_codes =
+  let dup = [ Thumper.bench "dup" f; Thumper.bench "dup" f ] in
+  [
+    ("list is 0", [| "bench"; "list" |], suite, 0);
+    ("a usage error is 2", usage_error, suite, 2);
+    ("an invalid suite's check is 2", [| "bench"; "check" |], dup, 2);
+  ]
+
+(* Every subcommand starts by removing the corrected file an earlier run
+   left, so [list] shows which baseline [run] was given. *)
+let the_baseline_reaches_the_command_line () =
+  state_env ();
+  let baseline = Filename.concat (temp_dir ()) "facade.thumper" in
+  let corrected = baseline ^ ".corrected" in
+  Out_channel.with_open_bin corrected ignore;
+  equal int 0 (Thumper.run ~baseline ~argv:[| "bench"; "list" |] "facade" suite);
+  is_false (Sys.file_exists corrected)
+
+let running_benchmarks =
+  group "Running benchmarks"
+    [
+      refuses
+        [
+          ( "an empty name",
+            (fun () -> ignore (Thumper.run ~argv:usage_error "" suite)),
+            "Thumper.run: " );
+          ( "a two-line name",
+            (fun () -> ignore (Thumper.run ~argv:usage_error "a\nb" suite)),
+            "Thumper.run: " );
+          ( "two budgets for one metric",
+            (fun () ->
+              ignore
+                (Thumper.run ~budgets:two_budgets ~argv:usage_error "facade"
+                   suite)),
+            "Thumper.run: " );
+        ];
+      cases ~timeout:30.
+        ~name:(fun (name, _, _, _) -> name)
+        "run returns the exit code" exit_codes
+        (fun (_, argv, benches, code) ->
+          state_env ();
+          let baseline = Filename.concat (temp_dir ()) "facade.thumper" in
+          equal int code (Thumper.run ~baseline ~argv "facade" benches));
+      test "run's baseline names the file whose corrected file list removes"
+        the_baseline_reaches_the_command_line;
+    ]
+
+(* Measuring *)
+
+(* [ref 0] allocates a header and one field, so its count is exact whatever
+   the host's load. *)
+let measure_on_its_defaults () =
+  state_env ();
+  let config = Thumper.Config.(default |> samples 3) in
+  let run = Thumper.measure ~config ~filter:(`Tag "lab") suite in
+  equal (list string) [ "facade/ref" ] (Thumper.Run.case_ids run);
+  equal (option int) (Some 3)
+    (Option.map Array.length (Thumper.Run.samples run ~case:"facade/ref" wall));
+  equal (option int) (Some 2)
+    (Thumper.Run.exact run ~case:"facade/ref" Thumper.Metric.alloc_words)
+
+(* The suite is [Check.pp_error]'s example. *)
+let an_invalid_suite_raises_check_error () =
+  state_env ();
+  let dup =
+    [ Thumper.group "a" [ Thumper.bench "b" f; Thumper.bench "b" f ] ]
   in
-  match find 0 with
-  | None -> -1
-  | Some start ->
-      let stop = String.index_from text start '\t' in
-      int_of_string (String.sub text start (stop - start))
-
-let gate_flow_against_synthetic_file () =
-  with_synthetic_file @@ fun path ->
-  let file = Option.get (Thumper.Baseline.read_exn path) in
-  equal ~msg:"suite header" (option string) (Some "facade")
-    (Thumper.Baseline.suite file);
-  let key = Thumper.Baseline.machine_key () in
-  equal ~msg:"THUMPER_MACHINE override" string machine key;
-  is_false ~msg:"no section for this machine"
-    (List.mem key (Thumper.Baseline.machines file));
-  let v =
-    Thumper.Check.run ~config:Thumper.Config.quick
-      ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-      ~filter:(`Tag "lab") ~baseline:file "facade" suite
+  let e =
+    require_match
+      (fun () ->
+        match Thumper.measure dup with
+        | _ -> None
+        | exception Thumper.Check.Error e -> Some e)
+      ()
   in
-  equal ~msg:"NEW is exit 0" int 0 (Thumper.Verdict.exit_code v);
-  equal ~msg:"NEW is exit 1 under strict" int 1
-    (Thumper.Verdict.exit_code ~strict:true v);
-  is_true ~msg:"overall observer agrees with the JSON"
-    (Thumper.Verdict.overall v = `Pass);
-  let json = Thumper.Verdict.to_json v in
-  is_true ~msg:"overall pass" (contains ~sub:"\"overall\":\"pass\"" json);
-  is_true ~msg:"NEW row reason"
-    (contains ~sub:"\"reason\":\"missing_baseline\"" json);
-  is_true ~msg:"NEW row status is pass"
-    (contains ~sub:"\"status\":\"pass\"" json);
-  is_true ~msg:"machine field" (contains ~sub:machine json);
-  match Thumper.Verdict.corrected v with
-  | None -> fail "a NEW section must yield a candidate"
-  | Some corrected ->
-      let out = path ^ ".corrected" in
-      Thumper.Baseline.write out corrected;
-      (match Thumper.Baseline.read out with
-      | Error _ | Ok None -> fail "the written candidate must re-read"
-      | Ok (Some f) ->
-          equal ~msg:"sections" (list string) [ "otherkey"; machine ]
-            (Thumper.Baseline.machines f));
-      let text = In_channel.with_open_bin out In_channel.input_all in
-      is_true ~msg:"other machine's header preserved"
-        (contains ~sub:"# host: other-host" text);
-      is_true ~msg:"other machine's row preserved"
-        (contains ~sub:(other_section_row ^ "\n") text);
-      is_true ~msg:"selected case proposed"
-        (contains ~sub:"facade/alloc2\twall_time\tbatch=" text);
-      is_false ~msg:"unselected case not measured" (contains ~sub:"str8" text);
-      is_true ~msg:"frozen batch size k >= 1" (first_batch_k text >= 1);
-      is_true ~msg:"proposed rows carry quick's n"
-        (contains ~sub:"\tn=11\t" text)
+  equal string "duplicate case id 'a/b' (rename the case or pass ~id)"
+    (Format.asprintf "%a" Thumper.Check.pp_error e)
 
-let read_distinguishes_absent () =
-  match Thumper.Baseline.read "/nonexistent/thumper/facade.thumper" with
-  | Ok None -> ()
-  | Error e -> failf "expected Ok None, got: %a" Thumper.Baseline.pp_error e
-  | Ok (Some _) -> fail "read a baseline from an absent file"
+let measuring =
+  group "Measuring"
+    [
+      slow ~timeout:30. "measure on its defaults samples 3 and proves ref exact"
+        measure_on_its_defaults;
+      test "measure raises Check.Error on an invalid suite"
+        an_invalid_suite_raises_check_error;
+    ]
 
-let candidate_over_headerless_file_takes_the_name () =
-  (* The header-less (zero-byte) baseline has no [# suite:] line: the fresh
-     candidate over it is headed by [Check.run]'s required name. *)
-  let path = Filename.temp_file "thumper_facade_empty" ".thumper" in
-  Fun.protect
-    ~finally:(fun () -> try Sys.remove path with Sys_error _ -> ())
-    (fun () ->
-      let file = Option.get (Thumper.Baseline.read_exn path) in
-      is_none ~msg:"empty file has no suite header"
-        (Thumper.Baseline.suite file);
-      let v =
-        Thumper.Check.run ~config:Thumper.Config.quick ~filter:(`Id "alloc2")
-          ~baseline:file "facade" suite
-      in
-      match Thumper.Verdict.corrected v with
-      | None -> fail "a first run must yield a candidate"
-      | Some f ->
-          equal ~msg:"the candidate is headed by the run's name" (option string)
-            (Some "facade") (Thumper.Baseline.suite f))
+(* Baselines *)
 
-(* Published-surface pins — compile-only
+let baselines =
+  group "Baselines"
+    [
+      test "machine_key is Env's" (fun () ->
+          is_true
+            (Thumper.Baseline.machine_key == Thumper.Private.Env.machine_key));
+      refuses
+        [
+          ( "machine_key with THUMPER_MACHINE holding a space",
+            (fun () ->
+              setenv "THUMPER_MACHINE" (Some "bad key");
+              ignore (Thumper.Baseline.machine_key ())),
+            "THUMPER_MACHINE: " );
+        ];
+    ]
 
-   [Facade_examples] holds the facade's two examples verbatim (the check
-   example's free variable bound locally), and pins the labels they leave out
-   beside them. Never executed: the examples measure and exit. They must always
-   compile: they pin the published surface, labels and all, including that
-   [Check.run] needs no [~config] and [bench] no [~note]. *)
+(* Checking *)
 
-module Facade_examples : sig end = struct
-  open Thumper
+(* A baseline whose header names [suite], with no section. *)
+let baseline_of_suite suite =
+  let path = temp_file ~suffix:".thumper" () in
+  Out_channel.with_open_bin path (fun oc ->
+      Printf.fprintf oc "# thumper baseline v1\n# suite: %s\n" suite);
+  Thumper.Baseline.read_exn path
 
+let checking =
+  group "Checking"
+    [
+      refuses
+        [
+          ( "an empty name",
+            (fun () -> ignore (Thumper.Check.run "" suite)),
+            "Thumper.Check.run: " );
+          ( "a two-line name",
+            (fun () -> ignore (Thumper.Check.run "a\nb" suite)),
+            "Thumper.Check.run: " );
+          ( "two budgets for one metric",
+            (fun () ->
+              ignore
+                (Thumper.Check.run ~budgets:two_budgets ~filter:(`Tag "lab")
+                   "facade" suite)),
+            "Thumper.Check.run: " );
+          ( "another suite's baseline",
+            (fun () ->
+              ignore
+                (Thumper.Check.run
+                   ?baseline:(baseline_of_suite "other")
+                   "facade" suite)),
+            "Thumper.Check.run: " );
+          ( "THUMPER_MACHINE holding a space",
+            (fun () ->
+              setenv "THUMPER_MACHINE" (Some "bad key");
+              ignore (Thumper.Check.run "facade" suite)),
+            "THUMPER_MACHINE: " );
+        ];
+    ]
+
+(* Examples
+
+   The facade's examples, verbatim. The module doc's is a whole program that
+   reads the process's command line, so it is only compiled. [Check.run]'s
+   runs, over the [file], [suite] and [exit] its test binds. *)
+
+module Facade_examples = struct
   (* {!Thumper}'s module doc. *)
-  let _landing_example () =
+  let _module_doc () =
     let module _ = struct
       let input = List.init 1_000 Fun.id
 
@@ -333,181 +351,59 @@ module Facade_examples : sig end = struct
     ()
 
   (* {!Thumper.Check.run}'s doc. *)
-  let _check_example () =
-    let suite = [ bench "rev" (fun () -> List.rev [ 1; 2; 3 ]) ] in
-    let v = Check.run ?baseline:(Baseline.read_exn "nx.thumper") "nx" suite in
-    Option.iter (Baseline.write "nx.thumper.corrected") (Verdict.corrected v);
-    exit (Verdict.exit_code v)
-
-  (* The labels the examples above leave out. *)
-  let _labels () =
-    let input = [ 1; 2; 3 ] in
-    let budgets = [ Budget.no_slower_than 0.05 ] in
-    let suite = [ group "g" [ bench "rev" (fun () -> List.rev input) ] ] in
-    let run : Run.t = measure ~config:Config.quick suite in
-    let _samples = Run.samples run ~case:"g/rev" Metric.wall_time in
-    let _alloc = Run.exact run ~case:"g/rev" Metric.alloc_words in
-    let v = Check.run ~budgets ~filter:(`Tag "lab") "nx" suite in
-    print_string (Verdict.to_json v);
-    exit (Thumper.run ~budgets "nx" suite)
-end
-
-(* Deleted v1 surface — compile-only
-
-   The rewrite deletes these names. Each is bound to a local sentinel BEFORE a
-   [let open], so the ascription after the open typechecks only while the
-   facade does NOT export the name: re-growing one shadows the sentinel and
-   the build breaks here, loudly. One facade value per open is consumed so no
-   open is unused. *)
-
-module Deleted_surface : sig end = struct
-  type deleted = Deleted
-
-  let _top_level () =
-    let bench_staged = Deleted and bench_param = Deleted in
+  let check ~file ~suite ~exit =
     let open Thumper in
-    ignore (black_box : int -> int);
-    ignore (bench_staged : deleted);
-    ignore (bench_param : deleted)
-
-  let _budget () =
-    let at_least = Deleted and equivalent = Deleted in
-    let open Thumper.Budget in
-    ignore
-      (no_slower_than
-        : ?metric:Thumper.Metric.t -> ?equivalent_within:float -> float -> t);
-    ignore (at_least : deleted);
-    ignore (equivalent : deleted)
-
-  let _config () =
-    let ci = Deleted
-    and deterministic = Deleted
-    and fork = Deleted
-    and gc = Deleted
-    and env = Deleted
-    and stability = Deleted
-    and profile = Deleted in
-    let open Thumper.Config in
-    ignore (quick : t);
-    ignore (precise : t);
-    ignore (ci : deleted);
-    ignore (deterministic : deleted);
-    ignore (fork : deleted);
-    ignore (gc : deleted);
-    ignore (env : deleted);
-    ignore (stability : deleted);
-    ignore (profile : deleted)
-
-  let _metric () =
-    let of_probe = Deleted and direction = Deleted and kind = Deleted in
-    let open Thumper.Metric in
-    ignore (wall_time : t);
-    ignore (of_probe : deleted);
-    (* Polarity was deleted with its unconstructible higher-is-better case;
-       it returns with a real throughput metric and its extension point. *)
-    ignore (direction : deleted);
-    (* The rendering classification is the report's; [units] tells a caller
-       what the values measure. *)
-    ignore (kind : deleted)
-
-  let _verdict () =
-    let judge = Deleted
-    and decide = Deleted
-    and confirmations = Deleted
-    and bless = Deleted in
-    let open Thumper.Verdict in
-    ignore (to_json : t -> string);
-    (* [corrected] takes only the verdict: the judged baseline is retained,
-       so the old [~file] threading (and its wrong-file class) is gone. *)
-    ignore (corrected : t -> Thumper.Baseline.t option);
-    ignore (judge : deleted);
-    ignore (decide : deleted);
-    ignore (confirmations : deleted);
-    ignore (bless : deleted)
-
-  let _check () =
-    let run_with = Deleted and measure = Deleted in
-    let open Thumper.Check in
-    ignore (pp_error : Format.formatter -> error -> unit);
-    (* [run] takes the whole baseline; the one-legal-value [?section]
-       argument is deleted with the machine-mismatch error class. *)
-    ignore
-      (run
-        : ?config:Thumper.Config.t ->
-          ?budgets:Thumper.Budget.t list ->
-          ?filter:Thumper.filter ->
-          ?baseline:Thumper.Baseline.t ->
-          string ->
-          Thumper.bench list ->
-          Thumper.Verdict.t);
-    ignore (run_with : deleted);
-    ignore (measure : deleted)
-
-  (* [Measure] and [Env] are whole private modules: [open Thumper] would
-     shadow these local stand-ins if the facade ever exported them, and the
-     ascriptions below would stop compiling. *)
-  module Measure = struct
-    type absent = Absent
-  end
-
-  module Env = struct
-    type absent = Absent
-  end
-
-  open Thumper
-
-  let _modules () =
-    ignore (black_box : int -> int);
-    ignore (Measure.Absent : Measure.absent);
-    ignore (Env.Absent : Env.absent)
+    let baseline = Baseline.read_exn file in
+    let v = Check.run ?baseline "programmatic" suite in
+    print_endline (Verdict.to_json v);
+    Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
+    exit (Verdict.exit_code v)
 end
+
+(* The file holds another machine's section only, so this machine's is
+   missing: the check passes and its corrected file adds this machine's
+   section beside the other. *)
+let the_check_example_writes_a_corrected_file () =
+  state_env ();
+  let file = Filename.concat (temp_dir ()) "programmatic.thumper" in
+  Out_channel.with_open_bin file (fun oc ->
+      output_string oc
+        "# thumper baseline v1\n\
+         # suite: programmatic\n\n\
+         # machine: otherkey\n\
+         # host: other-host\n\
+         # ocaml: 5.4.0 64-bit release\n\n\
+         facade/ref\talloc_words\texact\t2\n");
+  let code =
+    Facade_examples.check ~file
+      ~suite:[ Thumper.bench "rev" ignore ]
+      ~exit:Fun.id
+  in
+  equal int 0 code;
+  let corrected =
+    require_some (Thumper.Baseline.read_exn (file ^ ".corrected"))
+  in
+  equal (list string) [ "otherkey"; machine ]
+    (Thumper.Baseline.machines corrected)
+
+let examples =
+  group "Examples"
+    [
+      slow ~timeout:30.
+        "Check.run's example passes a new section and writes it corrected"
+        the_check_example_writes_a_corrected_file;
+    ]
 
 let () =
-  run "thumper"
-    [
-      group "authoring"
-        [
-          test "black_box is the identity" black_box_is_identity;
-          test "empty display names raise in every constructor"
-            empty_names_raise_everywhere;
-          test "an explicit id must be one valid segment"
-            explicit_id_must_be_one_valid_segment;
-          test "a name that slugs to nothing raises" unsluggable_name_raises;
-          test "metric overrides are validated"
-            metric_list_overrides_are_validated;
-          test "two budgets for one metric raise"
-            duplicate_budgets_for_one_metric_raise;
-        ];
-      group "budgets"
-        [
-          test "tolerances are validated" budget_tolerances_are_validated;
-          test "the band never exceeds its budget" band_never_exceeds_its_budget;
-        ];
-      group "config"
-        [
-          test "setter chains build" config_chain_builds;
-          test "setters are validated" config_setters_are_validated;
-        ];
-      group "measure"
-        [
-          test "case ids come back in authoring order"
-            measure_yields_authoring_order_ids;
-          test "wall-time evidence has quick's shape" samples_have_quick_shape;
-          test "warnings are reachable through the facade"
-            run_warnings_are_reachable;
-          test "deterministic allocators prove exact words"
-            deterministic_allocators_prove_exact_words;
-          test "duplicate ids surface as Check.Error"
-            duplicate_ids_surface_as_check_errors;
-          test "an empty selection is an error" empty_selection_is_an_error;
-        ];
-      group "gate"
-        [
-          test "the gate flow runs against a synthetic file"
-            gate_flow_against_synthetic_file;
-          test "read distinguishes an absent file" read_distinguishes_absent;
-          test "a fresh candidate over a header-less file takes the name"
-            candidate_over_headerless_file_takes_the_name;
-        ];
-    ]
-  |> exit
+  exit
+    (run "thumper"
+       [
+         budgets;
+         configuration;
+         defining_benchmarks;
+         running_benchmarks;
+         measuring;
+         baselines;
+         checking;
+         examples;
+       ])

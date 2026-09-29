@@ -22,7 +22,9 @@ One windtrap suite per module under `test/unit/`: `test_os`,
 `test_stats`, `test_metric`, `test_budget`, `test_config`, `test_run`,
 `test_bench`, `test_env`, `test_baseline`, `test_measure`,
 `test_verdict`, `test_check`, `test_report`, `test_cli`, plus
-`test_thumper` (facade smoke through the public surface only) and
+`test_thumper` (what only the facade shows: its values are the internal
+ones, each refusal names the value as a user calls it, `Thumper.run`
+returns its exit code, and the documented examples compile and run) and
 `test_clock` (the vendored stubs). The library's internal modules are
 unreachable through the public surface, so the unit suites reach them
 through `Thumper.Private` — the facade's unconstrained re-export,
@@ -121,9 +123,14 @@ seams and read only what no timing moves. Scripted clocks must advance
 across batches: a stuck scripted clock hangs the warmup arm by contract
 (`measure.mli`).
 
-The stanzas of `test_measure` and `test_check` take the cram sessions'
-measurement lock, so their real measurements never share the host with
-a cram session's.
+Through the facade, `test_thumper` measures twice, in `slow` tests:
+`Thumper.measure` with 3 samples, and `Check.run`'s documented example
+against a synthetic baseline. They read a sample count, an exact count,
+an exit code and the sections of the corrected file.
+
+The stanzas of `test_measure`, `test_check` and `test_thumper` take the
+cram sessions' measurement lock, so their real measurements never share
+the host with a cram session's.
 
 ## Cram conventions
 
@@ -176,3 +183,6 @@ started, budgets, fixtures, tags, protocol, programmatic);
 runtest — the `@bench` alias is manual. `doc/manual/snippets/`
 compiles every OCaml snippet in the manual (build-only — nothing there
 ever measures under runtest); a snippet that rots breaks the build.
+`test_thumper` holds the facade's two examples verbatim: the module
+doc's compiles, and `Check.run`'s, the check of `07-programmatic`, runs
+against a synthetic baseline.

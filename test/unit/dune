@@ -10,12 +10,11 @@
 
 (test
  (name test_thumper)
- ; Public-surface integration: only the installed [Thumper] facade (plus
- ; unix for the THUMPER_MACHINE override the gate-flow test pins). The
- ; [Deleted_surface] pins compile against the public modules, which stay
- ; constrained regardless of what [Thumper.Private] re-exports.
+ ; Its slow tests measure on the real clock, so they take the cram
+ ; sessions' lock.
  (modules test_thumper)
- (libraries thumper unix windtrap))
+ (locks ../cram/measurement)
+ (libraries thumper windtrap))
 
 (test
  (name test_clock)

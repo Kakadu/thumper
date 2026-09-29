@@ -1657,6 +1657,13 @@ let observers =
       cases "overall"
         ~name:(fun (name, _, _, _) -> name)
         run_outcomes run_outcome;
+      test "a run whose metrics are all proposed passes" (fun () ->
+          let t =
+            decided
+              ~budgets:[ Budget.no_more_alloc_than 0. ]
+              [ (case "a", alloc 54) ]
+          in
+          equal string (outcome_name `Pass) (outcome_name (Verdict.overall t)));
       cases "report_fails"
         ~name:(fun (name, _, _) -> name)
         failing first_report_fails;

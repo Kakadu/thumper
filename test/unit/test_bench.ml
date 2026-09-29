@@ -707,8 +707,9 @@ let running =
           raises Boom (fun () -> run record);
           equal (list string) expected (trace ()));
       test "each prepare runs setup again" each_prepare_runs_setup_again;
-      test "black_box is the identity" (fun () ->
-          equal int 42 (Bench.black_box 42));
+      test "black_box returns its argument itself" (fun () ->
+          let v = ref 0 in
+          is_true ~msg:"physically equal" (Bench.black_box v == v));
     ]
 
 let () =
