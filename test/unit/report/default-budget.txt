@@ -1,0 +1,10 @@
+thumper: digest — 2 cases vs digest.thumper for machine testkey
+
+  inconclusive  1.00 us  ±0.0%   ~54 w  passes
+      alloc: exactness lost
+  REGRESSED     2.00 us  ±0.0%  ~200 w  waits
+      alloc +100.0% [+100.0, +100.0]  budget +5%; inconclusive: unconfirmed
+
+  rerun:   bench.exe -f waits
+
+  2 cases: 0 passed, 1 regressed, 1 inconclusive.

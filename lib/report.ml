@@ -292,7 +292,7 @@ let table_lines ~color rows =
 (* Only REGRESSED is capitalized, and only when the metric fails its case. A
    non-time metric's fragment carries the metric's tag after its word; the
    cell holds the case's notable relations, most severe first, joined by
-   ["; "], except that the row opens on the case's outcome ([check_cell]). *)
+   ["; "], so the row opens on the case's outcome ([check_cell]). *)
 
 let metric_tag m =
   match Metric.kind m with
@@ -305,21 +305,15 @@ let interval (s : Verdict.shift) =
   strf "%s [%s, %s]" (pct s.Verdict.estimate) (bound s.Verdict.lower)
     (bound s.Verdict.upper)
 
-let relative_budget (mr : Verdict.metric_report) =
-  match Option.map Budget.contract mr.budget with
-  | Some (Budget.Relative r) -> Some (strf "budget +%g%%" (r *. 100.))
-  | Some (Budget.Absolute_max _) | None -> None
-
 (* An exact count over its absolute cap, as [(count, cap)], when the metric
    fails its case. Under a baseline row the count is [Regressed] and its
    cell prints the pair; with no comparable row the cell prints the cap. *)
 let cap_breach (c : Verdict.case_report) (mr : Verdict.metric_report) =
   match
-    ( Option.map Budget.contract mr.budget,
-      Run.Trial.measurement c.trial mr.metric )
+    (Budget.contract mr.budget, Run.Trial.measurement c.trial mr.metric)
   with
-  | Some (Budget.Absolute_max cap), Some (Run.Exact n)
-    when Verdict.report_fails c mr ->
+  | Budget.Absolute_max cap, Some (Run.Exact n) when Verdict.report_fails c mr
+    ->
       Some (n, cap)
   | _ -> None
 
@@ -341,10 +335,18 @@ let cap_str metric cap =
   in
   group_int (Float.to_int cap) ^ digits ^ " " ^ unit_of metric
 
-(* [(rank, fragment)], the rank ordering fragments most severe first: 0 a
-   REGRESSED that fails the case, 1 a regression that does not, 2
-   inconclusive, 3 improved, 4 within budget, 5 proposed, 6 the exact-equal
-   reassurance. *)
+(* The budget a relation was judged under: [budget +5%] or [cap 64 w]. *)
+let budget_str (mr : Verdict.metric_report) =
+  match Budget.contract mr.budget with
+  | Budget.Relative r -> strf "budget +%g%%" (r *. 100.)
+  | Budget.Absolute_max v -> "cap " ^ cap_str mr.metric v
+
+(* [(rank, fragment)], the rank ordering fragments most severe first: 0
+   REGRESSED, 1 inconclusive, 2 improved, 3 within budget, 4 proposed, 5 the
+   exact-equal reassurance. A metric that fails its case ranks 0 and one that
+   is inconclusive 1, so the most severe fragment is the case's outcome
+   ([Verdict.case_overall]). A regression and a relation within budget name
+   the budget that judged them. *)
 let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
     =
   let m = mr.metric in
@@ -369,25 +371,22 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
             (tagged
                (strf "%s, over its %s cap (exact)" (exact_str m n)
                   (cap_str m cap))) )
-  | Verdict.Proposed, None -> Some (5, frag "proposed" (tagged ""))
+  | Verdict.Proposed, None -> Some (4, frag "proposed" (tagged ""))
   | Verdict.Judged (Verdict.Regressed strong), _ ->
-      let fails = Verdict.report_fails c mr in
-      let word = if fails then "REGRESSED" else "regressed" in
-      let style = if fails then `Red else `Yellow in
-      let budget =
-        match (strong, relative_budget mr) with
-        | Verdict.Confirmed _, Some b -> "  " ^ b
-        | Verdict.Confirmed _, None | Verdict.Exact_change _, _ -> ""
-      in
+      (* A regression fails its case ([Verdict.report_fails]). *)
       Some
-        ( (if fails then 0 else 1),
-          frag ~style word (tagged (strong_detail strong ^ budget)) )
+        ( 0,
+          frag ~style:`Red "REGRESSED"
+            (tagged (strong_detail strong ^ "  " ^ budget_str mr)) )
   | Verdict.Judged (Verdict.Improved strong), _ ->
-      Some (3, frag ~style:`Green "improved" (tagged (strong_detail strong)))
+      Some (2, frag ~style:`Green "improved" (tagged (strong_detail strong)))
   | Verdict.Judged (Verdict.Within_budget s), _ ->
-      Some (4, frag "within budget" (tagged (interval s)))
+      Some (3, frag "within budget" (tagged (interval s ^ "  " ^ budget_str mr)))
   | Verdict.Judged (Verdict.Changed_within_budget s), _ ->
-      Some (4, frag "within budget" (tagged (pct s.Verdict.estimate)))
+      Some
+        ( 3,
+          frag "within budget"
+            (tagged (pct s.Verdict.estimate ^ "  " ^ budget_str mr)) )
   | Verdict.Judged (Verdict.Inconclusive { reason; shift }), None ->
       (* Under load the estimate is printed as information. *)
       let reason =
@@ -397,7 +396,7 @@ let fragment_of ~primary (c : Verdict.case_report) (mr : Verdict.metric_report)
         | Some _ | None -> reason_short reason
       in
       Some
-        ( 2,
+        ( 1,
           if primary then frag ~style:`Yellow ~sep:": " "inconclusive" reason
           else frag ~style:`Yellow "inconclusive" (metric_tag m ^ ": " ^ reason)
         )
@@ -411,7 +410,7 @@ let reassurance_of ~primary (c : Verdict.case_report)
   | Verdict.Judged (Verdict.Equivalent None) when not primary -> (
       match Run.Trial.measurement c.trial mr.metric with
       | Some (Run.Exact _) ->
-          Some (6, frag "equivalent" (strf "(%s exact)" (metric_tag mr.metric)))
+          Some (5, frag "equivalent" (strf "(%s exact)" (metric_tag mr.metric)))
       | Some (Run.Samples _) | None -> None)
   | _ -> None
 
@@ -438,59 +437,31 @@ let check_cell (c : Verdict.case_report) =
   else
     let notable =
       List.filter_map
-        (fun (mr : Verdict.metric_report) ->
-          Option.map
-            (fun (rank, f) -> (rank, Option.is_some mr.budget, f))
-            (fragment_of ~primary:(is_primary mr) c mr))
+        (fun mr -> fragment_of ~primary:(is_primary mr) c mr)
         c.reports
     in
-    match notable with
+    let non_pass = List.exists (fun (rank, _) -> rank <= 1) notable in
+    let reassure =
+      if non_pass then
+        List.filter_map
+          (fun mr -> reassurance_of ~primary:(is_primary mr) c mr)
+          c.reports
+      else []
+    in
+    let ranked =
+      List.map snd
+        (List.stable_sort
+           (fun (a, _) (b, _) -> Int.compare a b)
+           (notable @ reassure))
+    in
+    match ranked with
     | [] -> [ frag ~style:`Faint "equivalent" "" ]
-    | _ -> (
-        let non_pass = List.exists (fun (rank, _, _) -> rank <= 2) notable in
-        let reassure =
-          if non_pass then
-            List.filter_map
-              (fun mr ->
-                Option.map
-                  (fun (rank, f) -> (rank, false, f))
-                  (reassurance_of ~primary:(is_primary mr) c mr))
-              c.reports
-          else []
-        in
-        let ranked =
-          List.stable_sort
-            (fun (a, _, _) (b, _, _) -> Int.compare a b)
-            (notable @ reassure)
-        in
-        (* The row opens on the case's outcome, as the summary counts it: a
-           relation that neither fails nor holds up its case, such as a
-           regression under a cap or an inconclusive metric without a budget,
-           follows on the detail line. *)
-        let opens (rank, budgeted, _) =
-          match Verdict.case_overall c with
-          | `Fail -> rank = 0
-          | `Inconclusive -> rank = 2 && budgeted
-          | `Pass -> rank >= 3 && rank <= 5
-        in
-        let rec split = function
-          | [] -> (None, [])
-          | x :: xs when opens x -> (Some x, xs)
-          | x :: xs ->
-              let o, r = split xs in
-              (o, x :: r)
-        in
-        let opening, rest = split ranked in
-        let rest = List.map (fun (_, _, f) -> f) rest in
-        match opening with
-        (* Only a non-time metric is proposed with a detail. Its case passes
-           and no compared relation opens the row, so the row reads
-           [equivalent] before naming what is proposed. *)
-        | Some (_, _, ({ word = "proposed"; detail; _ } as f)) when detail <> ""
-          ->
-            frag ~style:`Faint "equivalent" "" :: f :: rest
-        | Some (_, _, f) -> f :: rest
-        | None -> frag ~style:`Faint "equivalent" "" :: rest)
+    (* Only a non-time metric is proposed with a detail. Its case passes and
+       no compared relation opens the row, so the row reads [equivalent]
+       before naming what is proposed. *)
+    | ({ word = "proposed"; detail; _ } as f) :: rest when detail <> "" ->
+        frag ~style:`Faint "equivalent" "" :: f :: rest
+    | ranked -> ranked
 
 (* The report *)
 
@@ -539,14 +510,12 @@ let error_line (c : Verdict.case_report) (mr : Verdict.metric_report) =
     | Verdict.Judged (Verdict.Regressed strong) ->
         let detail =
           match strong with
-          | Verdict.Confirmed { first; _ } -> (
-              match relative_budget mr with
-              | Some b -> interval first ^ ", " ^ b
-              | None -> interval first)
+          | Verdict.Confirmed { first; _ } -> interval first
           | Verdict.Exact_change { baseline; candidate } ->
               strf "%d \xe2\x86\x92 %d %s (exact)" baseline candidate
                 (unit_of mr.metric)
         in
+        let detail = detail ^ ", " ^ budget_str mr in
         Some
           (strf "::error::%s regressed: %s %s" c.id (Metric.id mr.metric) detail)
     | _ -> (

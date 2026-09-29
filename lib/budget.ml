@@ -8,6 +8,7 @@ let strf = Printf.sprintf
 type contract = Relative of float | Absolute_max of float
 type t = { metric : Metric.t; contract : contract }
 
+(* The budget of a collected metric that no scope budgets. *)
 let default_max_regression = 0.05
 
 (* Tolerances are tested with [not (x >= 0.)] so that NaN fails too: a NaN
@@ -57,4 +58,4 @@ let check_distinct ~fname budgets =
   in
   go [] budgets
 
-let defaults = [ no_slower_than default_max_regression ]
+let default metric = { metric; contract = Relative default_max_regression }

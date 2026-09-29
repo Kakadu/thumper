@@ -184,9 +184,8 @@ let loaded_proposed () =
   verdict_of ~load:loaded ~decide_load:loaded ~file:(time_row_only ())
     (bcase "alpha", trial (ties 5 2e-6))
 
-(* A time regression that fails its budget beside a sampled allocation
-   regression, which passes its cap because a cap fails a case on exact counts
-   only. *)
+(* A time regression that fails its budget beside a sampled allocation under
+   a cap, which judges exact counts only. *)
 let failing_first () =
   let file =
     file_of
@@ -205,11 +204,10 @@ let failing_first () =
         "alpha",
       both () )
 
-(* Relations that do not decide their case: an inconclusive allocation
-   without a budget beside an equivalent time, and an allocation regression
-   without a budget beside a time regression the confirmation did not
-   reproduce. *)
-let undecided () =
+(* Allocations that no scope budgets, under the default budget: one that
+   loses exactness beside an equivalent time, and a confirmed regression
+   beside a time regression the confirmation did not reproduce. *)
+let default_budget () =
   let file =
     file_of
       [
@@ -345,8 +343,8 @@ let case_warning () =
   in
   verdict_of ~file (bcase "alpha", warned)
 
-(* A confirmed sampled allocation regression (100 w to 200 w) whose only
-   allocation budget is a cap, which fails a case on exact counts only. *)
+(* A sampled allocation (100 w to 200 w) under a cap, which judges exact
+   counts only. *)
 let over_cap_sampled () =
   let file =
     file_of
@@ -471,17 +469,18 @@ let check_states =
       "a loaded run that writes the corrected file warns once, under the header"
       loaded_proposed;
     check "failing-first" "the failing metric opens the row" failing_first;
-    check "undecided"
-      "a relation that does not decide its case follows on the detail line"
-      undecided;
+    check "default-budget"
+      "a metric no scope budgets fails or is inconclusive under the default"
+      default_budget;
     check ~wrote:true "improved" "an improvement prints its interval"
       improvement;
     check "within-budget"
-      "within budget prints the interval, or the estimate of a change"
+      "within budget prints the interval, or the estimate of a change, and the \
+       budget"
       within_budget;
     check "unconfirmed" "an unconfirmed regression names its reason" unconfirmed;
-    check "exact-regressed" "a failing exact count prints both counts"
-      exact_regression;
+    check "exact-regressed"
+      "a failing exact count prints both counts and the budget" exact_regression;
     check "inconclusive" "every inconclusive reason prints in its words"
       every_reason;
     check "time-units" "the time column takes the unit of its smallest value"
@@ -501,9 +500,10 @@ let check_states =
       "an exact count over its cap fails without a row" (fun () ->
         over_cap ~file:(time_row_only ()) ());
     check ~github:true "over-cap-sampled"
-      "a sampled count over a cap reads regressed and passes" over_cap_sampled;
-    check "growth-from-zero" "growth from zero within a cap prints +inf%"
-      growth_from_zero;
+      "a sampled count under a cap reads inconclusive: exactness lost"
+      over_cap_sampled;
+    check "growth-from-zero"
+      "growth from zero within a cap prints +inf% and the cap" growth_from_zero;
     check ~wrote:true "pruned" "a full run warns of each pruned row" pruned;
     check ~wrote:true "stale-partial"
       "a partial run against a stale section warns of the dropped rows"

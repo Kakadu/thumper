@@ -122,14 +122,15 @@ end
     fraction of the baseline value; an absolute budget ({!Budget.at_most})
     bounds the measured value.
 
-    A case fails when one of its budgeted metrics fails, whatever its other
-    metrics did: an allocation regression fails a case whose time improved. A
-    metric without a budget is compared under the default's tolerances and
-    reported, and never fails its case or makes it inconclusive. Budgets attach
-    to {!run}, {!Check.run}, {!group} and {!val:bench}, and the nearest one for
-    a metric applies ({{!benchmarks}inheritance}). A case left with no budget on
-    a metric it collects gets [no_slower_than 0.05] if it collects
-    {!Metric.wall_time}. Its allocation is then reported and never fails it. *)
+    Every metric a case collects has a budget. Budgets attach to {!run},
+    {!Check.run}, {!group} and {!val:bench}, and the nearest one for a metric
+    applies ({{!benchmarks}inheritance}); a metric that no scope budgets has the
+    default budget, [relative ~metric 0.05]. A case fails when one of its
+    metrics fails, whatever its other metrics did: an allocation regression
+    fails a case whose time improved. A metric the case collects on request
+    ({!Config.metrics}, {!val:bench}'s [?metrics]) is judged like any other: an
+    exact counter fails the case when it grows by more than 5%, and a sampled
+    count can fail it or make it inconclusive. *)
 module Budget : sig
   type t
   (** The type for budgets. *)
@@ -173,9 +174,8 @@ module Budget : sig
       [equivalent], [improved] or [within budget], or is
       [inconclusive: batch drifted] when it changed at another batch size;
       against a sampled row it is [inconclusive: exactness lost]. Sampled
-      evidence never fails the case. It is compared under the default's
-      tolerances, and an inconclusive comparison makes the case inconclusive, as
-      for any budgeted metric.
+      evidence never fails the case, and against a baseline row it is
+      [inconclusive: exactness lost], as under [no_more_alloc_than 0.].
 
       Raises [Invalid_argument] if [v] is negative or NaN, or if [metric] is
       {!Metric.wall_time} or {!Metric.cpu_time}, which are never exact. *)
@@ -279,8 +279,8 @@ end
 
     A budget applies only to a metric the case collects: an inherited budget on
     another metric is dropped, and a budget stated at a scope that does not
-    collect its metric makes the suite invalid ({!Check.Error}). A case left
-    with no budget gets {!Budget}'s default.
+    collect its metric makes the suite invalid ({!Check.Error}). A metric the
+    case collects that no scope budgets gets {!Budget}'s default.
 
     {b Errors.} Each constructor raises [Invalid_argument] if its name is empty,
     if [id] is not one valid segment (a ['/'] included), if [id] is absent and
@@ -436,10 +436,9 @@ val run :
     A row's time is the median of the case's first time metric, followed after
     [±] by the half-width of that median's 95% confidence interval, as a
     percentage of the median. [REGRESSED] marks a metric that fails its case and
-    is the report's only capitalised word; [regressed] is a regression that
-    fails nothing. An allocation marked [~] is sampled. In [bless]'s report, and
-    in [check]'s against a missing or stale section, every row reads [proposed]
-    unless it fails.
+    is the report's only capitalised word. An allocation marked [~] is sampled.
+    In [bless]'s report, and in [check]'s against a missing or stale section,
+    every row reads [proposed] unless it fails.
 
     The actions are:
     - [rerun:], when some case fails and the run is not a dune rule action: a
@@ -453,14 +452,13 @@ val run :
       prints it.
 
     The summary counts each case once, by its outcome: [regressed] when it
-    fails, [inconclusive] when a budgeted metric is inconclusive, and among the
-    passing cases [proposed] when no metric has a baseline row, [improved] when
-    its row opens on [improved], and [passed] otherwise. A row opens on its
-    case's outcome: [REGRESSED] when the case fails, [inconclusive] when a
-    budgeted metric is inconclusive, and a passing word otherwise. A [regressed]
-    that fails nothing and an [inconclusive] without a budget follow on the
-    row's detail line; a case whose only non-passing relations are these counts
-    as passed. The summary ends with [; failed under --strict] when [--strict]
+    fails, [inconclusive] when a metric is inconclusive, and among the passing
+    cases [proposed] when no metric has a baseline row, [improved] when its row
+    opens on [improved], and [passed] otherwise. A row opens on its case's
+    outcome: [REGRESSED] when the case fails, [inconclusive] when a metric is
+    inconclusive, and a passing word otherwise. The row's other relations follow
+    on its detail line, and a regression or a relation within budget names its
+    budget. The summary ends with [; failed under --strict] when [--strict]
     alone made the run exit 1. *)
 
 (** {2:files Files}
@@ -688,10 +686,9 @@ module Verdict : sig
 
   val overall : t -> [ `Pass | `Fail | `Inconclusive ]
   (** [overall t] is [`Fail] when some case fails, else [`Inconclusive] when
-      some budgeted metric is inconclusive, else [`Pass]. A metric fails its
-      case when it regressed under a relative budget, or when its exact count is
-      over its {!Budget.at_most} cap; a proposed metric fails only by the
-      latter. *)
+      some metric is inconclusive, else [`Pass]. A metric fails its case when it
+      regressed under a relative budget, or when its exact count is over its
+      {!Budget.at_most} cap; a proposed metric fails only by the latter. *)
 
   val exit_code : ?strict:bool -> t -> int
   (** [exit_code t] is [1] when {!overall} is [`Fail], and [0] otherwise. With
@@ -702,9 +699,9 @@ module Verdict : sig
   (** [to_json t] is [t] as a JSON document on one line, with no final newline.
       Its schema is frozen and specified in [doc/manual/checking.md]. Its
       [overall] is {!overall}'s. A metric's [status] is its own: ["fail"] when
-      it fails its case, ["inconclusive"] when its relation is inconclusive,
-      budgeted or not, and ["pass"] otherwise. A proposed metric has a [null]
-      [relation] and the [reason] ["missing_baseline"]. *)
+      it fails its case, ["inconclusive"] when its relation is inconclusive, and
+      ["pass"] otherwise. A proposed metric has a [null] [relation] and the
+      [reason] ["missing_baseline"]. *)
 
   val corrected : t -> Baseline.t option
   (** [corrected t] is the corrected file: the baseline [t] was judged against,

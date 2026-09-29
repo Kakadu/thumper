@@ -1,6 +1,6 @@
 thumper: digest — 1 case vs digest.thumper for machine testkey
 
-  equivalent  1.00 us  ±0.0%  ~200 w  alpha
-      regressed alloc +100.0% [+100.0, +100.0]
+  inconclusive  1.00 us  ±0.0%  ~200 w  alpha
+      alloc: exactness lost
 
-  1 case: 1 passed.
+  1 case: 0 passed, 1 inconclusive.

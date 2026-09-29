@@ -53,7 +53,8 @@ order-statistic construction (valid for m ≠ n, conservative under
 ties) at α = 0.005 per side. That is the Mann–Whitney test and its
 confidence interval as one deterministic object. Mapped through
 `expm1`, [L, U] bounds the fractional shift, compared against budget r
-and equivalence band e = min(2.5%, r/2):
+(5% for a metric no scope budgets) and equivalence band
+e = min(2.5%, r/2):
 
 improved iff U < −e · regressed iff L > r · equivalent iff
 [L, U] ⊆ [−e, e] · changed within budget iff L > e and U ≤ r · else
@@ -101,9 +102,9 @@ regressed; growth within r → within budget; less → improved; equal →
 equivalent. No CI, no confirmation. Two edges: an exact row whose
 batch recalibrated this run is `inconclusive: batch drifted` when the
 integers differ and the cap holds (amortized allocators can be
-k-phase-dependent); a mixed exact/sampled comparison or a
-zero-tolerance budget on a downgraded metric is
-`inconclusive: exactness lost`, never a rank test at r = 0.
+k-phase-dependent); a mixed exact/sampled comparison, sampled
+evidence under a cap, and a zero-tolerance budget on a downgraded
+metric are `inconclusive: exactness lost`, never a rank test.
 
 **Batch drift** annotates rather than blocks: after recalibration the
 comparison proceeds at the new k, and only when the measured shift is
@@ -157,7 +158,7 @@ has a reason but no derivation.
 | α 0.005 initial + 0.05 confirmation | `verdict.ml` | suite FP ≲ 1% at 40 cases under independence; the split is underdetermined | flagged; U1 decides |
 | band e = min(2.5%, r/2) | `verdict.ml` | 2e ≤ r, so a direction within 2e ends within the budget; r/2 and the 2.5% cap are chosen | chosen |
 | bias-comparability 2e | `verdict.ml` | batch-size bias small relative to the ≥2.5× shift that triggered recalibration | derived |
-| budget r = 5% | `budget.ml` | none | NAKED |
+| default budget r = 5% | `budget.ml` | none | NAKED |
 | warmup 100 ms / 3 batches | `config.ml` | fixed-not-adaptive (protocol identity); ≥ frequency-ramp settling | part-derived |
 | drift α 0.01 | `measure.ml` | none | NAKED; U1 validates |
 | load threshold ½ cores | `env.ml` | raven's production rule, adopted | chosen; U1 validates |

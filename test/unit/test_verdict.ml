@@ -597,11 +597,11 @@ let exactness =
       (fun () -> sampled_alloc_row (ties 5 54.)),
       (fun () -> sampled (ties 5 54.)),
       "equivalent" );
-    ( "sampled counts under a cap read the default budget",
+    ( "sampled counts under a cap",
       Cap 150.,
       (fun () -> sampled_alloc_row (ties 5 100.)),
       (fun () -> sampled (ties 5 200.)),
-      "regressed, confirmed" );
+      "inconclusive, exactness lost" );
   ]
 
 let relations =
@@ -657,16 +657,20 @@ let relations =
                   ~budgets:[ alloc_budget budget ]
                   ~rows:[ row () ]
                   (trial [ (alloc_words, measurement ()) ]))));
+      test "a first sampled count under a cap is proposed" (fun () ->
+          equal string "proposed"
+            (relation ~metric:alloc_words
+               (one
+                  ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
+                  (trial [ (alloc_words, sampled (ties 5 200.)) ]))));
     ]
 
 (* Reports *)
 
-let budget_name = function
-  | None -> "none"
-  | Some b -> (
-      match Budget.contract b with
-      | Budget.Relative r -> strf "r = %g" r
-      | Budget.Absolute_max v -> strf "at most %g" v)
+let budget_name b =
+  match Budget.contract b with
+  | Budget.Relative r -> strf "r = %g" r
+  | Budget.Absolute_max v -> strf "at most %g" v
 
 let resolutions =
   [
@@ -680,21 +684,25 @@ let resolutions =
       (fun () -> None),
       [ wall_time ],
       [ ("wall_time", "r = 0.1") ] );
-    ( "a case left with none gets the default on wall_time",
+    ( "a case's own budget leaves the run's on another metric",
+      (fun () -> [ Budget.relative ~metric:cpu_time 0.2 ]),
+      (fun () -> Some [ Budget.no_slower_than 0.5 ]),
+      [ wall_time; cpu_time ],
+      [ ("wall_time", "r = 0.5"); ("cpu_time", "r = 0.2") ] );
+    ( "a metric no scope budgets gets the default",
       (fun () -> [ Budget.no_more_alloc_than 0. ]),
       (fun () -> None),
       [ wall_time ],
       [ ("wall_time", "r = 0.05") ] );
-    ( "the default binds no other metric",
-      (fun () -> []),
-      (fun () -> None),
-      [ cpu_time ],
-      [ ("cpu_time", "none") ] );
-    ( "a metric without a budget has none, in the trial's order",
+    ( "the default binds every collected metric, in the trial's order",
       (fun () -> [ Budget.no_slower_than 0.1 ]),
       (fun () -> None),
-      [ cpu_time; wall_time ],
-      [ ("cpu_time", "none"); ("wall_time", "r = 0.1") ] );
+      [ cpu_time; wall_time; alloc_words ],
+      [
+        ("cpu_time", "r = 0.05");
+        ("wall_time", "r = 0.1");
+        ("alloc_words", "r = 0.05");
+      ] );
     ( "a second budget for one metric is ignored",
       (fun () -> [ Budget.no_slower_than 0.1; Budget.no_slower_than 0.5 ]),
       (fun () -> None),
@@ -1312,14 +1320,14 @@ let failing =
           ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
           [ (case "a", trial [ (alloc_words, sampled (ties 5 120.)) ]) ]),
       false );
-    ( "a confirmed regression of sampled counts under a cap",
+    ( "sampled counts under a cap",
       (fun () ->
         one
           ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
           ~rows:[ sampled_alloc_row (ties 5 100.) ]
           (trial [ (alloc_words, sampled (ties 5 200.)) ])),
       false );
-    ( "a confirmed regression without a budget",
+    ( "a confirmed regression under the default budget",
       (fun () ->
         one
           ~rows:
@@ -1328,7 +1336,7 @@ let failing =
                 ~samples:(ties 5 1.);
             ]
           (trial [ (cpu_time, sampled (ties 5 2.)) ])),
-      false );
+      true );
   ]
 
 let first_report_fails (_, t, expected) =
@@ -1336,8 +1344,8 @@ let first_report_fails (_, t, expected) =
   let c = case_report t in
   equal bool expected (Verdict.report_fails c (List.hd c.Verdict.reports))
 
-(* One case "a": its wall_time against a row of 1s, with a budget or none,
-   and its alloc_words count under a relative budget of 0 against a row of
+(* One case "a": its wall_time against a row of 1s, under a stated budget or
+   the default, and its alloc_words count under a relative budget of 0 against a row of
    54 words. *)
 let case_outcomes =
   [
@@ -1348,12 +1356,16 @@ let case_outcomes =
       55,
       `Fail );
     ("a failing report beats an inconclusive one", true, spread, 55, `Fail);
-    ( "an inconclusive report with a budget makes it inconclusive",
+    ( "an inconclusive report under a stated budget makes it inconclusive",
       true,
       spread,
       54,
       `Inconclusive );
-    ("an inconclusive report without a budget passes", false, spread, 54, `Pass);
+    ( "an inconclusive report under the default budget makes it inconclusive",
+      false,
+      spread,
+      54,
+      `Inconclusive );
     ("passing reports pass", true, ties 5 1., 53, `Pass);
   ]
 
@@ -1416,13 +1428,13 @@ let exit_codes =
           ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
           [ (case "a", alloc 120) ]),
       (1, 1) );
-    ( "a sampled regression over a cap",
+    ( "sampled counts under a cap",
       (fun () ->
         one
           ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
           ~rows:[ sampled_alloc_row (ties 5 100.) ]
           (trial [ (alloc_words, sampled (ties 5 200.)) ])),
-      (0, 0) );
+      (0, 1) );
     ("an inconclusive run", (fun () -> one (wall spread)), (0, 1));
     ( "a missing section",
       (fun () -> decided [ (case "a", wall (ties 5 1.)) ]),
@@ -1548,21 +1560,8 @@ let documents =
     ( "passing",
       fun () ->
         decided
-          ~file:
-            (file_of
-               [
-                 wall_row "within" (ties 5 1.);
-                 Baseline.sampled_row ~id:"unbudgeted" ~metric:"cpu_time" ~k:8
-                   ~samples:(ties 5 1.);
-                 wall_row "unbudgeted" (ties 5 1.);
-               ])
-          [
-            (case "within", wall [| 0.5; 0.5; 1.; 1.; 1. |]);
-            ( case "unbudgeted",
-              trial
-                [ (wall_time, sampled (ties 5 1.)); (cpu_time, sampled spread) ]
-            );
-          ] );
+          ~file:(file_of [ wall_row "within" (ties 5 1.) ])
+          [ (case "within", wall [| 0.5; 0.5; 1.; 1.; 1. |]) ] );
     ( "environment",
       fun () ->
         one ~load:loaded

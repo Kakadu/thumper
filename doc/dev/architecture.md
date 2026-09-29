@@ -15,7 +15,7 @@ reading; the **adapters** own paths, argv, and rendering.
 | --- | --- | --- |
 | `stats` | pure | order statistics: median + binomial CI, severe-inflation predicate, Mann–Whitney drift test, Hodges–Lehmann/Moses shift, geomean. Unit-agnostic; no RNG |
 | `metric` | pure | metric identity and how a quantity is read (`Wall_clock`, `Cpu_clock`, `Gc_counter`); the `gc_snapshot` record the seam traffics in |
-| `budget` | pure | contracts (`Relative`, `Absolute_max`); the default budget constants |
+| `budget` | pure | contracts (`Relative`, `Absolute_max`) and the default budget of a metric no scope budgets |
 | `config` | pure | the protocol knob container (private record): n, batch floor, warmup, deadline, metrics, fork |
 | `bench` | pure | authoring constructors, id validation, inheritance, the filter algebra, `resolve`, `prepare` |
 | `run` | pure | the evidence model: `Trial` (frozen k, per-metric `Samples`/`Exact`, the drift flag, warnings), `Run.t` |

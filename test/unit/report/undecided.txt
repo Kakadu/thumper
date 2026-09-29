@@ -1,8 +1,0 @@
-thumper: digest — 2 cases vs digest.thumper for machine testkey
-
-  equivalent    1.00 us  ±0.0%   ~54 w  passes
-      inconclusive alloc: exactness lost
-  inconclusive  2.00 us  ±0.0%  ~200 w  waits
-      unconfirmed; regressed alloc +100.0% [+100.0, +100.0]
-
-  2 cases: 1 passed, 1 inconclusive.

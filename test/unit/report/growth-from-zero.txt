@@ -1,6 +1,6 @@
 thumper: digest — 1 case vs digest.thumper for machine testkey
 
   within budget  1.00 us  ±0.0%  5 w  alpha
-      alloc +inf%
+      alloc +inf%  cap 10 w
 
   1 case: 1 passed.

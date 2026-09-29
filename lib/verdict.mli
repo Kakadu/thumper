@@ -49,10 +49,10 @@ type reason =
       (** The confirmation trial did not reproduce the pending regression, or
           could not ({!decide}). Its JSON spelling is [unconfirmed]. *)
   | Exactness_lost
-      (** One side is exact and the other sampled, or both are sampled for a
-          counter metric ({!Metric.is_counter}) under a relative budget of [0],
-          which a rank test never judges. A loaded host keeps this reason. Its
-          JSON spelling is [exactness_lost]. *)
+      (** One side is exact and the other sampled, or both are sampled under an
+          [at_most] cap or, for a counter metric ({!Metric.is_counter}), under a
+          relative budget of [0], which a rank test never judges. A loaded host
+          keeps this reason. Its JSON spelling is [exactness_lost]. *)
   | Batch_drifted
       (** The batch size moved. For a sampled row, this trial's batch size is
           not the row's and the shift is within [2e] of zero; for an exact row,
@@ -81,10 +81,9 @@ type strong =
     }
 
 (** The type for relations. A relation compares this run's evidence with a
-    baseline row under the metric's budget: its relative tolerance [r]
-    ({!Budget.type-contract}), or the default budget's [r = 0.05] for a metric
-    with an [at_most] cap or no budget, and the equivalence band
-    [e = min 0.025 (r /. 2.)], so that [2e <= r].
+    baseline row under the metric's budget ({!Budget.type-contract}): its
+    relative tolerance [r] and the equivalence band [e = min 0.025 (r /. 2.)],
+    so that [2e <= r], or its [at_most] cap.
 
     Over samples, with [L] and [U] the shift's bounds, the relation is
     [Improved] if [U < -e], [Regressed] if [L > r], [Equivalent] if [-e <= L]
@@ -111,8 +110,7 @@ type strong =
 
     An [at_most] cap thus yields [Equivalent None], [Improved],
     [Changed_within_budget], [Regressed] or [Inconclusive Batch_drifted] on
-    exact counts, [Inconclusive Exactness_lost] when one side is exact and the
-    other sampled, and the default budget's relations when both are sampled;
+    exact counts, and [Inconclusive Exactness_lost] when either side is sampled;
     only an exact count over the cap fails the case ({!report_fails}). *)
 type relation =
   | Improved of strong  (** A confirmed or exact improvement. *)
@@ -142,9 +140,7 @@ type metric_verdict =
 type metric_report = {
   metric : Metric.t;  (** The metric. *)
   verdict : metric_verdict;  (** Its verdict. *)
-  budget : Budget.t option;
-      (** The budget that binds it after {!judge}'s resolution. With [None] the
-          metric never fails its case or makes it inconclusive. *)
+  budget : Budget.t;  (** The budget that binds it ({!judge}). *)
 }
 (** The type for one metric of one case. *)
 
@@ -218,11 +214,9 @@ val judge :
     - [selection] may be [`Full] only when [cases] is every case of the suite.
       On a compared section, [`Full] lets {!corrected} prune the rows of absent
       cases and adds one warning per pruned case id ({!val-warnings}).
-    - [budgets] are the suite's budgets. For each metric a case's own budget
-      wins and the others inherit [budgets]; budgets on metrics the trial did
-      not measure are dropped, and a case left with none gets
-      {!Budget.val-defaults}, whose budget binds only a case that measures
-      [wall_time].
+    - [budgets] are the suite's budgets. Each metric the trial measured is bound
+      by the case's own budget for it, else by the one in [budgets], else by
+      {!Budget.default}.
     - [file] is kept for {!corrected}.
 
     A sampled comparison tests a non-positive sample ([Non_positive]) first. It
@@ -283,14 +277,14 @@ val report_fails : case_report -> metric_report -> bool
     budget, [r] fails iff it is [Regressed]. Under an [at_most] cap [v], [r]
     fails iff [c]'s trial measured the metric as an exact count above [v],
     whatever [r]'s verdict, [Proposed] included; a sampled count never fails a
-    cap. Without a budget, [r] never fails. A caller that shows a failure must
-    decide it with this predicate or {!case_overall}, so the report agrees with
-    {!exit_code} and {!to_json}. *)
+    cap. A [Regressed] report thus always fails. A caller that shows a failure
+    must decide it with this predicate or {!case_overall}, so the report agrees
+    with {!exit_code} and {!to_json}. *)
 
 val case_overall : case_report -> [ `Pass | `Fail | `Inconclusive ]
 (** [case_overall c] is [`Fail] if one of [c]'s reports fails it
-    ({!report_fails}), else [`Inconclusive] if one of its reports has a budget
-    and is [Inconclusive], else [`Pass]. *)
+    ({!report_fails}), else [`Inconclusive] if one of its reports is
+    [Inconclusive], else [`Pass]. *)
 
 val warnings : t -> string list
 (** [warnings t] is the run's warnings about rows the corrected file drops:
@@ -341,8 +335,7 @@ val to_json : t -> string
       ["changed_within_budget"], ["within_budget"] or ["inconclusive"], and
       [null] for [Proposed];
     - [status], the metric's own: ["fail"] iff {!report_fails}, else
-      ["inconclusive"] for an [Inconclusive] relation, budgeted or not, else
-      ["pass"]. A case can pass over a metric that is ["inconclusive"];
+      ["inconclusive"] for an [Inconclusive] relation, else ["pass"];
     - [reason]: the reason's spelling ({!type-reason}) for [Inconclusive],
       ["missing_baseline"] for [Proposed], else [null];
     - for a [Judged] metric, [exact: true] when the first trial's evidence is

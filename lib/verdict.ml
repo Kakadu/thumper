@@ -45,7 +45,7 @@ type metric_verdict = Proposed | Judged of relation
 type metric_report = {
   metric : Metric.t;
   verdict : metric_verdict;
-  budget : Budget.t option;
+  budget : Budget.t;
 }
 
 type case_report = {
@@ -59,8 +59,8 @@ type case_report = {
 type staleness = Ocaml_mismatch of { section : string; current : string }
 type comparison = No_baseline | Stale of staleness | Compared
 
-(* Constants. The default budget is [Budget]'s; the drift level is
-   [Measure]'s, read when the trial is measured. *)
+(* Constants. The drift level is [Measure]'s, read when the trial is
+   measured. *)
 
 (* Initial rank-test level, 0.005 per side. *)
 let alpha_initial = 0.005
@@ -75,11 +75,6 @@ let bias_comparability_factor = 2.0
    [2e <= r], and at most [band_cap]. *)
 let band_cap = 0.025
 let band r = Float.min band_cap (r /. 2.)
-
-(* Judgment parameters for metrics with no relative contract: the default
-   budget's shape (r = 5%, derived band), used for reporting only. *)
-let default_params =
-  (band Budget.default_max_regression, Budget.default_max_regression)
 
 (* Internal representation. Judging takes two passes: [judge] settles each
    metric or leaves it [Pending] with what its confirmation is compared
@@ -104,7 +99,7 @@ type pcase = {
   c_full_name : string;
   c_trial : Run.Trial.t;
   c_warnings : string list;
-  c_states : (Metric.t * m_state * Budget.t option) list;
+  c_states : (Metric.t * m_state * Budget.t) list;
 }
 
 type core = {
@@ -151,45 +146,18 @@ let unstable samples =
   && samples.(0) >= 0.
   && Stats.severe_outlier_inflation_sorted samples
 
-(* Budget resolution (per case): the case's per-metric merge wins, other
-   metrics fall through to the run's list, budgets on metrics the case does
-   not collect are dropped, and a case left with none gets [Budget.defaults]
-   (bench.mli module doc). The default comes after the drop: chosen before
-   it, a wall_time-only case under an alloc-only suite would drop the alloc
-   budget and end with no budget at all. *)
-
-let budget_for budgets metric =
-  List.find_opt (fun b -> Metric.equal (Budget.metric b) metric) budgets
-
-let effective_budgets ~run_budgets ~collected case =
-  let case_b = Option.value ~default:[] (Bench.budgets case) in
-  let inherited =
-    List.filter
-      (fun b -> Option.is_none (budget_for case_b (Budget.metric b)))
-      run_budgets
-  in
-  let binding budgets =
-    List.filter
-      (fun b -> List.exists (Metric.equal (Budget.metric b)) collected)
-      budgets
-  in
-  match binding (case_b @ inherited) with
-  | [] -> binding Budget.defaults
-  | l -> l
-
-let relative_params budget =
-  match Option.map Budget.contract budget with
-  | Some (Budget.Relative r) -> (band r, r)
-  | Some (Budget.Absolute_max _) | None -> default_params
-
-(* A counter metric measured as samples, not exact, under a relative budget
-   of [0]: no rank test judges it. *)
-let zero_tolerance_downgrade metric budget =
-  Metric.is_counter metric
-  &&
-  match Option.map Budget.contract budget with
-  | Some (Budget.Relative 0.) -> true
-  | Some (Budget.Relative _ | Budget.Absolute_max _) | None -> false
+(* Budget resolution, per collected metric: the case's per-metric merge
+   wins, then the run's list, then [Budget.default] (bench.mli module doc).
+   A budget on a metric the case does not collect is never looked up. *)
+let budget_for ~run_budgets case metric =
+  let own = Option.value ~default:[] (Bench.budgets case) in
+  match
+    List.find_opt
+      (fun b -> Metric.equal (Budget.metric b) metric)
+      (own @ run_budgets)
+  with
+  | Some b -> b
+  | None -> Budget.default metric
 
 (* The relation table over the fractional bounds [l <= u]. Every metric is
    lower-is-better, so a positive bound is worse. The r = 0 chain keeps the
@@ -215,8 +183,8 @@ let table ~e ~r sh =
   else Tame (inconclusive ~shift:sh Wide_interval)
 
 (* First-pass judgment of one sampled comparison. *)
-let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
-  let e, r = relative_params budget in
+let judge_sampled ~load ~r ~row_k ~baseline ~cand ~trial_k =
+  let e = band r in
   if
     (* A non-positive sample breaks the logarithmic comparison, and a quiet
        host would not fix it, so it is tested before the load. *)
@@ -274,9 +242,9 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
 
 (* The cap is on the measured value itself, baseline-independent. *)
 let over_cap budget c =
-  match Option.map Budget.contract budget with
-  | Some (Budget.Absolute_max cap) -> float_of_int c > cap
-  | Some (Budget.Relative _) | None -> false
+  match Budget.contract budget with
+  | Budget.Absolute_max cap -> float_of_int c > cap
+  | Budget.Relative _ -> false
 
 (* The relative size of an exact change from [baseline] to [candidate], and
    [None] for growth from zero, which has none. *)
@@ -312,10 +280,9 @@ let judge_exact ~budget ~case_k ~trial_k ~b ~c =
       let point = Option.value growth ~default:infinity in
       Changed_within_budget { estimate = point; lower = point; upper = point }
     in
-    match Option.map Budget.contract budget with
-    | Some (Budget.Absolute_max _) -> within
-    | Some (Budget.Relative _) | None ->
-        let r = snd (relative_params budget) in
+    match Budget.contract budget with
+    | Budget.Absolute_max _ -> within
+    | Budget.Relative r ->
         let over = match growth with Some g -> g > r | None -> true in
         if over then Regressed strong else within
 
@@ -359,11 +326,16 @@ let judge_metric ~load ~section ~id ~trial ~budget metric measurement =
           Settled (Judged (judge_exact ~budget ~case_k ~trial_k ~b ~c))
       | Baseline.Exact_int _, Run.Samples _ | Baseline.Sampled _, Run.Exact _ ->
           Settled (Judged (inconclusive Exactness_lost))
-      | Baseline.Sampled { k = row_k; samples }, Run.Samples cand ->
-          if zero_tolerance_downgrade metric budget then
-            Settled (Judged (inconclusive Exactness_lost))
-          else
-            judge_sampled ~load ~budget ~row_k ~baseline:samples ~cand ~trial_k)
+      | Baseline.Sampled { k = row_k; samples }, Run.Samples cand -> (
+          (* A cap, or a zero budget on a counter metric, judges exact counts
+             only, which no rank test gives. *)
+          match Budget.contract budget with
+          | Budget.Absolute_max _ ->
+              Settled (Judged (inconclusive Exactness_lost))
+          | Budget.Relative 0. when Metric.is_counter metric ->
+              Settled (Judged (inconclusive Exactness_lost))
+          | Budget.Relative r ->
+              judge_sampled ~load ~r ~row_k ~baseline:samples ~cand ~trial_k))
 
 let absent_ids s ~case_ids =
   List.sort_uniq String.compare
@@ -416,14 +388,10 @@ let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
       (fun (bench_case, trial) ->
         let id = Bench.id bench_case in
         let measured = Run.Trial.measurements trial in
-        let effective =
-          effective_budgets ~run_budgets:budgets
-            ~collected:(List.map fst measured) bench_case
-        in
         let states =
           List.map
             (fun (metric, measurement) ->
-              let budget = budget_for effective metric in
+              let budget = budget_for ~run_budgets:budgets bench_case metric in
               let state =
                 match comparable with
                 | None -> Settled Proposed
@@ -591,8 +559,8 @@ let exact_evidence case_report metric =
 (* A statistical estimate crossing an absolute line is not an earned
    verdict, so only an exact count fails a cap. *)
 let report_fails case_report report =
-  match Option.map Budget.contract report.budget with
-  | Some (Budget.Relative _) -> (
+  match Budget.contract report.budget with
+  | Budget.Relative _ -> (
       match report.verdict with
       | Judged (Regressed _) -> true
       | Proposed
@@ -600,11 +568,10 @@ let report_fails case_report report =
           ( Improved _ | Equivalent _ | Changed_within_budget _
           | Within_budget _ | Inconclusive _ ) ->
           false)
-  | Some (Budget.Absolute_max _) -> (
+  | Budget.Absolute_max _ -> (
       match Run.Trial.measurement case_report.trial report.metric with
       | Some (Run.Exact c) -> over_cap report.budget c
       | Some (Run.Samples _) | None -> false)
-  | None -> false
 
 let report_inconclusive report =
   match report.verdict with
@@ -617,11 +584,7 @@ let report_inconclusive report =
 
 let case_overall case_report =
   if List.exists (report_fails case_report) case_report.reports then `Fail
-  else if
-    List.exists
-      (fun r -> Option.is_some r.budget && report_inconclusive r)
-      case_report.reports
-  then `Inconclusive
+  else if List.exists report_inconclusive case_report.reports then `Inconclusive
   else `Pass
 
 let overall t =

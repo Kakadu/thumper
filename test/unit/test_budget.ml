@@ -147,13 +147,11 @@ let observers =
 let defaults =
   group "Defaults"
     [
-      test "default_max_regression is 0.05" (fun () ->
-          equal float_exact 0.05 Budget.default_max_regression);
-      test "defaults is one wall_time budget of 0.05" (fun () ->
-          equal
-            (list (pair string contract))
-            [ ("wall_time", Budget.Relative 0.05) ]
-            (List.map shown Budget.defaults));
+      cases "default m is relative 0.05 on m" ~name:Metric.id
+        [ Metric.wall_time; Metric.major_collections ] (fun m ->
+          equal (pair string contract)
+            (Metric.id m, Budget.Relative 0.05)
+            (shown (Budget.default m)));
     ]
 
 let () = exit (run "budget" [ constructors; observers; defaults ])

@@ -1,7 +1,7 @@
 thumper: digest — 1 case vs digest.thumper for machine testkey
 
   REGRESSED  2.00 us  ±0.0%  ~200 w  alpha
-      +100.0% [+100.0, +100.0]  budget +5%; regressed alloc +100.0% [+100.0, +100.0]
+      +100.0% [+100.0, +100.0]  budget +5%; inconclusive alloc: exactness lost
 
   rerun:   bench.exe -f alpha
 

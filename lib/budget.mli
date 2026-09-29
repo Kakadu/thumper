@@ -72,11 +72,6 @@ val check_distinct : fname:string -> t list -> unit
 
 (** {1:defaults Defaults} *)
 
-val default_max_regression : float
-(** [default_max_regression] is [0.05]. [Verdict] judges a metric without a
-    budget, and sampled evidence under an {!at_most} cap, with this [r]. *)
-
-val defaults : t list
-(** [defaults] is [[no_slower_than default_max_regression]]: the budgets of a
-    case left with none once the budgets on metrics it does not collect are
-    dropped. It binds only a case that collects {!Metric.wall_time}. *)
+val default : Metric.t -> t
+(** [default m] is [relative ~metric:m 0.05], the budget of a metric [m] that a
+    case collects and no scope budgets. *)
