@@ -123,14 +123,28 @@ seams and read only what no timing moves. Scripted clocks must advance
 across batches: a stuck scripted clock hangs the warmup arm by contract
 (`measure.mli`).
 
+`Cli.main` has no seam: `test_cli` drives it through its argv, in
+process, and reads what it prints, its exit code and the files it
+leaves. Most of its claims are reached through a stop, which `main`
+makes before it measures: the parse through the usage errors and
+`list`, the default baseline path through the pre-flight stop of a
+directory that does not exist, so that the stop names the resolved
+path and nothing is written. The runs that must print a report, for
+the variant `main` chose (colour, the `rerun:` and `accept:` lines,
+the GitHub annotations), the files a run writes and the pruning, measure
+for real, in process, on a millisecond protocol that collects
+allocation counts alone; they are `slow`. What `main` prints on a
+loaded host (`--wait-quiet`'s lines, bless's refusal, the `# forced:`
+record) depends on the host's load, so no unit test asserts it.
+
 Through the facade, `test_thumper` measures twice, in `slow` tests:
 `Thumper.measure` with 3 samples, and `Check.run`'s documented example
 against a synthetic baseline. They read a sample count, an exact count,
 an exit code and the sections of the corrected file.
 
-The stanzas of `test_measure`, `test_check` and `test_thumper` take the
-cram sessions' measurement lock, so their real measurements never share
-the host with a cram session's.
+The stanzas of `test_measure`, `test_check`, `test_cli` and
+`test_thumper` take the cram sessions' measurement lock, so their real
+measurements never share the host with a cram session's.
 
 ## Cram conventions
 

@@ -149,11 +149,11 @@
 
 (test
  (name test_cli)
- ; The cram fixture executable is a runtime dependency: the end-to-end
- ; default-path test invokes it through its _build path.
+ ; Its slow tests measure on the real clock, so they take the cram
+ ; sessions' lock.
  (modules test_cli)
+ (locks ../cram/measurement)
  (libraries thumper unix windtrap)
- (deps ../cram/fixture/bench_fixture.exe)
  (action
   (progn
    (run %{test} --corrected)
