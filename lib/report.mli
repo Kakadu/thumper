@@ -9,24 +9,20 @@
     a blank line and ending in a newline: a header, a table with one row per
     case, the actions, and for [check] against a current section a summary. They
     read nothing but their arguments and print nothing: {!Cli.main} prints the
-    report on stdout. {!status_line} is the text of the progress line
-    {!Cli.main} prints on stderr while a run measures.
+    report on stdout. {!status_redraw} and {!status_erase} are the bytes of the
+    progress line {!Cli.main} prints on stderr while a run measures.
 
     The module is visible only as [Thumper.Private.Report], outside the API.
     [Thumper.run]'s documentation states which parts of the report are stable
     ({!Cli}). *)
 
-val status_line : Check.progress -> string
-(** [status_line p] is the text of the progress tick [p],
-    [thumper: <verb> <index>/<total>: <id>], where [<verb>] is [measuring] or
-    [confirming] for [p]'s phase. It holds no carriage return and no escape
-    sequence. {!Cli.main} prints it on stderr at each tick while [check] and
-    [bless] measure, when stderr is a terminal. *)
-
 val status_redraw : Check.progress -> string
 (** [status_redraw p] is the bytes that replace the status line on a terminal
-    with [status_line p]: a carriage return, [status_line p], and the erase to
-    the end of the line. *)
+    with the text of the progress tick [p]: a carriage return,
+    [thumper: <verb> <index>/<total>: <id>], where [<verb>] is [measuring] or
+    [confirming] for [p]'s phase, and the erase to the end of the line.
+    {!Cli.main} prints it on stderr at each tick while [check] and [bless]
+    measure, when stderr is a terminal. *)
 
 val status_erase : string
 (** [status_erase] is the bytes that erase the status line on a terminal: a

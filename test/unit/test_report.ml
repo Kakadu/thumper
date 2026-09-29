@@ -578,21 +578,17 @@ let progress phase index total case = { Check.phase; index; total; case }
 let status_line =
   group "The status line"
     [
-      cases "status_line names the sweep, the index and the case"
+      cases "status_redraw draws the sweep, the index and the case"
         ~name:(fun (name, _, _) -> name)
         [
           ( "measuring",
             progress `Measuring 3 6 "busy/spin",
-            "thumper: measuring 3/6: busy/spin" );
+            "\rthumper: measuring 3/6: busy/spin\027[K" );
           ( "confirming",
             progress `Confirming 1 2 "alloc/list",
-            "thumper: confirming 1/2: alloc/list" );
+            "\rthumper: confirming 1/2: alloc/list\027[K" );
         ]
-        (fun (_, p, expected) -> equal string expected (Report.status_line p));
-      test "status_redraw returns to column 0 and erases what is left"
-        (fun () ->
-          equal string "\rthumper: measuring 3/6: busy/spin\027[K"
-            (Report.status_redraw (progress `Measuring 3 6 "busy/spin")));
+        (fun (_, p, expected) -> equal string expected (Report.status_redraw p));
       test "status_erase returns to column 0 and erases the line" (fun () ->
           equal string "\r\027[K" Report.status_erase);
     ]
