@@ -47,14 +47,14 @@ noise. Keeping `e` at most `r` keeps the band inside what the budget allows.
 
 For an unchanged case, the first trial's interval lies wholly above zero at
 most one time in two hundred, if the samples are exchangeable. That is a
-statement about one case and one trial. The rate of a false failure over a
-whole check, confirmation included, has not been measured on any host, and
-this manual quotes none.
+statement about one case and one trial, and it gives no rate of false
+failure for a whole check ([Confirming a
+regression](#confirming-a-regression)).
 
 ## Passing within the budget
 
 A timing row whose interval ends at or under its budget, `U <= r`, passes as
-`within budget`, whatever else the interval shows. The budget is the claim a
+`within budget` when it is neither improved nor equivalent. The budget is the claim a
 check makes, that the case is no slower than its baseline by more than `r`.
 An interval that ends under `r` shows that claim at the first trial's level.
 
@@ -89,9 +89,9 @@ already showed.
 
 A second trial cannot see noise that both trials share: a baseline recorded
 on a lucky run, a host that is hot for the whole check, a code layout that
-this build happens to have. That is why the manual quotes no rate for a
-whole check. Until one is measured, a later `rerun:` of a failing case is
-the defence against such noise.
+this build happens to have. That noise is why this page gives no rate for
+a whole check. Measuring a failing case again later, with its `rerun:`
+line, is the defence against it.
 
 A second trial measured at another batch size is never pooled with the
 first, since one baseline row never mixes two batch sizes. It counts as a
@@ -157,17 +157,17 @@ section. Every other section stays as it is, byte for byte. Thumper never
 scales one machine's numbers to another's, since any conversion would add
 its own noise and bias to every comparison.
 
-The key hashes the host, the operating system and the CPU model, where the
-host is the host name, or the hardware UUID on macOS. Two ways to get the
-key wrong cost differently:
+The key hashes the host, its operating system and its CPU model, as
+`Baseline.machine_key` in [`lib/thumper.mli`](../../lib/thumper.mli) says.
+Two ways to get the key wrong cost differently:
 
-- Splitting too much, as a renamed host does, costs a new section. Every row
+- Splitting too much, as renaming a Linux host does, costs a new section. Every row
   reads `proposed`, and one accept records it.
 - Splitting too little puts two machines' timings in one section. A slower
   machine then reads as a regression, confirmed, since both trials run on
   it.
 
-The first is visible and cheap, the second silent, so the key splits
+The first is visible and cheap and the second is silent, so the key splits
 eagerly. `THUMPER_MACHINE` replaces the key with a name the user chooses,
 which claims that every host using it times alike.
 
@@ -176,7 +176,7 @@ which claims that every host using it times alike.
 A section records the compiler it was measured under: the OCaml version, the
 word size, and the backend and runtime variant. Another compiler generates
 other code, so a comparison across compilers would report the compiler's
-changes as the code's. A stale section is therefore judged not at all. Every
+changes as the code's. A stale section is therefore not judged. Every
 row reads `proposed`, the corrected file replaces the section, and only a
 count over its cap can fail.
 
