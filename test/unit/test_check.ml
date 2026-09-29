@@ -688,7 +688,8 @@ let checking =
           let w = world () in
           raises e (fun () -> run w);
           equal ~msg:"calls" int 0 w.calls);
-      slow "run on its default seams proposes a new case and keeps absent rows"
+      slow ~timeout:30.
+        "run on its default seams proposes a new case and keeps absent rows"
         run_on_its_default_seams;
     ]
 
@@ -745,7 +746,7 @@ let measuring =
                 ~filter
                 [ Bench.bench ~budgets "a" (stepper w (fun _ -> ms_ns)) ]);
           equal ~msg:"calls" int 0 w.calls);
-      slow "measure on its default seams samples every case"
+      slow ~timeout:30. "measure on its default seams samples every case"
         measure_on_its_default_seams;
     ]
 
