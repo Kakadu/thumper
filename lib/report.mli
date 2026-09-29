@@ -7,10 +7,11 @@
 
     {!val-check} and {!val-bless} build a report as text, in blocks separated by
     a blank line and ending in a newline: a header, a table with one row per
-    case, the actions, and for [check] against a current section a summary. They
-    read nothing but their arguments and print nothing: {!Cli.main} prints the
-    report on stdout. {!status_redraw} and {!status_erase} are the bytes of the
-    progress line {!Cli.main} prints on stderr while a run measures.
+    case, for [check] the [::error::] lines, and last the hints directly above
+    the summary, the report's last line. They read nothing but their arguments
+    and print nothing: {!Cli.main} prints the report on stdout. {!status_redraw}
+    and {!status_erase} are the bytes of the progress line {!Cli.main} prints on
+    stderr while a run measures.
 
     The module is visible only as [Thumper.Private.Report], outside the API.
     [Thumper.run]'s documentation states which parts of the report are stable
@@ -19,10 +20,10 @@
 val status_redraw : Check.progress -> string
 (** [status_redraw p] is the bytes that replace the status line on a terminal
     with the text of the progress tick [p]: a carriage return,
-    [thumper: <verb> <index>/<total>: <id>], where [<verb>] is [measuring] or
-    [confirming] for [p]'s phase, and the erase to the end of the line.
-    {!Cli.main} prints it on stderr at each tick while [check] and [bless]
-    measure, when stderr is a terminal. *)
+    [  [<index>/<total>] <id>…], with [: confirming] before the ellipsis in the
+    confirmation sweep, and the erase to the end of the line. {!Cli.main} prints
+    it on stderr at each tick while [check] and [bless] measure, when stderr is
+    a terminal. *)
 
 val status_erase : string
 (** [status_erase] is the bytes that erase the status line on a terminal: a
@@ -32,6 +33,11 @@ val loaded : load:float -> cores:int -> string
 (** [loaded ~load ~cores] is how every line that reports a loaded host names the
     load: [load 7.9 on 8 cores, over 4.0], with the threshold of
     {!Env.loaded_at}. *)
+
+val duration_str : float -> string
+(** [duration_str secs] is [secs] as the summaries print it: [%.1fms] under 10
+    ms, [%.0fms] under a second, and [%.1fs] from there, as [4.2ms], [310ms] and
+    [3.2s]. *)
 
 val shell_arg : string -> string
 (** [shell_arg s] is [s] as one argument of a POSIX shell command: [s] itself
@@ -69,6 +75,8 @@ type render = {
   cpu_model : string;
       (** The host's CPU model, which the header names when this machine has no
           section in the baseline. *)
+  duration : float;
+      (** The seconds the run measured for, which the summary prints. *)
 }
 (** The type for what {!val-check} needs besides the verdict. *)
 
@@ -95,9 +103,17 @@ val check : render -> Verdict.t -> string
     metric, or one inconclusive for [Batch_drifted], or for [Exactness_lost]
     when the run's count is exact. It is the [bless] command that records those
     cases. [Wide_interval], [Non_positive] and a sampled count's
-    [Exactness_lost] make no hint. A load is named by {!loaded}. The summary,
-    which only a run against a current section prints, is red iff
-    [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
+    [Exactness_lost] make no hint. A load is named by {!loaded}.
+
+    The header is [<suite>: ] and the run's subject, and a failing case's id is
+    bold. The summary counts each case once, by {!Verdict.case_overall}:
+    [<n> passed], followed by [(<n> improved)] when some passing row opens on
+    [improved], [<n> regressed], [<n> inconclusive], and [<n> proposed] for the
+    passing cases whose every metric is proposed. A term of no case is left out.
+    It then prints [in] and [r.duration] by {!duration_str}, and ends in a full
+    stop. Red, on the [regressed] term and the [--strict] clause, appears iff
+    [Verdict.exit_code ~strict:r.strict v] is [1], and [passed] is green iff it
+    is [0]. *)
 
 (** {1:bless The bless report} *)
 
@@ -108,13 +124,16 @@ val bless :
   baseline_path:string ->
   cases:int ->
   load:Env.load ->
+  duration:float ->
   Run.t ->
   string
-(** [bless ~color ~suite ~machine ~baseline_path ~cases ~load run] is the report
-    of the [bless] run [run], which measured [cases] selected cases of [suite]
-    and recorded them in [baseline_path] for the machine key [machine], ending
-    in a newline. Its table has one [blessed] row per trial of [run], followed
-    by the trials' warnings. Its actions are a load warning when [load] is
-    loaded. [load] is the load the run measured under: only [--force] measures
-    on a loaded host, and the warning says it was recorded. [color] styles the
+(** [bless ~color ~suite ~machine ~baseline_path ~cases ~load ~duration run] is
+    the report of the [bless] run [run], which measured [cases] selected cases
+    of [suite] for [duration] seconds and recorded them in [baseline_path] for
+    the machine key [machine], ending in a newline. Its header names the cases
+    and the machine, followed by a load warning when [load] is loaded: [load] is
+    the load the run measured under, and only [--force] measures on a loaded
+    host. Its table has one [blessed] row per trial of [run], followed by the
+    trials' warnings. Its summary is
+    [<cases> blessed into <baseline_path> in <duration>.]. [color] styles the
     report as {!render}'s [color] does. *)

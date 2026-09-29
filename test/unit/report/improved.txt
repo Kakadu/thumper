@@ -1,8 +1,7 @@
-thumper: digest — 1 case vs digest.thumper for machine testkey
+digest: 1 case vs digest.thumper for machine testkey
 
   improved  1.00 us  ±0.0%  54 w  alpha
       -50.0% [-50.0, -50.0]
 
-  accept:  bench.exe bless
-
-  1 case: 0 passed, 1 improved.
+accept: bench.exe bless
+1 passed (1 improved) in 1.2s.

@@ -1,4 +1,4 @@
-thumper: digest — no baseline for machine testkey (Test CPU)
+digest: no baseline for machine testkey (Test CPU)
 
   proposed  1.00 us  ±0.0%       0 w  zero
   proposed  1.00 us  ±0.0%      54 w  alpha
@@ -7,4 +7,5 @@ thumper: digest — no baseline for machine testkey (Test CPU)
   proposed  1.00 us  ±0.0%  32,730 w  epsilon
   proposed  1.00 us  ±0.0%   ~2.1 kw  delta
 
-  accept:  bench.exe bless
+accept: bench.exe bless
+6 proposed in 1.2s.

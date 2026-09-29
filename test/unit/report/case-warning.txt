@@ -1,6 +1,6 @@
-thumper: digest — 1 case vs digest.thumper for machine testkey
+digest: 1 case vs digest.thumper for machine testkey
 
   passed  1.00 us  ±0.0%  54 w  alpha
   warning: alpha: possibly folded: wrap the input in black_box
 
-  1 case: 1 passed.
+1 passed in 1.2s.

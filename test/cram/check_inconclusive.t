@@ -14,8 +14,8 @@ Inconclusive exits 0, the reason is named, and the summary counts it.
   $ THUMPER_FIXTURE_MODE=alloc_grow $FIX check --quick -f alloc/list > out.log 2>&1
   $ grep -o 'exactness lost' out.log
   exactness lost
-  $ grep -o '1 case: .*' out.log
-  1 case: 0 passed, 1 inconclusive.
+  $ summary out.log
+  1 inconclusive in DURATION.
   $ cmp fixture.thumper before.thumper
 
 --strict fails a proposed metric only, so an inconclusive case still

@@ -41,13 +41,13 @@ An empty selection exits 2 wherever it lands, with the reason on stderr,
 and writes no baseline.
 
   $ $FIX check --quick --tag nope > /dev/null
-  thumper: no case matches tag 'nope'
+  thumper: no case selected: tag 'nope' matched none of 7 cases
   [2]
   $ $FIX list --tag nope > /dev/null
-  thumper: no case matches tag 'nope'
+  thumper: no case selected: tag 'nope' matched none of 7 cases
   [2]
   $ $FIX bless --quick --force --tag nope > /dev/null
-  thumper: no case matches tag 'nope'
+  thumper: no case selected: tag 'nope' matched none of 7 cases
   [2]
   $ test ! -e fixture.thumper && echo no-baseline
   no-baseline

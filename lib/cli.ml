@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let strf = Printf.sprintf
+let plural n = if n = 1 then "" else "s"
 
 (* The dune-release/dune-subst watermark: substituted with the VCS tag,
    without its leading [v], at distribution time, so [-V] and the changelog
@@ -44,6 +45,88 @@ let subcommand_word = function
   | `Check -> "check"
   | `Bless -> "bless"
   | `List -> "list"
+
+(* Suggestions *)
+
+(* The Damerau-Levenshtein distance, where a transposition is one edit, as
+   windtrap's: it is the typo people make. *)
+let edit_distance a b =
+  let la = String.length a and lb = String.length b in
+  let d = Array.make_matrix (la + 1) (lb + 1) 0 in
+  for i = 0 to la do
+    d.(i).(0) <- i
+  done;
+  for j = 0 to lb do
+    d.(0).(j) <- j
+  done;
+  for i = 1 to la do
+    for j = 1 to lb do
+      let substitution = if a.[i - 1] = b.[j - 1] then 0 else 1 in
+      let best =
+        min
+          (min (d.(i).(j - 1) + 1) (d.(i - 1).(j) + 1))
+          (d.(i - 1).(j - 1) + substitution)
+      in
+      d.(i).(j) <-
+        (if i > 1 && j > 1 && a.[i - 1] = b.[j - 2] && a.[i - 2] = b.[j - 1]
+         then min best (d.(i - 2).(j - 2) + 1)
+         else best)
+    done
+  done;
+  d.(la).(lb)
+
+(* The long options, in [--help]'s order. *)
+let long_options =
+  [
+    "--tag";
+    "--quick";
+    "--precise";
+    "--baseline";
+    "--json";
+    "--strict";
+    "--wait-quiet";
+    "--force";
+    "--color";
+    "--version";
+    "--help";
+  ]
+
+(* What an unknown option most likely meant. Windtrap's [-l] and [-u] point
+   to the subcommands that do their work here. Any other short option gets
+   none, since any two are one edit apart. A long one gets the nearest long
+   option or subcommand, the subcommand compared without the dashes, within
+   a third of its length or two edits: farther is another word, not a slip.
+   A tie goes to the option, then to the first in its table. *)
+let suggestion flag =
+  match flag with
+  | "-l" -> Some "list"
+  | "-u" -> Some "bless"
+  | _ when not (String.starts_with ~prefix:"--" flag) -> None
+  | _ -> (
+      let budget = max 2 (String.length flag / 3) in
+      let bare = String.sub flag 2 (String.length flag - 2) in
+      let nearest from candidates =
+        List.fold_left
+          (fun best c ->
+            let d = edit_distance from c in
+            match best with
+            | Some (_, best_d) when best_d <= d -> best
+            | _ when d <= budget -> Some (c, d)
+            | _ -> best)
+          None candidates
+      in
+      match
+        (nearest flag long_options, nearest bare [ "check"; "bless"; "list" ])
+      with
+      | Some (o, d), Some (c, d') -> Some (if d' < d then c else o)
+      | Some (o, _), None -> Some o
+      | None, Some (c, _) -> Some c
+      | None, None -> None)
+
+let unknown_option flag =
+  match suggestion flag with
+  | Some s -> strf "unknown option '%s'; did you mean '%s'?" flag s
+  | None -> strf "unknown option '%s'" flag
 
 (* The long options that take no value: [--flag=V] on one is refused. *)
 let long_flags =
@@ -198,7 +281,7 @@ let parse argv =
         | Some i when List.mem (String.sub a 0 i) long_flags ->
             Usage_error
               (strf "option '%s' takes no argument" (String.sub a 0 i))
-        | Some _ | None -> Usage_error (strf "unknown option '%s'" a))
+        | Some _ | None -> Usage_error (unknown_option a))
     | a :: rest ->
         (* A bare argument is a pattern, as after [-f]. *)
         read { r with patterns = a :: r.patterns } rest
@@ -238,10 +321,11 @@ let config_of ?config (o : options) =
 
 (* Color *)
 
-(* [--color always] beats [NO_COLOR], which no-color.org makes a default that
-   an explicit request overrides. A rule action is coloured under [`Auto]
-   because dune captures its output and shows it again on a terminal;
-   [dune exec] sets [INSIDE_DUNE] too, but its stdout is the user's own. *)
+(* [--color always] beats [NO_COLOR] and [TERM=dumb], which no-color.org
+   makes a default that an explicit request overrides. A rule action is
+   coloured under [`Auto] because dune captures its output and shows it
+   again on a terminal; [dune exec] sets [INSIDE_DUNE] too, but its stdout is
+   the user's own. *)
 let use_color mode ~is_tty ~rule_action ~no_color =
   match mode with
   | `Always -> true
@@ -506,6 +590,13 @@ let with_lock_progress f =
   | Ok v -> v
   | Error e -> fail2 "%s" (pp_str Env.Lock.pp_error e)
 
+(* [f ()] and the seconds it took, which the summaries print: the time spent
+   measuring, under the lock and after any wait for it. *)
+let timed f =
+  let start = Unix.gettimeofday () in
+  let v = f () in
+  (Unix.gettimeofday () -. start, v)
+
 let checked f =
   try f () with Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
@@ -554,15 +645,22 @@ let write_baseline path file =
 
 (* The selection is checked before the lock, so a broken suite or filter
    fails without waiting on another run; [list] is only this. An empty
-   selection names the patterns and tags that matched nothing, so a mistyped
-   subcommand, read as a pattern, explains itself. *)
-let no_match ~patterns ~tags =
-  let quoted l = String.concat ", " (List.map (fun s -> "'" ^ s ^ "'") l) in
+   selection names the patterns, any of which selects, and the tags, all of
+   which must, and how many cases they missed, as windtrap's does, so a mistyped subcommand, read as a
+   pattern, explains itself. *)
+let no_match ~patterns ~tags ~cases =
+  let quoted ~sep l = String.concat sep (List.map (fun s -> "'" ^ s ^ "'") l) in
+  let missed what =
+    strf "no case selected: %s matched none of %d case%s" what cases
+      (plural cases)
+  in
   match (patterns, tags) with
-  | [], [] -> pp_str Check.pp_error Check.Empty_selection
-  | ps, [] -> strf "no case matches %s" (quoted ps)
-  | [], ts -> strf "no case matches tag %s" (quoted ts)
-  | ps, ts -> strf "no case matches %s with tag %s" (quoted ps) (quoted ts)
+  | [], [] -> "no case selected: the suite declares none"
+  | ps, [] -> missed (quoted ~sep:" or " ps)
+  | [], ts -> missed ("tag " ^ quoted ~sep:", " ts)
+  | ps, ts ->
+      missed
+        (strf "%s with tag %s" (quoted ~sep:" or " ps) (quoted ~sep:", " ts))
 
 let selection ~patterns ~tags ~config ~budgets ?filter benches =
   match
@@ -572,7 +670,11 @@ let selection ~patterns ~tags ~config ~budgets ?filter benches =
   with
   | selected -> selected
   | exception Check.Error Check.Empty_selection ->
-      fail2 "%s" (no_match ~patterns ~tags)
+      (* The suite passed the selection's checks, so it resolves. *)
+      let cases =
+        match Bench.resolve benches with Ok l -> List.length l | Error _ -> 0
+      in
+      fail2 "%s" (no_match ~patterns ~tags ~cases)
   | exception Check.Error e -> fail2 "%s" (pp_str Check.pp_error e)
 
 (* [--wait-quiet]: [Some secs] iff the wait expired with the host still
@@ -627,12 +729,13 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
        benches);
   let file = read_baseline ~suite:name baseline_path in
   warn_expired (wait_for_quiet o.wait_quiet);
-  let verdict =
+  let duration, verdict =
     checked (fun () ->
         with_status (fun tick ->
             with_lock_progress (fun () ->
-                Check.run_with ~on_progress:tick ~config ?budgets ?filter
-                  ?baseline:file name benches)))
+                timed (fun () ->
+                    Check.run_with ~on_progress:tick ~config ?budgets ?filter
+                      ?baseline:file name benches))))
   in
   Option.iter (fun p -> write_json p (Verdict.to_json verdict ^ "\n")) o.json;
   let r =
@@ -645,6 +748,7 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       patterns = o.patterns;
       strict = o.strict;
       cpu_model = Env.cpu_model ();
+      duration;
     }
   in
   print_string (Report.check r verdict);
@@ -684,7 +788,7 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
      another run's load. [--wait-quiet] waits before the lock, since holding it
      would block every other run, so a load that rises after both waits is
      refused only here. *)
-  let load, run =
+  let load, duration, run =
     checked (fun () ->
         with_status (fun tick ->
             with_lock_progress (fun () ->
@@ -696,7 +800,11 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                        with --force to record it anyway"
                       (Report.loaded ~load ~cores)
                 | Env.Loaded _ | Env.Quiet -> ());
-                (load, Check.measure ~on_progress:tick ~config ?filter benches))))
+                let duration, run =
+                  timed (fun () ->
+                      Check.measure ~on_progress:tick ~config ?filter benches)
+                in
+                (load, duration, run))))
   in
   (* The [--force] record in the section header; a partial bless names its
      cases, the rows the load touched. *)
@@ -719,48 +827,95 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
        file);
   print_string
     (Report.bless ~color ~suite:name ~machine ~baseline_path
-       ~cases:(List.length sel) ~load run);
+       ~cases:(List.length sel) ~load ~duration run);
   0
 
 (* Help and entry *)
 
 let exe_of argv = if Array.length argv > 0 then argv.(0) else "bench.exe"
 
+let usage exe =
+  strf "usage: %s [check|bless|list] [OPTIONS] [PATTERN...]"
+    (Filename.basename exe)
+
+(* [text] filled greedily into lines of at most 80 columns behind [indent]
+   spaces, a word never split, as windtrap's help. *)
+let fill ~indent text =
+  let margin = String.make indent ' ' in
+  let add lines word =
+    match lines with
+    | line :: rest when String.length line + 1 + String.length word <= 80 ->
+        (line ^ " " ^ word) :: rest
+    | lines -> (margin ^ word) :: lines
+  in
+  List.rev (List.fold_left add [] (String.split_on_char ' ' text))
+
+(* Windtrap's layout: a heading, then its sentence indented below. *)
+let described (heading, doc) = (("  " ^ heading) :: fill ~indent:6 doc) @ [ "" ]
+
 let help_text exe =
   let name = Filename.basename exe in
+  let section title rows = (title ^ ":") :: List.concat_map described rows in
   String.concat "\n"
-    [
-      strf "%s: thumper benchmark suite (thumper %s)" name version;
-      "";
-      strf "usage: %s [check|bless|list] [OPTS] [PATTERN...]" name;
-      "";
-      "subcommands:";
-      "  check      measure, compare against the baseline (default)";
-      "  bless      record the selected cases in the baseline for this machine";
-      "  list       print the selected case ids; no measurement";
-      "";
-      "options:";
-      "  -f PAT             select cases whose id contains PAT (repeatable,";
-      "                     OR'd); bare PATTERN arguments mean the same";
-      "  --tag T            select cases tagged T (repeatable, AND'd)";
-      "  --quick            quick protocol (fewer samples)";
-      "  --precise          precise protocol (more samples)";
-      "  --baseline PATH    baseline file (default: <suite>.thumper next to";
-      "                     the benchmark's source)";
-      "  --json PATH        check: write the verdict document to PATH";
-      "  --strict           check: a metric with no baseline row exits 1";
-      "  --wait-quiet SECS  wait up to SECS for a quiet host before measuring";
-      "  --force            bless despite a loaded host (recorded)";
-      "  --color MODE       color the report: auto (default), always, never";
-      "  -h, --help         show this help";
-      "  -V, --version      print the version";
-      "";
-      "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock";
-      "directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);";
-      "INSIDE_DUNE marks a dune rule action, whose report is coloured and whose";
-      "hints paste from DUNE_SOURCEROOT.";
-      "";
-    ]
+    (List.concat
+       [
+         [
+           strf "%s - thumper benchmark suite (thumper %s)" name version;
+           "";
+           usage exe;
+           "";
+         ];
+         fill ~indent:0
+           "The first argument names the subcommand, check when it names none. \
+            Each bare PATTERN is read as one -f PATTERN.";
+         [ "" ];
+         section "SUBCOMMANDS"
+           [
+             ( "check",
+               "Measure, and compare against the baseline (the default)." );
+             ( "bless",
+               "Record the selected cases in the baseline for this machine." );
+             ("list", "Print the selected case ids, measuring nothing.");
+           ];
+         section "OPTIONS"
+           [
+             ( "-f PATTERN",
+               "Select cases whose id contains PATTERN (repeatable: any of \
+                them)." );
+             ("--tag=TAG", "Select cases tagged TAG (repeatable: all of them).");
+             ("--quick", "Measure with the quick protocol (fewer samples).");
+             ("--precise", "Measure with the precise protocol (more samples).");
+             ( "--baseline=PATH",
+               "The baseline file (default: <suite>.thumper next to the \
+                benchmark's source)." );
+             ("--json=PATH", "check: write the verdict document to PATH.");
+             ("--strict", "check: exit 1 when a metric has no baseline row.");
+             ( "--wait-quiet=SECS",
+               "Wait up to SECS seconds for a quiet host before measuring." );
+             ( "--force",
+               "bless: record on a loaded host, and note the load in the \
+                baseline." );
+             ( "--color=MODE",
+               "Color the report: auto (the default), always or never." );
+             ("-V, --version", "Print the version and exit.");
+             ("-h, --help", "Print this help and exit.");
+           ];
+         section "ENVIRONMENT"
+           [
+             ( "THUMPER_MACHINE",
+               "The machine key, which names this machine's section of the \
+                baseline." );
+             ("THUMPER_LOCK_DIR", "The directory of the measurement lock.");
+             ("NO_COLOR", "Any non-empty value: never color (--color auto).");
+             ("TERM", "dumb: never color (--color auto).");
+             ( "GITHUB_ACTIONS",
+               "Any value: add an ::error:: line for each metric that fails \
+                its case." );
+             ( "INSIDE_DUNE, DUNE_SOURCEROOT",
+               "Mark a dune rule action, whose report is colored and whose \
+                hints paste from DUNE_SOURCEROOT." );
+           ];
+       ])
 
 let main ?baseline ?config ?budgets ~argv ~name benches =
   Baseline.check_suite ~fname:"Thumper.run" name;
@@ -773,7 +928,7 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
       print_string ("thumper " ^ version ^ "\n");
       0
   | Usage_error msg ->
-      Printf.eprintf "thumper: %s\nTry '-h' for usage.\n%!" msg;
+      Printf.eprintf "thumper: %s\n%s\n%!" msg (usage (exe_of argv));
       2
   | Run o -> (
       try
@@ -825,9 +980,10 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         let color =
           use_color o.color ~is_tty:(Unix.isatty Unix.stdout) ~rule_action
             ~no_color:
-              (match Sys.getenv_opt "NO_COLOR" with
-              | Some s when s <> "" -> true
-              | Some _ | None -> false)
+              ((match Sys.getenv_opt "NO_COLOR" with
+                 | Some s when s <> "" -> true
+                 | Some _ | None -> false)
+              || Sys.getenv_opt "TERM" = Some "dumb")
         in
         match o.subcommand with
         | `List -> run_list ~o ~config ~filter ~budgets benches

@@ -15,10 +15,10 @@
     the module is otherwise visible only as [Thumper.Private.Cli], outside the
     API. [Thumper.run]'s documentation in the facade is the user contract of the
     command line: its grammar, its report, its files, its streams and its exit
-    codes. What it states is stable, and so is the summary's colour, which
-    follows the exit code ({!Report.val-check}). What it leaves unstated may
-    change: the text of each message, the report's column widths, its other
-    colours, and the wrapping of its [rerun:] and [accept:] lines. *)
+    codes. What it states is stable, and so is the summary's red, which appears
+    iff the run exits 1 ({!Report.val-check}). What it leaves unstated may
+    change: the text of each message, the report's column widths and its other
+    colours. *)
 
 (** {1:paths The default baseline's directory} *)
 
@@ -97,9 +97,12 @@ val main :
       or [budgets] fails {!Budget.check_distinct}, whatever [argv] holds.
     + It parses [argv] ({{!command_line}command lines}). [-h] or [--help] prints
       the help and [-V] or [--version] the version on stdout, and both return
-      [0]. A refused command line prints [thumper: <message>] and
-      [Try '-h' for usage.] on stderr and returns [2]. None of the three touches
-      a file.
+      [0]. A refused command line prints [thumper: <message>] and the usage line
+      [usage: <program> [check|bless|list] [OPTIONS] [PATTERN...]] on stderr,
+      [<program>] being [argv.(0)]'s base name, and returns [2]. The message of
+      an unknown long option names the nearest long option or subcommand, when
+      one lies within [max 2 (n / 3)] edits of the [n]-byte option, and [-l] and
+      [-u] name [list] and [bless]. None of the three touches a file.
     + It resolves the baseline path: [--baseline], else [baseline], else
       [<name>.thumper] in {!default_baseline_dir}'s directory. It passes that
       function [INSIDE_DUNE], [DUNE_SOURCEROOT] and [Sys.executable_name], not
@@ -110,10 +113,11 @@ val main :
     + It decides once whether the report is coloured: always under
       [--color always], never under [--color never], and under [--color auto],
       the default, when stdout is a terminal or the process is a dune rule
-      action, unless [NO_COLOR] is set and non-empty. The process is a dune rule
-      action iff [INSIDE_DUNE] is set to some [v] and the working directory has
-      a [_build] segment or, when [v] is absolute, lies strictly under
-      [Filename.dirname v]. Nothing [main] prints on stderr is coloured.
+      action, unless [NO_COLOR] is set and non-empty or [TERM] is [dumb]. The
+      process is a dune rule action iff [INSIDE_DUNE] is set to some [v] and the
+      working directory has a [_build] segment or, when [v] is absolute, lies
+      strictly under [Filename.dirname v]. Nothing [main] prints on stderr is
+      coloured.
     + It runs the subcommand, whose exit code it returns.
 
     [check] and [bless] measure with [config], {!Config.default} by default,
@@ -133,7 +137,8 @@ val main :
     holds the measurement lock ({!Env.Lock.with_lock}) around {!Check.run_with},
     whose own acquisition nests. It writes the [--json] file, prints
     {!Report.val-check}'s report on stdout and returns
-    [Verdict.exit_code ~strict]. It writes no baseline.
+    [Verdict.exit_code ~strict]. It writes no baseline. The report's duration is
+    the time {!Check.run_with} took, under the lock.
 
     The hints of the report paste from the {e hint directory}: the working
     directory, or in a dune rule action the real path of [DUNE_SOURCEROOT], and
@@ -157,4 +162,4 @@ val main :
     given, and then records the load through {!Baseline.record}'s [annotations].
     It measures with {!Check.measure}, writes {!Baseline.record}'s file over the
     baseline, with {!Check.select}'s selection, prints {!Report.val-bless}'s
-    report on stdout, and returns [0]. *)
+    report on stdout, with the time {!Check.measure} took, and returns [0]. *)

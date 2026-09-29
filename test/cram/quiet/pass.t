@@ -21,8 +21,8 @@ its samples never settle: the case is inconclusive, exit 0, and no accept
 line names it.
 
   $ THUMPER_FIXTURE_MODE=nondet $FIX check --quick --wait-quiet 60 -f nondet > out.log 2>&1
-  $ grep -o '1 case: .*' out.log
-  1 case: 0 passed, 1 inconclusive.
+  $ summary out.log
+  1 inconclusive in DURATION.
   $ grep -c 'accept:' out.log
   0
   [1]

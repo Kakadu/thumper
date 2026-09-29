@@ -1,4 +1,4 @@
-thumper: digest — 6 cases vs digest.thumper for machine testkey
+digest: 6 cases vs digest.thumper for machine testkey
 
   inconclusive  1.00 us  ±150.0%         wide-interval
       wide interval
@@ -13,7 +13,6 @@ thumper: digest — 6 cases vs digest.thumper for machine testkey
   inconclusive  1.00 us    ±0.0%         drifted
       drifted
 
-  rerun:   bench.exe
-  accept:  bench.exe bless -f batch-drifted
-
-  6 cases: 0 passed, 6 inconclusive.
+rerun: bench.exe
+accept: bench.exe bless -f batch-drifted
+6 inconclusive in 1.2s.

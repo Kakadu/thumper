@@ -12,7 +12,9 @@ their rows alone.
 
   $ $FIX bless --quick --force -f busy > out.log 2>&1
   $ head -1 out.log
-  thumper: fixture — blessed 2 cases into $TESTCASE_ROOT/fixture.thumper for machine testkey
+  fixture: 2 cases for machine testkey
+  $ summary out.log
+  2 blessed into $TESTCASE_ROOT/fixture.thumper in DURATION.
   $ grep -c 'accept:' out.log
   0
   [1]
@@ -26,8 +28,8 @@ A bless of every case replaces the section whole, one section for this
 machine with every case's rows.
 
   $ $FIX bless --quick --force > out.log 2>&1
-  $ head -1 out.log
-  thumper: fixture — blessed 7 cases into $TESTCASE_ROOT/fixture.thumper for machine testkey
+  $ summary out.log
+  7 blessed into $TESTCASE_ROOT/fixture.thumper in DURATION.
   $ grep -c '^# machine: ' fixture.thumper
   1
   $ grep -v '^#' fixture.thumper | grep -v '^$' | cut -f 1,2
@@ -53,8 +55,8 @@ earlier annotation of its own, so its survival shows.
   $ mv edited fixture.thumper
   $ grep -v '^busy/' fixture.thumper > kept.before
   $ $FIX bless --quick --force -f busy > out.log 2>&1
-  $ head -1 out.log
-  thumper: fixture — blessed 2 cases into $TESTCASE_ROOT/fixture.thumper for machine testkey
+  $ summary out.log
+  2 blessed into $TESTCASE_ROOT/fixture.thumper in DURATION.
   $ grep '^# forced:' fixture.thumper | head -1
   # forced: an earlier note
   $ grep -v '^busy/' fixture.thumper | grep -v '^# forced: blessed ' > kept.after

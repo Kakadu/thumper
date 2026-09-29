@@ -1,6 +1,6 @@
-thumper: digest — 1 case vs digest.thumper for machine testkey
+digest: 1 case vs digest.thumper for machine testkey
 
   passed  1.00 us  ±0.0%  5 w  alpha
       alloc +inf%  cap 10 w
 
-  1 case: 1 passed.
+1 passed in 1.2s.

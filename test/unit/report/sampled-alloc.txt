@@ -1,4 +1,4 @@
-thumper: digest — no baseline for machine testkey (Test CPU)
+digest: no baseline for machine testkey (Test CPU)
 
   proposed  1.00 us  ±0.0%       3,000 w  a
   proposed  1.00 us  ±0.0%  12,345,678 w  b
@@ -8,4 +8,5 @@ thumper: digest — no baseline for machine testkey (Test CPU)
   proposed  1.00 us  ±0.0%     ~0.999 Mw  g
   proposed  1.00 us  ±0.0%     ~2,500 Mw  h
 
-  accept:  bench.exe bless
+accept: bench.exe bless
+7 proposed in 1.2s.

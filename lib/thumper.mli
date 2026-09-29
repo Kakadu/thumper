@@ -428,17 +428,30 @@ val run :
     [check] and [bless] print one report on stdout once measurement completes
     and, for [bless], the baseline is written; a run that stops earlier prints
     none. Its blocks are a header, a table of one row per case followed by the
-    warnings, the actions and, for [check] against a current section, a summary.
-    The warnings include each case's {!Run.warnings}, its second trial's too.
+    warnings, for [check] under [GITHUB_ACTIONS] the [::error::] lines, and the
+    hints directly above the summary, which is the report's last line. The
+    warnings include each case's {!Run.warnings}, its second trial's too.
 
-    A row's time is the median of the case's first time metric, followed after
-    [±] by the half-width of that median's 95% confidence interval, as a
-    percentage of the median. [REGRESSED] marks a metric that fails its case and
-    is the report's only capitalised word. An allocation marked [~] is sampled.
-    In [check]'s report against a missing or stale section every row reads
-    [proposed] unless it fails, and in [bless]'s every row reads [blessed].
+    The header is [<name>: ] followed by the run's subject: [check]'s number of
+    cases and the baseline it compared them with, or why it compared none (no
+    baseline for this machine, or a stale section), and [bless]'s number of
+    cases. A loaded host adds a [warning:] line below it, which names the load
+    average and the one at which a host is loaded, half a task per core.
 
-    The actions are commands to paste where the run was started, or from the
+    A row opens on its case's outcome and ends with the case's id, bold when the
+    case fails. The outcome is [REGRESSED] when the case fails, the report's
+    only capitalised word, [inconclusive] when a metric is inconclusive, and
+    otherwise the passing word [improved], [proposed], or [passed] for the
+    relations equivalent and within budget. In [check]'s report against a
+    missing or stale section every row reads [proposed] unless it fails, and in
+    [bless]'s every row reads [blessed]. A row's time is the median of the
+    case's first time metric, followed after [±] by the half-width of that
+    median's 95% confidence interval, as a percentage of the median. Each time
+    and allocation carries its own unit, and an allocation marked [~] is
+    sampled. The row's other relations follow on its detail line, and a
+    regression or a relation within budget names its budget.
+
+    The hints are commands to paste where the run was started, or from the
     workspace root in a dune rule action:
     - [rerun:], when some case fails: a command that measures the failing cases
       again. With no failing case, a metric inconclusive for [environment],
@@ -450,8 +463,7 @@ val run :
 
     The other reasons, [wide interval], [non-positive sample] and a sampled
     count's [exactness lost], call for a change of protocol or budget and make
-    no hint. The loaded host's warning names the load average at which a host is
-    loaded, half a task per core.
+    no hint.
 
     Both hints name the executable relative to that directory when it lies under
     it, and absolute otherwise. They repeat the run's [--quick] or [--precise],
@@ -461,16 +473,14 @@ val run :
     records every case of the run. A [-f] pattern selects every case whose id
     contains it, so it may select more cases than the one it names.
 
-    The summary counts each case once, by its outcome: [regressed] when it
-    fails, [inconclusive] when a metric is inconclusive, and among the passing
-    cases [proposed] when no metric has a baseline row, [improved] when its row
-    opens on [improved], and [passed] otherwise. A row opens on its case's
-    outcome: [REGRESSED] when the case fails, [inconclusive] when a metric is
-    inconclusive, and otherwise the passing word [improved], [proposed], or
-    [passed] for the relations equivalent and within budget. The row's other
-    relations follow on its detail line, and a regression or a relation within
-    budget names its budget. The summary ends with [; failed under --strict]
-    when [--strict] alone made the run exit 1. *)
+    [check]'s summary counts each case once, by its outcome: [<n> passed],
+    followed by [(<n> improved)] for the passing rows that open on [improved],
+    then [<n> regressed], [<n> inconclusive], and [<n> proposed] for the passing
+    cases with no baseline row for any metric. A term of no case is left out. It
+    ends with [in] and the time the run measured for, then, when [--strict]
+    alone made the run exit 1, [; failed under --strict]. [bless]'s summary is
+    [<n> blessed into <path> in <duration>.]. Each hint and the summary is one
+    line. *)
 
 (** {2:files Files}
 
@@ -506,11 +516,14 @@ val run :
 (** {2:environment Streams and environment}
 
     Stderr carries:
-    - [thumper: <reason>] when the run stops, followed by [Try '-h' for usage.]
-      after a usage error;
+    - [thumper: <reason>] when the run stops, followed by the usage line
+      [usage: <program> [check|bless|list] [OPTIONS] [PATTERN...]] after a usage
+      error. An unknown long option's reason names the nearest long option or
+      subcommand when it lies within a third of the option's length in edits,
+      and at least two, and [-l] and [-u] name [list] and [bless];
     - while measuring, when stderr is a terminal, one status line naming the
-      case being measured or confirmed, rewritten in place and erased before
-      anything else prints;
+      case being measured or confirmed, as [[3/7] <id>…], rewritten in place and
+      erased before anything else prints;
     - a notice when the run waits for the measurement lock, and one each time
       the lock changes owner;
     - [--wait-quiet]'s notices, when the wait starts on a loaded host and when
@@ -518,16 +531,16 @@ val run :
 
     [--color always] and [--color never] apply whatever the environment.
     [--color auto], the default, colours the report when stdout is a terminal or
-    the run is a dune rule action, unless [NO_COLOR] is set and non-empty.
-    Stderr is never coloured, and colour only styles words the report prints
-    anyway.
+    the run is a dune rule action, unless [NO_COLOR] is set and non-empty or
+    [TERM] is [dumb]. Stderr is never coloured, and colour only styles words the
+    report prints anyway.
 
     The environment variables are:
     - [THUMPER_MACHINE], which replaces the machine key
       ({!Baseline.machine_key}); [list] ignores it.
     - [THUMPER_LOCK_DIR], the measurement lock's directory
       ({{!measuring}measuring}).
-    - [NO_COLOR], as above.
+    - [NO_COLOR] and [TERM], as above.
     - [GITHUB_ACTIONS], which, set to any value, ends the report with one
       [::error::] line for each metric that fails its case.
     - [INSIDE_DUNE], which marks a dune rule action when the working directory

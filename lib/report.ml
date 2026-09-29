@@ -24,13 +24,14 @@ let styled ~color style s =
 
 (* The status line *)
 
+(* Windtrap's live line: the count, the case, and the phase when the case is
+   in its second one. *)
 let status_line (p : Check.progress) =
-  let verb =
-    match p.Check.phase with
-    | `Measuring -> "measuring"
-    | `Confirming -> "confirming"
+  let phase =
+    match p.Check.phase with `Measuring -> "" | `Confirming -> ": confirming"
   in
-  strf "thumper: %s %d/%d: %s" verb p.Check.index p.Check.total p.Check.case
+  strf "  [%d/%d] %s%s\xe2\x80\xa6" p.Check.index p.Check.total p.Check.case
+    phase
 
 (* The carriage return goes back to column 0 and the erase clears what a
    longer previous line left beyond the new one. *)
@@ -40,6 +41,13 @@ let status_redraw p = "\r" ^ status_line p ^ csi "K"
 (* Value formatting *)
 
 let plural n = if n = 1 then "" else "s"
+
+(* Windtrap's durations: [4.2ms], [310ms], [3.2s]. *)
+let duration_str secs =
+  let ms = secs *. 1000. in
+  if Float.round (ms *. 10.) < 100. then strf "%.1fms" ms
+  else if Float.round ms < 1000. then strf "%.0fms" ms
+  else strf "%.1fs" secs
 
 let loaded ~load ~cores =
   strf "load %.1f on %d cores, over %.1f" load cores (Env.loaded_at ~cores)
@@ -138,6 +146,7 @@ type render = {
   patterns : string list;
   strict : bool;
   cpu_model : string;
+  duration : float;
 }
 
 let pad_left s w =
@@ -172,6 +181,7 @@ type alloc_cell = Alloc_exact of int | Alloc_approx of float | No_alloc
 
 type trow = {
   row_id : string;
+  fails : bool; (* its id is bold *)
   time : (float * float option) option; (* seconds, ci half-width in % *)
   alloc : alloc_cell;
   cell : frag list;
@@ -218,7 +228,8 @@ let table_lines ~color rows =
           | Alloc_approx v -> approx_words v
           | No_alloc -> ""
         in
-        (r.row_id, t, ci, alloc, r.cell))
+        let id = if r.fails then styled ~color `Bold r.row_id else r.row_id in
+        (id, t, ci, alloc, r.cell))
       rows
   in
   let width f = List.fold_left (fun acc c -> max acc (String.length (f c))) 0 in
@@ -446,36 +457,16 @@ let remedy_of (c : Verdict.case_report) (mr : Verdict.metric_report) =
    records, so it names every case it records. *)
 let rerun_cap = 10
 
-(* Display columns of a UTF-8 string: its bytes that start a code point. *)
-let columns s =
-  let n = ref 0 in
-  String.iter (fun c -> if Char.code c land 0xC0 <> 0x80 then incr n) s;
-  !n
-
-(* One pasteable command over as many lines as it takes to stay within 80
-   columns: [label] and [head] open the first line, each item (never split)
-   joins the current line or starts the next behind a backslash continuation,
-   indented under [head]. *)
-let wrap_command ~label head items =
-  let indent = String.make (columns label) ' ' in
-  let lines, last =
-    List.fold_left
-      (fun (lines, cur) item ->
-        if columns cur + 1 + columns item + 2 > 80 then
-          ((cur ^ " \\") :: lines, indent ^ item)
-        else (lines, cur ^ " " ^ item))
-      ([], label ^ head)
-      items
-  in
-  List.rev (last :: lines)
+(* A hint: its label and one pasteable command on one line, however long,
+   so a line pasted or cut from the log is the whole command. *)
+let hint_line ~label head items =
+  [ String.concat " " ((label ^ head) :: items) ]
 
 let report_of_blocks blocks =
   let blocks = List.filter (fun b -> b <> []) blocks in
   String.concat "\n\n" (List.map (String.concat "\n") blocks) ^ "\n"
 
-let header_line ~color ~suite rest =
-  styled ~color `Faint "thumper: "
-  ^ styled ~color `Bold suite ^ styled ~color `Faint rest
+let header_line ~suite rest = suite ^ ": " ^ rest
 
 (* The [::error::] line of a metric that fails its case, with the row's own
    facts: the id [-f] selects by, then the shift with its interval and
@@ -523,12 +514,12 @@ let check r v =
     let head =
       match comparison with
       | Verdict.Compared ->
-          header_line ~color ~suite
-            (strf " — %d case%s vs %s for machine %s" n_cases (plural n_cases)
+          header_line ~suite
+            (strf "%d case%s vs %s for machine %s" n_cases (plural n_cases)
                r.baseline_path ident.Baseline.machine)
       | Verdict.No_baseline ->
-          header_line ~color ~suite
-            (strf " — no baseline for machine %s (%s)" ident.Baseline.machine
+          header_line ~suite
+            (strf "no baseline for machine %s (%s)" ident.Baseline.machine
                r.cpu_model)
       | Verdict.Stale (Verdict.Ocaml_mismatch { section; current }) ->
           (* The recorded identity is text from the file: quoted when it
@@ -538,8 +529,8 @@ let check r v =
               Baseline.quote section
             else section
           in
-          header_line ~color ~suite
-            (strf " — stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
+          header_line ~suite
+            (strf "stale baseline for machine %s (ocaml %s \xe2\x86\x92 %s)"
                ident.Baseline.machine section current)
     in
     match (comparison, load) with
@@ -565,6 +556,7 @@ let check r v =
       (fun ((c : Verdict.case_report), cell) ->
         {
           row_id = c.id;
+          fails = case_fails c;
           time = time_of_trial c.trial;
           alloc = alloc_of_trial c.trial;
           cell;
@@ -580,11 +572,20 @@ let check r v =
       cases
   in
   let table = table_lines ~color rows @ warnings in
-  (* Actions: the command that measures again, and the bless of the passing
-     cases whose rows are to be recorded. An inconclusive reason joins the
-     hint that is its remedy ([remedy]); a reason that asks for another
-     measurement or budget has no command. *)
-  let actions =
+  (* The [::error::] lines, which CI reads whatever the terminal shows. *)
+  let annotations =
+    if not r.github then []
+    else
+      List.concat_map
+        (fun (c : Verdict.case_report) ->
+          List.filter_map (error_line c) c.reports)
+        cases
+  in
+  (* The hints: the command that measures again, and the bless of the
+     passing cases whose rows are to be recorded. An inconclusive reason
+     joins the hint that is its remedy ([remedy_of]); a reason that asks for
+     another measurement or budget has no command. *)
+  let hints =
     let exe = shell_arg r.exe in
     let own = List.map (fun p -> "-f " ^ shell_arg p) r.patterns in
     let hint ~label head ~own_run = function
@@ -595,7 +596,7 @@ let check r v =
             else
               List.map (fun (c : Verdict.case_report) -> "-f " ^ c.id) selected
           in
-          wrap_command ~label head (r.flags @ selection)
+          hint_line ~label head (r.flags @ selection)
     in
     let has remedy (c : Verdict.case_report) =
       List.exists (fun mr -> remedy_of c mr = Some remedy) c.reports
@@ -607,93 +608,86 @@ let check r v =
     let rerun =
       match failing with
       | [] when List.exists (has `Rerun) cases ->
-          wrap_command ~label:"  rerun:   " exe (r.flags @ own)
+          hint_line ~label:"rerun: " exe (r.flags @ own)
       | failing ->
-          hint ~label:"  rerun:   " exe
+          hint ~label:"rerun: " exe
             ~own_run:(List.length failing > rerun_cap)
             failing
     in
     rerun
-    @ hint ~label:"  accept:  " (exe ^ " bless")
+    @ hint ~label:"accept: " (exe ^ " bless")
         ~own_run:(List.length recorded = n_cases)
         recorded
   in
-  (* Summary, compared runs only. Its color is the outcome's: red iff the run
-     exits 1, so a [--strict] run that fails on a proposed case does not end
-     on a green line. *)
+  (* The summary, windtrap's: each case counted once by its outcome, a zero
+     term left out, the improved cases a qualifier of the passed ones, and
+     the time the run measured for. A term has its colour, so red appears
+     iff the run exits 1 and [passed] is green iff it exits 0. *)
   let summary =
-    match comparison with
-    | Verdict.No_baseline | Verdict.Stale _ -> []
-    | Verdict.Compared ->
-        let n_fail = count case_fails cases in
-        let n_inc =
-          count (fun c -> Verdict.case_overall c = `Inconclusive) cases
-        in
-        (* Among passing cases, a never-compared one is [proposed] and one
-           whose row opens on [improved] is improved: the summary never
-           counts as passed what the table does not call a pass. *)
-        let passing =
-          List.filter (fun c -> Verdict.case_overall c = `Pass) cases
-        in
-        let n_prop =
-          count
-            (fun (c : Verdict.case_report) ->
-              c.reports <> [] && List.for_all report_proposed c.reports)
-            passing
-        in
-        let n_imp =
-          count
-            (fun (c, cell) ->
-              Verdict.case_overall c = `Pass
-              &&
-              match cell with
-              | { word = "improved"; _ } :: _ -> true
-              | _ -> false)
-            cells
-        in
-        let n_pass = n_cases - n_fail - n_inc - n_prop - n_imp in
-        let term n word = if n > 0 then [ strf "%d %s" n word ] else [] in
-        let parts =
-          [ strf "%d passed" n_pass ]
-          @ term n_imp "improved" @ term n_fail "regressed"
-          @ term n_inc "inconclusive" @ term n_prop "proposed"
-        in
-        let code = Verdict.exit_code ~strict:r.strict v in
-        (* A run --strict failed says so in words, not in red alone. *)
-        let strict_clause =
-          if code <> 0 && Verdict.exit_code v = 0 then "; failed under --strict"
-          else ""
-        in
-        let style =
-          if code <> 0 then `Red else if n_inc > 0 then `Yellow else `Green
-        in
-        [
-          "  "
-          ^ styled ~color style
-              (strf "%d case%s: %s%s." n_cases (plural n_cases)
-                 (String.concat ", " parts) strict_clause);
-        ]
-  in
-  (* The [::error::] lines close the report: CI reads them whatever the
-     terminal shows. *)
-  let annotations =
-    if not r.github then []
-    else
-      List.concat_map
+    let n_fail = count case_fails cases in
+    let n_inc = count (fun c -> Verdict.case_overall c = `Inconclusive) cases in
+    (* Among passing cases, a never-compared one is [proposed] and one whose
+       row opens on [improved] is improved: the summary never counts as
+       passed what the table does not call a pass. *)
+    let passing = List.filter (fun c -> Verdict.case_overall c = `Pass) cases in
+    let n_prop =
+      count
         (fun (c : Verdict.case_report) ->
-          List.filter_map (error_line c) c.reports)
-        cases
-  in
-  report_of_blocks [ header; table; actions; summary; annotations ]
-
-(* The blocks of check's report less the summary, every row [blessed]. *)
-let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load run =
-  let header =
+          c.reports <> [] && List.for_all report_proposed c.reports)
+        passing
+    in
+    let n_imp =
+      count
+        (fun (c, cell) ->
+          Verdict.case_overall c = `Pass
+          &&
+          match cell with
+          | { word = "improved"; _ } :: _ -> true
+          | _ -> false)
+        cells
+    in
+    let n_pass = n_cases - n_fail - n_inc - n_prop in
+    let code = Verdict.exit_code ~strict:r.strict v in
+    let term n text = if n > 0 then [ text ] else [] in
+    let terms =
+      term n_pass
+        ((if code = 0 then styled ~color `Green else Fun.id)
+           (strf "%d passed" n_pass)
+        ^
+        if n_imp > 0 then
+          " " ^ styled ~color `Green (strf "(%d improved)" n_imp)
+        else "")
+      @ term n_fail (styled ~color `Red (strf "%d regressed" n_fail))
+      @ term n_inc (styled ~color `Yellow (strf "%d inconclusive" n_inc))
+      @ term n_prop (strf "%d proposed" n_prop)
+    in
+    (* A run --strict failed says so in words, not in red alone. *)
+    let strict_clause =
+      if code <> 0 && Verdict.exit_code v = 0 then
+        styled ~color `Red "; failed under --strict"
+      else ""
+    in
     [
-      header_line ~color ~suite
-        (strf " — blessed %d case%s into %s for machine %s" n (plural n)
-           baseline_path machine);
+      String.concat ", " terms
+      ^ strf " in %s" (duration_str r.duration)
+      ^ strict_clause ^ ".";
     ]
+  in
+  report_of_blocks [ header; table; annotations; hints @ summary ]
+
+(* The bless report: check's header and table, every row [blessed], and a
+   summary naming the file. *)
+let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load ~duration run =
+  let header =
+    header_line ~suite (strf "%d case%s for machine %s" n (plural n) machine)
+    ::
+    (match load with
+    | Env.Loaded { load; cores } ->
+        [
+          styled ~color `Yellow
+            (strf "warning: %s; recorded under --force" (loaded ~load ~cores));
+        ]
+    | Env.Quiet -> [])
   in
   let table =
     table_lines ~color
@@ -701,6 +695,7 @@ let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load run =
          (fun (id, trial) ->
            {
              row_id = id;
+             fails = false;
              time = time_of_trial trial;
              alloc = alloc_of_trial trial;
              cell = [ frag "blessed" "" ];
@@ -713,14 +708,7 @@ let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load run =
             (Run.Trial.warnings trial))
         (Run.trials run)
   in
-  let actions =
-    match load with
-    | Env.Loaded { load; cores } ->
-        [
-          styled ~color `Yellow
-            (strf "  warning: blessed under %s (--force recorded)"
-               (loaded ~load ~cores));
-        ]
-    | Env.Quiet -> []
+  let summary =
+    [ strf "%d blessed into %s in %s." n baseline_path (duration_str duration) ]
   in
-  report_of_blocks [ header; table; actions ]
+  report_of_blocks [ header; table; summary ]

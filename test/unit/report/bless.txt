@@ -1,5 +1,7 @@
-thumper: digest — blessed 2 cases into digest.thumper for machine testkey
+digest: 2 cases for machine testkey
 
   blessed  1.00 us  ±0.0%     54 w  alpha
   blessed  2.50 us  ±0.0%  3,000 w  beta
   warning: beta: possibly folded: wrap the input in black_box
+
+2 blessed into digest.thumper in 1.2s.

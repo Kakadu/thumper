@@ -13,9 +13,11 @@ Under --strict, stale is a failure.
 
   $ $FIX check --quick > out.log 2>&1
   $ head -1 out.log | sed 's/→ .*)$/→ OCAML)/'
-  thumper: fixture — stale baseline for machine testkey (ocaml 9.9.9 · 64-bit · release → OCAML)
+  fixture: stale baseline for machine testkey (ocaml 9.9.9 · 64-bit · release → OCAML)
   $ grep 'accept:' out.log
-    accept:  ./fixture/bench_fixture.exe bless --quick
+  accept: ./fixture/bench_fixture.exe bless --quick
+  $ summary out.log
+  7 proposed in DURATION.
   $ cmp fixture.thumper before.thumper
 
   $ $FIX check --quick --strict > out.log 2>&1
@@ -27,7 +29,7 @@ selected case's rows alone.
 
   $ $FIX check --quick -f busy/spin > out.log 2>&1
   $ grep 'accept:' out.log
-    accept:  ./fixture/bench_fixture.exe bless --quick -f busy/spin
+  accept: ./fixture/bench_fixture.exe bless --quick -f busy/spin
   $ $FIX bless --quick --force -f busy/spin > /dev/null 2>&1
   $ grep -c '9\.9\.9' fixture.thumper
   0

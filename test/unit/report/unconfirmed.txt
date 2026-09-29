@@ -1,8 +1,7 @@
-thumper: digest — 1 case vs digest.thumper for machine testkey
+digest: 1 case vs digest.thumper for machine testkey
 
   inconclusive  2.00 us  ±0.0%  54 w  alpha
       unconfirmed
 
-  rerun:   bench.exe
-
-  1 case: 0 passed, 1 inconclusive.
+rerun: bench.exe
+1 inconclusive in 1.2s.

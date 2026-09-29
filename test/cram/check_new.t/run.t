@@ -12,7 +12,9 @@ row, names the bless command that records them, writes no file and exits
   $ grep -c '^  proposed ' out.log
   7
   $ grep 'accept:' out.log
-    accept:  ./fixture/bench_fixture.exe bless --quick
+  accept: ./fixture/bench_fixture.exe bless --quick
+  $ summary out.log
+  7 proposed in DURATION.
   $ test ! -e fixture.thumper && echo no-baseline
   no-baseline
 
@@ -20,6 +22,8 @@ Under --strict a first run fails, and still writes nothing.
 
   $ $FIX check --quick --strict > out.log 2>&1
   [1]
+  $ summary out.log
+  7 proposed in DURATION; failed under --strict.
   $ test ! -e fixture.thumper && echo no-baseline
   no-baseline
 
@@ -46,7 +50,7 @@ The accept line pastes from the workspace root, where dune ran.
   $ grep -c '^  proposed ' build.log
   2
   $ grep 'accept:' build.log
-    accept:  ./_build_sys/default/bench.exe bless --quick -f alloc
+  accept: ./_build_sys/default/bench.exe bless --quick -f alloc
   $ wc -l < ran.log | tr -d ' '
   1
   $ test ! -e fixture.thumper && echo no-baseline
@@ -56,16 +60,16 @@ bless writes the baseline beside the rule, in the source tree. --force
 keeps the session's outcome off the host's load.
 
   $ ./_build_sys/default/bench.exe bless --quick -f alloc --force > bless.log 2>&1
-  $ head -1 bless.log | sed "s|$(pwd -P)|WS|"
-  thumper: fixture — blessed 2 cases into WS/fixture.thumper for machine testkey
+  $ summary bless.log | sed "s|$(pwd -P)|WS|"
+  2 blessed into WS/fixture.thumper in DURATION.
   $ grep -c '^# machine: testkey$' fixture.thumper
   1
 
   $ dune build --root . @bench > build.log 2>&1
   $ head -1 build.log
-  thumper: fixture — 2 cases vs fixture.thumper for machine testkey
-  $ grep -o '2 cases: .*' build.log
-  2 cases: 2 passed.
+  fixture: 2 cases vs fixture.thumper for machine testkey
+  $ summary build.log
+  2 passed in DURATION.
   $ wc -l < ran.log | tr -d ' '
   3
 
@@ -78,10 +82,10 @@ track the variable, so --force reruns the alias.
 
   $ THUMPER_FIXTURE_MODE=alloc_more dune build --root . @bench --force > build.log 2>&1
   [1]
-  $ grep -o '2 cases: .*' build.log
-  2 cases: 1 passed, 1 regressed.
+  $ summary build.log
+  1 passed, 1 regressed in DURATION.
   $ grep 'rerun:' build.log
-    rerun:   ./_build_sys/default/bench.exe --quick -f alloc/list
+  rerun: ./_build_sys/default/bench.exe --quick -f alloc/list
 
 The workspace is outside the session's directory; remove it.
 

@@ -15,13 +15,13 @@ Outside a rule action the header names the baseline by its absolute path,
 and the summary counts every case passed.
 
   $ head -1 out.log
-  thumper: fixture — 2 cases vs $TESTCASE_ROOT/fixture.thumper for machine testkey
-  $ grep -o '2 cases: .*' out.log
-  2 cases: 2 passed.
+  fixture: 2 cases vs $TESTCASE_ROOT/fixture.thumper for machine testkey
+  $ summary out.log
+  2 passed in DURATION.
 
 The status line is for a terminal: a redirected run carries none of it.
 
-  $ grep -c 'thumper: measuring \|thumper: confirming ' out.log
+  $ grep -c '\[[0-9]*/[0-9]*\]' out.log
   0
   [1]
 

@@ -135,6 +135,7 @@ let render ?(color = false) ?(exe = "bench.exe") ?(github = false) ?(flags = [])
     patterns;
     strict;
     cpu_model = "Test CPU";
+    duration = 1.2;
   }
 
 (* Verdicts *)
@@ -491,7 +492,8 @@ let check ?github golden claim verdict =
 let bless ?(load = Env.Quiet) golden claim =
   let report ~color =
     Report.bless ~color ~suite:"digest" ~machine:"testkey"
-      ~baseline_path:"digest.thumper" ~cases:2 ~load (blessed_run ())
+      ~baseline_path:"digest.thumper" ~cases:2 ~load ~duration:1.2
+      (blessed_run ())
   in
   { claim; golden; report }
 
@@ -591,7 +593,6 @@ let unstyled s =
 let escapes_removed_give_the_unstyled_report s =
   let plain = s.report ~color:false and styled = s.report ~color:true in
   not_contains ~msg:"unstyled" ~sub:"\027" plain;
-  contains ~msg:"styled" ~sub:"\027[" styled;
   equal string plain (unstyled styled)
 
 let gallery name states =
@@ -610,15 +611,15 @@ let progress phase index total case = { Check.phase; index; total; case }
 let status_line =
   group "The status line"
     [
-      cases "status_redraw draws the sweep, the index and the case"
+      cases "status_redraw draws the index, the case and the sweep"
         ~name:(fun (name, _, _) -> name)
         [
           ( "measuring",
             progress `Measuring 3 6 "busy/spin",
-            "\rthumper: measuring 3/6: busy/spin\027[K" );
+            "\r  [3/6] busy/spin\xe2\x80\xa6\027[K" );
           ( "confirming",
             progress `Confirming 1 2 "alloc/list",
-            "\rthumper: confirming 1/2: alloc/list\027[K" );
+            "\r  [1/2] alloc/list: confirming\xe2\x80\xa6\027[K" );
         ]
         (fun (_, p, expected) -> equal string expected (Report.status_redraw p));
       test "status_erase returns to column 0 and erases the line" (fun () ->
@@ -647,7 +648,7 @@ let shell_arg =
 
 let rerun_line report =
   require_match
-    (List.find_opt (String.starts_with ~prefix:"  rerun:"))
+    (List.find_opt (String.starts_with ~prefix:"rerun:"))
     (String.split_on_char '\n' report)
 
 let the_rerun_line_carries_the_flags () =
@@ -660,42 +661,34 @@ let the_rerun_line_carries_the_flags () =
   in
   contains
     ~sub:
-      "  rerun:   'my dir/bench.exe' --quick --baseline alt/base.thumper --tag \
-       lab \\\n\
-      \           -f alpha\n"
+      "\n\
+       rerun: 'my dir/bench.exe' --quick --baseline alt/base.thumper --tag lab \
+       -f alpha\n"
     report
 
-let the_rerun_line_wraps_within_80_columns () =
-  let report =
-    Report.check
-      (render ~exe:"./_build/default/bench/bench_digest.exe"
-         ~flags:[ "--quick"; "--baseline bench/digest.thumper" ]
-         ())
-      (failing_cases 4)
+(* Ten failing cases and flags put the rerun line past 120 columns; a
+   pasted or cut line is still the whole command. *)
+let a_long_hint_stays_on_one_line () =
+  let line =
+    rerun_line
+      (Report.check
+         (render ~exe:"./_build/default/bench/bench_digest.exe"
+            ~flags:[ "--quick"; "--baseline bench/digest.thumper" ]
+            ())
+         (failing_cases 10))
   in
-  contains
-    ~sub:
-      "  rerun:   ./_build/default/bench/bench_digest.exe --quick \\\n\
-      \           --baseline bench/digest.thumper -f case-01 -f case-02 -f \
-       case-03 \\\n\
-      \           -f case-04\n"
-    report
-
-(* An executable of [n] bytes puts the first item's backslash at column
-   [n + 26]. *)
-let exe n = "./" ^ String.make n 'x'
-
-let column_80 =
-  [
-    ("ending at column 80, stays", 54, "  rerun:   " ^ exe 54 ^ " -f case-01 \\");
-    ("ending at column 81, moves", 55, "  rerun:   " ^ exe 55 ^ " \\");
-  ]
+  greater ~msg:"past 80 columns" int ~than:80 (String.length line);
+  equal string
+    ("rerun: ./_build/default/bench/bench_digest.exe --quick --baseline \
+      bench/digest.thumper"
+    ^ String.concat "" (List.init 10 (fun i -> strf " -f case-%02d" (i + 1))))
+    line
 
 let past_ten_cases_the_patterns_select () =
   let report =
     Report.check (render ~patterns:[ "case"; "my case" ] ()) (failing_cases 11)
   in
-  contains ~sub:"  rerun:   bench.exe -f case -f 'my case'\n" report;
+  contains ~sub:"rerun: bench.exe -f case -f 'my case'\n" report;
   not_contains ~sub:"-f case-01" report
 
 let absent_columns =
@@ -771,6 +764,18 @@ let units =
     ("a million words", (fun () -> sampled_alloc 1e6), " ~1 Mw ");
   ]
 
+(* Milliseconds with a decimal under 10 ms, whole ones under a second, and
+   seconds with a decimal from there, each at its rounding edge. *)
+let durations =
+  [
+    ("under 10 ms", 0.0042, "4.2ms");
+    ("rounding to 10 ms", 0.00996, "10ms");
+    ("under a second", 0.31, "310ms");
+    ("rounding to a second", 0.9996, "1.0s");
+    ("seconds", 3.24, "3.2s");
+    ("minutes", 612.04, "612.0s");
+  ]
+
 let one_proposed () =
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   verdict_of_cases ~file
@@ -780,31 +785,42 @@ let one_proposed () =
 
 let summaries =
   [
-    ("without --strict", false, "  2 cases: 1 passed, 1 proposed.\n");
+    ("without --strict", false, "\n1 passed, 1 proposed in 1.2s.\n");
     ( "under --strict",
       true,
-      "  2 cases: 1 passed, 1 proposed; failed under --strict.\n" );
+      "\n1 passed, 1 proposed in 1.2s; failed under --strict.\n" );
   ]
 
 let summary_colours =
   [
-    ( "green when every case passes",
+    ( "passed is green when the run passes",
       equivalent,
       false,
-      "\027[32m1 case: 1 passed.\027[0m" );
-    ( "yellow when a case is inconclusive",
+      "\n\027[32m1 passed\027[0m in 1.2s.\n" );
+    ( "an improvement is a green qualifier of passed",
+      improvement,
+      false,
+      "\n\027[32m1 passed\027[0m \027[32m(1 improved)\027[0m in 1.2s.\n" );
+    ( "passed is plain and regressed red when the run fails",
+      mixed,
+      false,
+      "\n\
+       2 passed \027[32m(1 improved)\027[0m, \027[31m1 regressed\027[0m in 1.2s.\n"
+    );
+    ( "inconclusive is yellow",
       loaded_regression,
       false,
-      "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m" );
-    ( "yellow when --strict meets an inconclusive case",
+      "\n\027[33m1 inconclusive\027[0m in 1.2s.\n" );
+    ( "inconclusive stays yellow under --strict",
       loaded_regression,
       true,
-      "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m" );
-    ( "red when --strict fails a proposed metric",
+      "\n\027[33m1 inconclusive\027[0m in 1.2s.\n" );
+    ( "--strict's failure is said in red",
       loaded_proposed,
       true,
-      "\027[31m1 case: 0 passed, 1 inconclusive; failed under --strict.\027[0m"
-    );
+      "\n\
+       \027[33m1 inconclusive\027[0m in 1.2s\027[31m; failed under \
+       --strict\027[0m.\n" );
   ]
 
 let header_of_stale recorded =
@@ -823,17 +839,16 @@ let recorded_identities =
   [
     ( "an escape",
       "5.4.0\027[2J",
-      "thumper: digest \xe2\x80\x94 stale baseline for machine testkey (ocaml \
-       '5.4.0\\x1b[2J' \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 release)" );
+      "digest: stale baseline for machine testkey (ocaml '5.4.0\\x1b[2J' \
+       \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 release)" );
     ( "a DEL byte",
       "5.4\127",
-      "thumper: digest \xe2\x80\x94 stale baseline for machine testkey (ocaml \
-       '5.4\\x7f' \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 release)" );
+      "digest: stale baseline for machine testkey (ocaml '5.4\\x7f' \
+       \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 release)" );
     ( "plain text stays bare",
       "5.4.0 \xc2\xb7 64-bit",
-      "thumper: digest \xe2\x80\x94 stale baseline for machine testkey (ocaml \
-       5.4.0 \xc2\xb7 64-bit \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 \
-       release)" );
+      "digest: stale baseline for machine testkey (ocaml 5.4.0 \xc2\xb7 64-bit \
+       \xe2\x86\x92 5.5.0 \xc2\xb7 64-bit \xc2\xb7 release)" );
   ]
 
 (* The accept line of each verdict, [None] for none. *)
@@ -842,34 +857,27 @@ let accept_lines =
     ( "every case proposed: the run's own selection",
       [],
       no_baseline,
-      Some "\n  accept:  bench.exe bless\n" );
+      Some "\naccept: bench.exe bless\n" );
     ( "the run's flags come first",
       [ "--quick"; "--tag lab" ],
       no_baseline,
-      Some "\n  accept:  bench.exe bless --quick --tag lab\n" );
+      Some "\naccept: bench.exe bless --quick --tag lab\n" );
     ( "a case with a proposed metric beside a passing one",
       [],
       one_proposed,
-      Some "\n  accept:  bench.exe bless -f beta\n" );
+      Some "\naccept: bench.exe bless -f beta\n" );
     ( "an improved case beside a failing one",
       [],
       mixed,
-      Some "\n  accept:  bench.exe bless -f beta\n" );
+      Some "\naccept: bench.exe bless -f beta\n" );
     ("a failing proposed case", [], (fun () -> over_cap ()), None);
     ("a passing run with no news", [], equivalent, None);
   ]
 
-(* The accept line, its continuation lines joined. *)
 let accept_line report =
-  let rec from = function
-    | [] -> []
-    | l :: rest when String.starts_with ~prefix:"  accept:" l -> l :: cont rest
-    | _ :: rest -> from rest
-  and cont = function
-    | l :: rest when String.starts_with ~prefix:"          " l -> l :: cont rest
-    | _ -> []
-  in
-  String.concat "\n" (from (String.split_on_char '\n' report))
+  require_match
+    (List.find_opt (String.starts_with ~prefix:"accept:"))
+    (String.split_on_char '\n' report)
 
 let past_ten_cases_the_accept_line_names_each () =
   let line =
@@ -886,8 +894,8 @@ let past_ten_cases_the_accept_line_names_each () =
    measures again, [accept:] records the row again, and a reason that asks
    for another measurement or budget has none. *)
 let remedies =
-  let rerun = Some "\n  rerun:   bench.exe\n"
-  and accept = Some "\n  accept:  bench.exe bless\n" in
+  let rerun = Some "\nrerun: bench.exe\n"
+  and accept = Some "\naccept: bench.exe bless\n" in
   [
     ("environment: measure again", loaded_regression, rerun, None);
     ("unconfirmed: measure again", one_reason "unconfirmed", rerun, None);
@@ -942,24 +950,21 @@ let check_report =
           past_ten_cases_the_accept_line_names_each;
         test "the rerun line carries the run's flags and quotes the executable"
           the_rerun_line_carries_the_flags;
-        test "the rerun line wraps within 80 columns under the executable"
-          the_rerun_line_wraps_within_80_columns;
-        cases "an item joins the line while its backslash fits in 80 columns"
-          ~name:first column_80 (fun (_, n, expected) ->
-            equal string expected
-              (rerun_line
-                 (Report.check (render ~exe:(exe n) ()) (failing_cases 2))));
+        test "a hint stays on one line however long"
+          a_long_hint_stays_on_one_line;
         cases "an inconclusive reason joins the hint that is its remedy"
           ~name:first4 remedies hints_of_a_reason;
         test "a rerun for noise alone repeats the run's flags and patterns"
           (fun () ->
-            contains ~sub:"\n  rerun:   bench.exe --quick -f un -f 'a b'\n"
+            contains ~sub:"\nrerun: bench.exe --quick -f un -f 'a b'\n"
               (Report.check
                  (render ~flags:[ "--quick" ] ~patterns:[ "un"; "a b" ] ())
                  (one_reason "unconfirmed" ())));
         test "a failing run's rerun names the failing cases alone" (fun () ->
-            contains ~sub:"\n  rerun:   bench.exe -f alpha\n"
+            contains ~sub:"\nrerun: bench.exe -f alpha\n"
               (Report.check (render ()) (failing_and_unconfirmed ())));
+        cases "a duration prints as windtrap's" ~name:first durations
+          (fun (_, secs, text) -> equal string text (Report.duration_str secs));
         test "the load names its threshold" (fun () ->
             equal string "load 7.9 on 8 cores, over 4.0"
               (Report.loaded ~load:7.9 ~cores:8));
@@ -982,8 +987,8 @@ let check_report =
           (fun (_, strict, summary) ->
             contains ~sub:summary
               (Report.check (render ~strict ()) (one_proposed ())));
-        cases "the summary's colour follows the exit code" ~name:first4
-          summary_colours (fun (_, verdict, strict, summary) ->
+        cases "each summary term has its colour" ~name:first4 summary_colours
+          (fun (_, verdict, strict, summary) ->
             contains ~sub:summary
               (Report.check (render ~color:true ~strict ()) (verdict ())));
         cases "a recorded identity is quoted when it holds a control byte"

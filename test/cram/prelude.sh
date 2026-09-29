@@ -10,6 +10,13 @@ export THUMPER_LOCK_DIR="$PWD/locks"
 CONTEXT="$INSIDE_DUNE"
 unset INSIDE_DUNE DUNE_SOURCEROOT CI GITHUB_ACTIONS NO_COLOR TERM
 
+# The summary line of the report in log $1, its duration written DURATION:
+# the one way a session reads a summary, whatever else the log holds.
+summary() {
+  grep -E ' in [0-9.]+m?s(;.*)?\.$' "$1" |
+    sed -E 's/ in [0-9.]+m?s/ in DURATION/'
+}
+
 # Polls every 20 ms until the command succeeds, for 60 s of wall clock at
 # most, as long as hold_lock.exe holds the lock: no loop in a session
 # outlives its holder.

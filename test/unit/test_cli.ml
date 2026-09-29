@@ -164,13 +164,14 @@ let check_outcome dir o code =
   equal ~msg:"exit code" int o.code code;
   expect (printed dir) o.expected
 
-(* A usage error prints its message, then where to find the usage. *)
+(* A usage error prints its message, then the usage line. *)
 let refuses (_, o) =
   let dir = state_env () in
   equal ~msg:"exit code" int 2 (main o.args);
   let out = printed dir in
   let nl = String.index out '\n' in
-  equal ~msg:"the second line" string "Try '-h' for usage.\n"
+  equal ~msg:"the second line" string
+    "usage: bench.exe [check|bless|list] [OPTIONS] [PATTERN...]\n"
     (String.sub out (nl + 1) (String.length out - nl - 1));
   expect (String.sub out 0 nl) o.expected
 
@@ -184,6 +185,33 @@ let usage_errors =
     @@ __POS_OF__ {| thumper: unknown option '-x' |};
     row "a nameless --=V" [ "--=x" ]
     @@ __POS_OF__ {| thumper: unknown option '--=x' |};
+    row "a long option one edit away" [ "--quik" ]
+    @@ __POS_OF__
+         {| thumper: unknown option '--quik'; did you mean '--quick'? |};
+    row "a transposition is one edit" [ "--wait-quite" ]
+    @@ __POS_OF__
+         {| thumper: unknown option '--wait-quite'; did you mean '--wait-quiet'? |};
+    row "a long option two edits away" [ "--qwack" ]
+    @@ __POS_OF__
+         {| thumper: unknown option '--qwack'; did you mean '--quick'? |};
+    row "two transpositions" [ "--froec" ]
+    @@ __POS_OF__
+         {| thumper: unknown option '--froec'; did you mean '--force'? |};
+    row "a transposition swaps both letters" [ "--jolp" ]
+    @@ __POS_OF__ {| thumper: unknown option '--jolp'; did you mean '--help'? |};
+    row "a tie goes to the option --help lists first" [ "--hap" ]
+    @@ __POS_OF__ {| thumper: unknown option '--hap'; did you mean '--tag'? |};
+    row "a tie goes to the option over the subcommand" [ "--lick" ]
+    @@ __POS_OF__
+         {| thumper: unknown option '--lick'; did you mean '--quick'? |};
+    row "a subcommand given as a long option" [ "--list" ]
+    @@ __POS_OF__ {| thumper: unknown option '--list'; did you mean 'list'? |};
+    row "a subcommand misspelt as a long option" [ "--bles" ]
+    @@ __POS_OF__ {| thumper: unknown option '--bles'; did you mean 'bless'? |};
+    row "windtrap's -l" [ "-l" ]
+    @@ __POS_OF__ {| thumper: unknown option '-l'; did you mean 'list'? |};
+    row "windtrap's -u" [ "-u" ]
+    @@ __POS_OF__ {| thumper: unknown option '-u'; did you mean 'bless'? |};
     row "an unknown option given a value" [ "--nope=1" ]
     @@ __POS_OF__ {| thumper: unknown option '--nope' |};
     row "--strict=no" [ "--strict=no" ]
@@ -307,25 +335,30 @@ let listings =
       g/gamma
       |};
     row "a pattern that matches nothing" [ "list"; "-f"; "zzz" ]
-    @@ __POS_OF__ {| thumper: no case matches 'zzz' |};
+    @@ __POS_OF__ {| thumper: no case selected: 'zzz' matched none of 3 cases |};
     row "patterns and tags keep their order"
       [ "list"; "-f"; "x"; "y"; "-f"; "z"; "--tag"; "lab"; "--tag"; "ci" ]
     @@ __POS_OF__
-         {| thumper: no case matches 'x', 'y', 'z' with tag 'lab', 'ci' |};
+         {| thumper: no case selected: 'x' or 'y' or 'z' with tag 'lab', 'ci' matched none of 3 cases |};
     row "a tag that matches nothing" [ "list"; "--tag"; "nope" ]
-    @@ __POS_OF__ {| thumper: no case matches tag 'nope' |};
+    @@ __POS_OF__
+         {| thumper: no case selected: tag 'nope' matched none of 3 cases |};
     row "a later subcommand word is a pattern" [ "list"; "check" ]
-    @@ __POS_OF__ {| thumper: no case matches 'check' |};
+    @@ __POS_OF__
+         {| thumper: no case selected: 'check' matched none of 3 cases |};
     row "every argument after -- is a pattern"
       [ "list"; "--"; "-f"; "--strict" ]
-    @@ __POS_OF__ {| thumper: no case matches '-f', '--strict' |};
+    @@ __POS_OF__
+         {| thumper: no case selected: '-f' or '--strict' matched none of 3 cases |};
     row "an argument after -- keeps its =" [ "list"; "--"; "--tag=x" ]
-    @@ __POS_OF__ {| thumper: no case matches '--tag=x' |};
+    @@ __POS_OF__
+         {| thumper: no case selected: '--tag=x' matched none of 3 cases |};
     row "a lone dash is a pattern" [ "list"; "-" ]
-    @@ __POS_OF__ {| thumper: no case matches '-' |};
+    @@ __POS_OF__ {| thumper: no case selected: '-' matched none of 3 cases |};
     row "a first argument that names no subcommand is a pattern of check"
       [ "explore" ]
-    @@ __POS_OF__ {| thumper: no case matches 'explore' |};
+    @@ __POS_OF__
+         {| thumper: no case selected: 'explore' matched none of 3 cases |};
   ]
 
 (* The version [-V] prints, which a release substitutes for [dev]. *)
@@ -346,38 +379,83 @@ let help_prints_every_flag () =
     (replace ~sub:("(thumper " ^ v ^ ")") ~by:"(thumper VERSION)" (printed dir))
   @@ __POS_OF__
        {|
-    bench.exe: thumper benchmark suite (thumper VERSION)
+    bench.exe - thumper benchmark suite (thumper VERSION)
 
-    usage: bench.exe [check|bless|list] [OPTS] [PATTERN...]
+    usage: bench.exe [check|bless|list] [OPTIONS] [PATTERN...]
 
-    subcommands:
-      check      measure, compare against the baseline (default)
-      bless      record the selected cases in the baseline for this machine
-      list       print the selected case ids; no measurement
+    The first argument names the subcommand, check when it names none. Each bare
+    PATTERN is read as one -f PATTERN.
 
-    options:
-      -f PAT             select cases whose id contains PAT (repeatable,
-                         OR'd); bare PATTERN arguments mean the same
-      --tag T            select cases tagged T (repeatable, AND'd)
-      --quick            quick protocol (fewer samples)
-      --precise          precise protocol (more samples)
-      --baseline PATH    baseline file (default: <suite>.thumper next to
-                         the benchmark's source)
-      --json PATH        check: write the verdict document to PATH
-      --strict           check: a metric with no baseline row exits 1
-      --wait-quiet SECS  wait up to SECS for a quiet host before measuring
-      --force            bless despite a loaded host (recorded)
-      --color MODE       color the report: auto (default), always, never
-      -h, --help         show this help
-      -V, --version      print the version
+    SUBCOMMANDS:
+      check
+          Measure, and compare against the baseline (the default).
 
-    environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock
-    directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);
-    INSIDE_DUNE marks a dune rule action, whose report is coloured and whose
-    hints paste from DUNE_SOURCEROOT.
+      bless
+          Record the selected cases in the baseline for this machine.
+
+      list
+          Print the selected case ids, measuring nothing.
+
+    OPTIONS:
+      -f PATTERN
+          Select cases whose id contains PATTERN (repeatable: any of them).
+
+      --tag=TAG
+          Select cases tagged TAG (repeatable: all of them).
+
+      --quick
+          Measure with the quick protocol (fewer samples).
+
+      --precise
+          Measure with the precise protocol (more samples).
+
+      --baseline=PATH
+          The baseline file (default: <suite>.thumper next to the benchmark's
+          source).
+
+      --json=PATH
+          check: write the verdict document to PATH.
+
+      --strict
+          check: exit 1 when a metric has no baseline row.
+
+      --wait-quiet=SECS
+          Wait up to SECS seconds for a quiet host before measuring.
+
+      --force
+          bless: record on a loaded host, and note the load in the baseline.
+
+      --color=MODE
+          Color the report: auto (the default), always or never.
+
+      -V, --version
+          Print the version and exit.
+
+      -h, --help
+          Print this help and exit.
+
+    ENVIRONMENT:
+      THUMPER_MACHINE
+          The machine key, which names this machine's section of the baseline.
+
+      THUMPER_LOCK_DIR
+          The directory of the measurement lock.
+
+      NO_COLOR
+          Any non-empty value: never color (--color auto).
+
+      TERM
+          dumb: never color (--color auto).
+
+      GITHUB_ACTIONS
+          Any value: add an ::error:: line for each metric that fails its case.
+
+      INSIDE_DUNE, DUNE_SOURCEROOT
+          Mark a dune rule action, whose report is colored and whose hints paste
+          from DUNE_SOURCEROOT.
     |}
 
-let help = "bench.exe: thumper benchmark suite (thumper "
+let help = "bench.exe - thumper benchmark suite (thumper "
 
 let ends_the_reading =
   [
@@ -394,7 +472,8 @@ let ends_the_reading =
 let the_help_names_the_program () =
   let (_ : string) = state_env () in
   equal ~msg:"exit code" int 0 (main ~exe:"/a/b/my_bench.exe" [ "-h" ]);
-  contains ~sub:"\nusage: my_bench.exe [check|bless|list] [OPTS] [PATTERN...]\n"
+  contains
+    ~sub:"\nusage: my_bench.exe [check|bless|list] [OPTIONS] [PATTERN...]\n"
     (output ())
 
 let command_lines =
@@ -435,8 +514,8 @@ let rule_action d =
   enter (d ^ "/_b/default/bench")
 
 let esc = "\027["
-let rerun = "  rerun:   bench.exe -f alloc\n"
-let accept = "  accept:  bench.exe bless -f fresh\n"
+let rerun = "rerun: bench.exe -f alloc\n"
+let accept = "accept: bench.exe bless -f fresh\n"
 
 let variants =
   [
@@ -462,6 +541,19 @@ let variants =
         rule_action d;
         setenv "NO_COLOR" (Some "");
         []),
+      [ esc ],
+      [] );
+    ( "TERM=dumb unstyles a rule action",
+      (fun d ->
+        rule_action d;
+        setenv "TERM" (Some "dumb");
+        []),
+      [ accept ],
+      [ esc ] );
+    ( "--color always beats TERM=dumb",
+      (fun _ ->
+        setenv "TERM" (Some "dumb");
+        [ "--color"; "always" ]),
       [ esc ],
       [] );
     ( "--color never unstyles a rule action",
@@ -495,8 +587,8 @@ let variants =
         mkdirs (d ^ "/My Projects");
         [ "--baseline"; "My Projects/d.thumper" ]),
       [
-        "  rerun:   bench.exe --baseline 'My Projects/d.thumper' -f alloc\n";
-        "  accept:  bench.exe bless --baseline 'My Projects/d.thumper' -f fresh\n";
+        "rerun: bench.exe --baseline 'My Projects/d.thumper' -f alloc\n";
+        "accept: bench.exe bless --baseline 'My Projects/d.thumper' -f fresh\n";
       ],
       [] );
   ]
@@ -793,7 +885,7 @@ let raises_boom () = failwith "boom"
 let stops =
   [
     stop ~suite:[] "a suite without a case" (fun _ -> [ "list" ])
-    @@ __POS_OF__ {| thumper: no case matches the selection |};
+    @@ __POS_OF__ {| thumper: no case selected: the suite declares none |};
     stop
       ~suite:[ Bench.bench "alpha" ignore; Bench.bench "alpha" ignore ]
       "a suite with two cases of one id"
@@ -867,7 +959,7 @@ let stops =
          {| thumper: measurement lock unusable: cannot open $D/lock/thumper-$UID.lock: Is a directory |};
     stop "--color always leaves a stop unstyled" (fun _ ->
         [ "list"; "--color"; "always"; "-f"; "zzz" ])
-    @@ __POS_OF__ {| thumper: no case matches 'zzz' |};
+    @@ __POS_OF__ {| thumper: no case selected: 'zzz' matched none of 3 cases |};
   ]
 
 (* The case runs, so the run takes the lock and measures until it raises. *)
@@ -980,10 +1072,31 @@ let without_a_baseline () =
     (main ~config:fast_config ~benches:alpha [ "check"; "--json"; "v.json" ]);
   let out = output () in
   contains ~sub:"testkey" out;
-  contains ~sub:"\n  accept:  bench.exe bless\n" out;
+  contains ~sub:"\naccept: bench.exe bless\n" out;
   equal ~msg:"no baseline" (list string) [ "v.json" ]
     (Array.to_list (Sys.readdir "."));
   ends_with ~msg:"the --json document" ~affix:"}\n" (read_file "v.json")
+
+(* The seconds the summary's [in <duration>] states, [ms] or [s]. *)
+let summary_seconds out =
+  let last = List.hd (List.rev (String.split_on_char '\n' (String.trim out))) in
+  let text =
+    let i = String.rindex last ' ' in
+    String.sub last (i + 1) (String.length last - i - 2)
+  in
+  if String.ends_with ~suffix:"ms" text then
+    float_of_string (String.sub text 0 (String.length text - 2)) /. 1000.
+  else float_of_string (String.sub text 0 (String.length text - 1))
+
+(* A millisecond protocol measures for less than a minute, whatever the
+   host. *)
+let the_summary_states_the_run's_duration () =
+  let (_ : string) = state_env () in
+  equal ~msg:"exit code" int 0
+    (main ~config:fast_config ~benches:alpha [ "check" ]);
+  let secs = summary_seconds (output ()) in
+  at_least ~msg:"at least none" float_exact ~than:0. secs;
+  at_most ~msg:"under a minute" float_exact ~than:60. secs
 
 let strict_fails_a_proposal () =
   let (_ : string) = state_env () in
@@ -1030,7 +1143,8 @@ let a_partial_bless () =
   equal ~msg:"exit code" int 0
     (main ~config:fast_config [ "bless"; "-f"; "alpha"; "--force" ]);
   let out = output () in
-  contains ~sub:"blessed 1 case into digest.thumper for machine testkey" out;
+  starts_with ~affix:"digest: 1 case for machine testkey\n" out;
+  contains ~sub:"\n1 blessed into digest.thumper in " out;
   not_contains ~sub:"accept:" out;
   equal ~msg:"the selected case's rows beside the others" (list string)
     [ "alpha alloc_words"; "g/beta alloc_words" ]
@@ -1061,7 +1175,7 @@ let check_writes_no_baseline () =
   let before = read_file "digest.thumper" in
   equal ~msg:"exit code" int 0
     (main ~config:fast_config ~benches:alpha [ "check" ]);
-  contains ~sub:"\n  accept:  bench.exe bless\n" (output ());
+  contains ~sub:"\naccept: bench.exe bless\n" (output ());
   equal ~msg:"the baseline" string before (read_file "digest.thumper");
   equal ~msg:"no other file" (list string) [ "digest.thumper" ]
     (Array.to_list (Sys.readdir "."))
@@ -1069,7 +1183,7 @@ let check_writes_no_baseline () =
 (* The first word of the rerun line of [out]: the executable as [argv.(0)]
    names it, seen from the working directory. *)
 let rerun_exe out =
-  let label = "  rerun:   " in
+  let label = "rerun: " in
   require_match
     (fun l ->
       if String.starts_with ~prefix:label l then
@@ -1184,8 +1298,7 @@ let the_rerun_line_repeats_the_flags () =
        [ "check"; "--quick"; "--baseline"; "digest.thumper"; "--tag"; "t" ]);
   contains
     ~sub:
-      "\n\
-      \  rerun:   bench.exe --quick --baseline digest.thumper --tag t -f alloc\n"
+      "\nrerun: bench.exe --quick --baseline digest.thumper --tag t -f alloc\n"
     (printed dir)
 
 let running =
@@ -1222,6 +1335,8 @@ let running =
       slow ~timeout:60.
         "check without a baseline proposes and writes --json alone"
         without_a_baseline;
+      slow ~timeout:60. "the summary states the run's duration"
+        the_summary_states_the_run's_duration;
       slow ~timeout:60. "--strict fails a run that proposes"
         strict_fails_a_proposal;
       slow ~timeout:60. "check and bless --force measure after --wait-quiet 0"

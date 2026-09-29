@@ -14,10 +14,10 @@ A regression alone exits 1 with the rerun line.
 
   $ THUMPER_FIXTURE_MODE=slow $FIX check --quick --wait-quiet 60 -f busy/spin > out.log 2>&1
   [1]
-  $ grep -o '1 case: .*' out.log
-  1 case: 0 passed, 1 regressed.
+  $ summary out.log
+  1 regressed in DURATION.
   $ grep 'rerun:' out.log
-    rerun:   ./fixture/bench_fixture.exe --quick -f busy/spin
+  rerun: ./fixture/bench_fixture.exe --quick -f busy/spin
 
 With the improvement in the same run, the run still fails, the rerun line
 names the regression and the accept line the improvement. No run writes
@@ -26,8 +26,8 @@ the baseline.
   $ THUMPER_FIXTURE_MODE=slow $FIX check --quick --wait-quiet 60 -f busy > out.log 2>&1
   [1]
   $ grep -e 'rerun:' -e 'accept:' out.log
-    rerun:   ./fixture/bench_fixture.exe --quick -f busy/spin
-    accept:  ./fixture/bench_fixture.exe bless --quick -f busy/half
+  rerun: ./fixture/bench_fixture.exe --quick -f busy/spin
+  accept: ./fixture/bench_fixture.exe bless --quick -f busy/half
   $ cmp fixture.thumper before.thumper
 
 bless records the improvement from one trial, 11 samples under --quick.

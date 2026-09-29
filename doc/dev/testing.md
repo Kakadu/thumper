@@ -223,6 +223,10 @@ environment, usage). The rules that keep them deterministic:
 - **Verbatim lines.** A deterministic line (a usage error, a stop, a
   lock refusal, a dead worker) is printed whole, with `cat` or `grep`,
   so a failure shows what the program printed.
+- **One scrub.** The summary ends with the run's duration, so a session
+  reads it through `prelude.sh`'s `summary LOG`, which prints the
+  summary line with its duration written `DURATION`, from a plain log and
+  from a dune build's alike.
 - **Bounded waits.** `test/cram/fixture/hold_lock.exe HELD RELEASE`
   takes the measurement lock, creates `HELD`, and holds the lock until
   the session creates `RELEASE`, so `lock.t`'s contention steps follow
