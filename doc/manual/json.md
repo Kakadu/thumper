@@ -13,30 +13,30 @@ with `--json` prints its report and writes the document, which `jq .` prints
 indented. The transcript runs `examples/02-getting-started` as a project's
 `bench/` directory, and its numbers are one run's.
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe -- --json verdict.json
-thumper: digest — 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 36.1 on 10 cores; timing verdicts degraded
+digest: 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  201.89 ns   ±7.2%  4 w  md5/string-64
-      environment  -3.1% [-69.2, +0.4]; equivalent (alloc exact)
-  inconclusive   26.79 ns  ±75.6%  0 w  fib/10
-      environment  +96.5% [+39.6, +322.9]; equivalent (alloc exact)
-  inconclusive   20.90 ns  ±26.2%  0 w  fib/20
-      environment  +39.7% [-57.2, +82.9]; equivalent (alloc exact)
+  passed     199.31 ns  ±0.5%  4 w  md5/string-64
+  REGRESSED   13.07 ns  ±0.3%  0 w  fib/10
+      +99.5% [+99.1, +99.9]  budget +5%
+  REGRESSED   21.63 ns  ±0.2%  0 w  fib/20
+      +99.7% [+99.5, +99.9]  budget +5%
 
-  3 cases: 0 passed, 3 inconclusive.
+rerun: ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
+1 passed, 2 regressed in 1.6s.
 $ jq . verdict.json
 {
-  "overall": "inconclusive",
+  "overall": "fail",
   "machine": "5c1e0a7f3b9d2486",
   "summary": {
     "wall_time": {
       "n_improved": 0,
-      "n_regressed": 0,
-      "n_equivalent": 0,
-      "n_inconclusive": 3,
-      "geomean_delta": 0.38541059960182111
+      "n_regressed": 2,
+      "n_equivalent": 1,
+      "n_inconclusive": 0,
+      "geomean_delta": 0.58542731007104836
     },
     "alloc_words": {
       "n_improved": 0,
@@ -50,18 +50,18 @@ $ jq . verdict.json
     {
       "id": "md5/string-64",
       "full_name": "md5/string-64",
-      "overall": "inconclusive",
+      "overall": "pass",
       "metrics": [
         {
           "metric": "wall_time",
-          "relation": "inconclusive",
-          "status": "inconclusive",
-          "reason": "environment",
+          "relation": "equivalent",
+          "status": "pass",
+          "reason": null,
           "confirmed": false,
           "n": 20,
-          "delta": -0.031005556988859231,
-          "lower_delta": -0.69176871472566948,
-          "upper_delta": 0.0041196757676518168
+          "delta": 0.0011502637185300993,
+          "lower_delta": -0.0041872040278521814,
+          "upper_delta": 0.0063918421729071081
         },
         {
           "metric": "alloc_words",
@@ -78,18 +78,18 @@ $ jq . verdict.json
     {
       "id": "fib/10",
       "full_name": "fib/10",
-      "overall": "inconclusive",
+      "overall": "fail",
       "metrics": [
         {
           "metric": "wall_time",
-          "relation": "inconclusive",
-          "status": "inconclusive",
-          "reason": "environment",
-          "confirmed": false,
+          "relation": "regressed",
+          "status": "fail",
+          "reason": null,
+          "confirmed": true,
           "n": 20,
-          "delta": 0.96477049691049932,
-          "lower_delta": 0.39628213549416857,
-          "upper_delta": 3.2293454601121718
+          "delta": 0.99512195121951219,
+          "lower_delta": 0.99105691056910572,
+          "upper_delta": 0.99898373983739841
         },
         {
           "metric": "alloc_words",
@@ -106,18 +106,18 @@ $ jq . verdict.json
     {
       "id": "fib/20",
       "full_name": "fib/20",
-      "overall": "inconclusive",
+      "overall": "fail",
       "metrics": [
         {
           "metric": "wall_time",
-          "relation": "inconclusive",
-          "status": "inconclusive",
-          "reason": "environment",
-          "confirmed": false,
+          "relation": "regressed",
+          "status": "fail",
+          "reason": null,
+          "confirmed": true,
           "n": 20,
-          "delta": 0.39669765360016412,
-          "lower_delta": -0.5719680452728827,
-          "upper_delta": 0.82915066467125931
+          "delta": 0.99722735674676528,
+          "lower_delta": 0.99537892791127547,
+          "upper_delta": 0.99907578558225507
         },
         {
           "metric": "alloc_words",
@@ -158,14 +158,13 @@ metric's rows, one per case that collects it, by relation
 | field | type | value |
 | --- | --- | --- |
 | `n_improved` | integer | the rows whose `relation` is `"improved"` |
-| `n_regressed` | integer | the rows whose `relation` is `"regressed"`, whether they fail their case or not |
+| `n_regressed` | integer | the rows whose `relation` is `"regressed"` |
 | `n_equivalent` | integer | the rows whose `relation` is `"equivalent"`, `"changed_within_budget"` or `"within_budget"` |
 | `n_inconclusive` | integer | the rows whose `relation` is `"inconclusive"` or `null` |
 | `geomean_delta` | number or `null` | the geometric mean of `1 + delta` over the rows whose `delta` is a number above `-1`, less 1 |
 
 The four counts add up to the number of cases that collect the metric.
-`n_inconclusive` counts every proposed row and every inconclusive row,
-budgeted or not.
+`n_inconclusive` counts every proposed row and every inconclusive row.
 
 `geomean_delta` covers every row with a number in `delta`, an inconclusive
 row that reports an estimate included. It leaves out an exact count that
@@ -179,7 +178,7 @@ Each element of `cases` is an object whose fields are, in this order:
 | --- | --- | --- |
 | `id` | string | the case id |
 | `full_name` | string | the case's name after its groups' names, each followed by `/` |
-| `overall` | string | `"fail"` when a metric fails the case, else `"inconclusive"` when a budgeted metric is inconclusive, else `"pass"` |
+| `overall` | string | `"fail"` when a metric fails the case, else `"inconclusive"` when a metric is inconclusive, else `"pass"` |
 | `metrics` | array | one object per metric the case collects, in the order the case collects them ([metrics](#metrics)) |
 
 ## Metrics
@@ -203,19 +202,15 @@ A proposed metric has none of `exact`, `confirmed` and `n`. Its `status` is
 `"fail"` when its exact count is over an `at_most` cap, and `"pass"`
 otherwise.
 
-A metric without a budget never fails its case. Its `status` is `"pass"`
-when it regressed, and `"inconclusive"` when it is inconclusive, and its
-case's `overall` may still be `"pass"`.
-
 ### Relations
 
 | `relation` | the report's word | the comparison |
 | --- | --- | --- |
 | `"improved"` | `improved` | the metric shrank beyond the equivalence band, confirmed by a second trial, or its exact count shrank |
-| `"regressed"` | `REGRESSED` when it fails the case, `regressed` otherwise | the metric grew beyond its budget, confirmed by a second trial, or its exact count grew beyond its budget or over its cap |
-| `"equivalent"` | `equivalent` | the interval lies within the equivalence band, or the exact count is unchanged |
-| `"changed_within_budget"` | `within budget` | the interval shows growth beyond the band and ends within the budget, or the exact count grew within its budget or cap |
-| `"within_budget"` | `within budget` | the interval ends within the budget, and no other relation holds or was confirmed |
+| `"regressed"` | `REGRESSED` | the metric grew beyond its budget, confirmed by a second trial, or its exact count grew beyond its budget or over its cap |
+| `"equivalent"` | `passed` | the interval lies within the equivalence band, or the exact count is unchanged |
+| `"changed_within_budget"` | `passed`, with the change and the budget | the interval shows growth beyond the band and ends within the budget, or the exact count grew within its budget or cap |
+| `"within_budget"` | `passed`, with the change, its interval and the budget | the interval ends within the budget, and no other relation holds or was confirmed |
 | `"inconclusive"` | `inconclusive` | the comparison was not judged, for the reason in `reason` |
 | `null` | `proposed` | no baseline row to compare with |
 
@@ -237,7 +232,7 @@ decide](how-checks-decide.md) argues for them.
 
 ## Reasons
 
-`reason` is one of nine values when `relation` is `"inconclusive"`, and
+`reason` is one of seven values when `relation` is `"inconclusive"`, and
 `"missing_baseline"` when `relation` is `null`. The report prints each with
 its own words; what each reason means, and what to do about it, is in [the
 report's reasons](report.md#inconclusive-reasons).
@@ -246,12 +241,10 @@ report's reasons](report.md#inconclusive-reasons).
 | --- | --- |
 | `"wide_interval"` | `wide interval` |
 | `"non_positive"` | `non-positive sample` |
-| `"baseline_unstable"` | `baseline unstable` |
 | `"environment"` | `environment` |
 | `"unconfirmed"` | `unconfirmed` |
 | `"exactness_lost"` | `exactness lost` |
 | `"batch_drifted"` | `batch drifted` |
-| `"unstable"` | `unstable` |
 | `"drifted"` | `drifted` |
 | `"missing_baseline"` | `proposed` |
 
