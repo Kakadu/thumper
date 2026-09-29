@@ -36,42 +36,45 @@ let () =
 
 Every case here may be 5% slower than its baseline, except
 `hex-decode`, which may be 10% slower. The two `codec` cases may not
-allocate one word more. The rules for which budget reaches a case,
-including a budget on an uncollected metric and the default, are under
-Inheritance in the Defining benchmarks section of
-[`lib/thumper.mli`](../../lib/thumper.mli).
+allocate one word more. A metric that no scope budgets has the default
+budget, 5%. The rules for which budget reaches a case, including a budget
+on an uncollected metric, are under Inheritance in the Defining
+benchmarks section of [`lib/thumper.mli`](../../lib/thumper.mli).
 
-The conditions under which a budgeted row reads `equivalent`, `within
-budget`, `improved` or `regressed` are under Budgets in
-[`lib/thumper.mli`](../../lib/thumper.mli).
+The relations a budget yields are under Budgets in
+[`lib/thumper.mli`](../../lib/thumper.mli), and the words a row prints
+for them are in [the report](report.md#the-table).
 
-The first run of the example writes a corrected file, `mv` accepts it,
-and the second run judges every row against it:
+The first run of the example proposes a baseline, the pasted `accept:`
+line records it, and the second run judges every row against it:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_budgets.exe
-thumper: waiting for the measurement lock (another run is measuring) ...
-thumper: budgets — no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
+budgets: no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
 
   proposed  160.91 ns  ±0.5%  18 w  codec/hex-encode
   proposed  327.83 ns  ±0.2%  10 w  codec/hex-decode
   proposed   30.43 ns  ±0.6%  64 w  scratch-table
 
-  accept:  mv bench/budgets.thumper.corrected bench/budgets.thumper
-  warning: load 39.7 on 10 cores; prefer a quiet host before accepting
-$ mv bench/budgets.thumper.corrected bench/budgets.thumper
+accept: ./_build/default/bench/bench_budgets.exe bless
+3 proposed in 0.9s.
+$ ./_build/default/bench/bench_budgets.exe bless
+budgets: 3 cases for machine 5c1e0a7f3b9d2486
+
+  blessed  160.47 ns  ±0.4%  18 w  codec/hex-encode
+  blessed  328.02 ns  ±0.3%  10 w  codec/hex-decode
+  blessed   30.41 ns  ±0.5%  64 w  scratch-table
+
+3 blessed into bench/budgets.thumper in 0.9s.
 $ dune exec bench/bench_budgets.exe
-thumper: budgets — 3 cases vs bench/budgets.thumper for machine 5c1e0a7f3b9d2486
-warning: load 39.7 on 10 cores; timing verdicts degraded
+budgets: 3 cases vs bench/budgets.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  160.53 ns  ±0.8%  18 w  codec/hex-encode
-      environment; equivalent (alloc exact)
-  inconclusive  329.61 ns  ±1.1%  10 w  codec/hex-decode
-      environment; equivalent (alloc exact)
-  inconclusive   30.38 ns  ±5.1%  64 w  scratch-table
-      environment; equivalent (alloc exact)
+  passed  160.53 ns  ±0.8%  18 w  codec/hex-encode
+  passed  329.61 ns  ±1.1%  10 w  codec/hex-decode
+  passed   30.38 ns  ±0.6%  64 w  scratch-table
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 0.9s.
 ```
 
 ## Capping allocation
@@ -102,22 +105,18 @@ To see the cap fail, the example's array grows to 300 elements:
 
 The case's row reads `REGRESSED` and the run exits 1:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_budgets.exe
-thumper: budgets — 3 cases vs bench/budgets.thumper for machine 5c1e0a7f3b9d2486
-warning: load 39.7 on 10 cores; timing verdicts degraded
+budgets: 3 cases vs bench/budgets.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  161.22 ns  ±0.5%   18 w  codec/hex-encode
-      environment; equivalent (alloc exact)
-  inconclusive  328.32 ns  ±0.4%   10 w  codec/hex-decode
-      environment; equivalent (alloc exact)
-  REGRESSED     250.78 ns  ±0.8%  301 w  scratch-table
-      alloc 64 w → 301 w (exact); inconclusive: environment
+  passed     161.22 ns  ±0.5%   18 w  codec/hex-encode
+  passed     328.32 ns  ±0.4%   10 w  codec/hex-decode
+  REGRESSED  250.78 ns  ±0.8%  301 w  scratch-table
+      alloc 64 w → 301 w (exact)  cap 256 w
 
-  rerun:   /private/var/folders/5p/vkxwhs6s5155xdsrlv6jg8mh0000gn/T/t5gen-w1a/writing-benchmarks/_build/default/bench/bench_budgets.exe \
-           -f scratch-table
-
-  3 cases: 0 passed, 1 regressed, 2 inconclusive.
+rerun: ./_build/default/bench/bench_budgets.exe -f scratch-table
+2 passed, 1 regressed in 0.9s.
 $ echo $?
 1
 ```
@@ -254,18 +253,20 @@ let () =
 ```
 
 `sort-100k` collects three metrics and `sum-100k` collects `wall_time`
-alone:
+alone. Each metric a case collects has a budget, so `minor_collections`
+has the default one, 5%:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_protocol.exe
-thumper: protocol — no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
+protocol: no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
 
-  proposed  18715.27 us  ±0.5%  475.4 kw  sort-100k
-  proposed    227.71 us  ±4.3%            sum-100k
+  proposed   18.72 ms  ±0.5%  475,405 w  sort-100k
+  proposed  227.71 us  ±4.3%             sum-100k
   warning: sort-100k: minor_collections: exactness probe failed: batch deltas 1 (k=1) and 4 (2k=2) give per-call 3 words with harness h -2 vs -2; treating as sampled
 
-  accept:  mv bench/protocol.thumper.corrected bench/protocol.thumper
-  warning: load 39.5 on 10 cores; prefer a quiet host before accepting
+accept: ./_build/default/bench/bench_protocol.exe bless
+2 proposed in 2.4s.
 ```
 
 The built-in metrics, and how a scope's `?metrics` reaches its cases,
@@ -277,9 +278,9 @@ To change how every case is measured, pass `run` a `~config` built from
 `Config.default` with its setters, as the example above does. It takes
 30 samples per trial and lets a trial run 30 s before it is killed. Pick
 the setter by the problem:
-- A row reads `inconclusive: wide interval`: take more samples with
+- A comparison is inconclusive for `wide interval`: take more samples with
   `Config.samples`, or `--precise` for one run, or loosen the budget.
-- A row reads `inconclusive: non-positive sample`
+- A comparison is inconclusive for `non-positive sample`
   ([reasons](report.md#inconclusive-reasons)): raise the batch floor with
   `Config.batch_floor`, or budget `wall_time` in its place; more samples do
   not help.
