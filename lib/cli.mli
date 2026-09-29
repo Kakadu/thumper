@@ -123,14 +123,14 @@ val default_baseline_dir :
 (** [default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd] is
     the directory of the default baseline. [inside_dune] and [source_root] are
     the values of [INSIDE_DUNE] and [DUNE_SOURCEROOT], [None] when unset, and
-    [exe] is made absolute against [cwd].
+    [exe] is made absolute against [cwd], its [.] and [..] segments resolved as
+    text.
     - When [inside_dune] is an absolute path [c], the build context's directory,
       and [source_root] is [Some r], it is [cwd] when [cwd] lies under
-      [Filename.dirname c], as a rule action's does. Otherwise, when [exe], its
-      [.] and [..] segments resolved as text, lies under [c], it is [exe]'s
-      directory relative to [c] joined to [r], if [dir_exists] holds of it:
-      [/w/_b/default/bench/x.exe] maps to [/w/bench] under [c = /w/_b/default]
-      and [r = /w]. Else it is [cwd].
+      [Filename.dirname c], as a rule action's does. Otherwise, when [exe] lies
+      under [c], it is [exe]'s directory relative to [c] joined to [r], if
+      [dir_exists] holds of it: [/w/_b/default/bench/x.exe] maps to [/w/bench]
+      under [c = /w/_b/default] and [r = /w]. Else it is [cwd].
     - When both are [None], it is [cwd] when [cwd] has a [_build] segment, and
       otherwise the source directory of an [exe] containing [/_build/], if
       [dir_exists] holds of it: the part of [exe] before its last [/_build/],

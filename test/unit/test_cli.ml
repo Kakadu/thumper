@@ -690,6 +690,12 @@ let layouts =
       "_build/default/bench/b.exe",
       [ "/ws/bench" ],
       "/ws/bench" );
+    ( "by hand, a path through .. names the directory without it",
+      `Hand,
+      "/ws/bench",
+      "../_build/default/bench/b.exe",
+      [ "/ws/bench"; "/ws/bench/../bench" ],
+      "/ws/bench" );
     ( "by hand, an executable outside _build",
       `Hand,
       "/ws",

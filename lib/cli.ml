@@ -322,13 +322,16 @@ let build_layout_dir ~dir_exists ~exe ~cwd =
    there and an action never writes to the source tree; any other run under
    dune resolves beside the executable's source, the committable location. *)
 let default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd =
-  let exe = if Filename.is_relative exe then Filename.concat cwd exe else exe in
+  (* [dune exec --root ../..] and a hand run of [../_build/default/b.exe]
+     reach the executable through [..]; the prefix tests compare paths as
+     text, so the path loses its [.] and [..] segments first. *)
+  let exe =
+    without_dot_dot_segments
+      (if Filename.is_relative exe then Filename.concat cwd exe else exe)
+  in
   match (inside_dune, source_root) with
   | None, None -> build_layout_dir ~dir_exists ~exe ~cwd
   | Some context, Some root when not (Filename.is_relative context) ->
-      (* [dune exec --root ../..] runs [cwd/../../_build/...]: the prefix
-         test needs the path without its [.] and [..] segments. *)
-      let exe = without_dot_dot_segments exe in
       if under_dir (Filename.dirname context) cwd then cwd
       else if under_dir context exe then
         let n = String.length context in
