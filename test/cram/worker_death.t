@@ -1,50 +1,35 @@
-Worker containment: a dead worker is an operational
-failure — exit 2, a message naming the case — never a judgment, and never a
-stale artifact.
+A worker that dies is an operational failure, not a verdict: exit 2, a
+line naming the case, and no file left behind.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-kill9 mode SIGKILLs the measuring worker mid-protocol.
+kill9 mode kills the measuring worker with SIGKILL. The run publishes
+nothing: no corrected file, no JSON document, no temporary file.
 
-  $ THUMPER_FIXTURE_MODE=kill9 $FIX check --quick -f err/kill9 --json out.json > out.log 2>&1
+  $ THUMPER_FIXTURE_MODE=kill9 $FIX check --quick -f err/kill9 --json out.json 2> err.log
   [2]
-  $ grep -o 'worker for err/kill9 died: .*' out.log
-  worker for err/kill9 died: killed by SIGKILL
-
-No candidate, no JSON, no temp files — the run aborted before any artifact
-could be published.
-
-  $ test ! -e fixture.thumper.corrected && test ! -e fixture.thumper && echo no-candidate
-  no-candidate
-  $ test ! -e out.json && echo no-json
-  no-json
-  $ find . -name '*.tmp' | wc -l | tr -d ' '
-  0
-
-A raising closure is captured and rendered the same way — never re-raised
-as a crash.
-
-  $ THUMPER_FIXTURE_MODE=raise $FIX check --quick -f err/raise > out2.log 2>&1
-  [2]
-  $ grep -q 'case err/raise raised' out2.log && echo captured
-  captured
-  $ grep -c 'Fatal error' out2.log
-  0
+  $ cat err.log
+  thumper: worker for err/kill9 died: killed by SIGKILL
+  $ ls -a | grep -e thumper -e json -e '\.tmp$'
   [1]
 
-A hung case (hang mode spins forever under a 1 s per-case deadline): the
-parent-side wait bound turns a wedged case into a deadline error — exit 2,
-never a wedged run. The deadline itself is the bound under test (a
-regression here wedges until the CI job timeout — the backstop); the
-assertion is termination and classification, never a timing.
+A case that raises is caught in its worker and named, never a crash of the
+run.
 
-  $ THUMPER_FIXTURE_MODE=hang $FIX check --quick -f err/raise > hang.log 2>&1
+  $ THUMPER_FIXTURE_MODE=raise $FIX check --quick -f err/raise 2> err.log
   [2]
-  $ grep -o 'case err/raise exceeded its deadline.*' hang.log
-  case err/raise exceeded its deadline of 1s
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ cat err.log
+  thumper: case err/raise raised: Failure("fixture raise mode")
+
+A case that never returns: under hang mode err/raise spins forever, and
+the parent kills its worker at the case's 1 s deadline. The deadline is a
+cap on damage, not a timing claim; the session asserts that the run ends,
+and how.
+
+  $ THUMPER_FIXTURE_MODE=hang $FIX check --quick -f err/raise 2> err.log
+  [2]
+  $ cat err.log
+  thumper: case err/raise exceeded its deadline of 1s
+  $ ls -a | grep -e thumper -e '\.tmp$'
+  [1]
