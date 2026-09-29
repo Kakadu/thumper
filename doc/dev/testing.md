@@ -6,8 +6,10 @@ to be deterministic on a loaded machine, because the machine running
 CI is exactly the kind of host the product distrusts.
 
 Three deliberate exceptions, all about subjects that *are* the clock:
-`test_clock` sleeps and asserts generous interval bounds (a
-ticks-vs-nanoseconds unit error is invisible to any scripted test),
+`test_clock` sleeps and compares the clock's interval with the wall
+clock's over the same sleep, within 10% (a ticks-vs-nanoseconds unit
+error is invisible to any scripted test, and the scheduler stretches both
+clocks alike),
 the hung-worker cram leg (`worker_death.t`, fixture `hang` mode)
 runs a case that spins forever under a 1 s per-case deadline inside a
 60 s budget, and `test_measure` forks one such case under a 0.2 s

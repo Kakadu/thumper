@@ -3,71 +3,113 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Windtrap suite for the vendored raw-monotonic clock
-  . *)
+(* The stubs are the subject, so every test reads the real clock and the real
+   host. What load can move is never asserted: the clock is compared with the
+   wall clock over one interval, which both see whole whatever the scheduler
+   does, and the load average is only checked for its sign. *)
 
 open Windtrap
 
-let reads = 10_000
+(* The index and the two readings of the first decrease, if any. *)
+let first_decrease reads =
+  let rec find i =
+    if i >= Array.length reads then None
+    else if reads.(i) < reads.(i - 1) then Some (i, reads.(i - 1), reads.(i))
+    else find (i + 1)
+  in
+  find 1
 
-let now_non_decreasing () =
-  let prev = ref (Thumper_clock.now_ns ()) in
-  for i = 1 to reads do
-    let now = Thumper_clock.now_ns () in
-    if now < !prev then
-      failf "now_ns went backwards at read %d: %d then %d" i !prev now;
-    prev := now
-  done
+let now_ns_never_decreases () =
+  let reads = Array.init 10_000 (fun _ -> Thumper_clock.now_ns ()) in
+  equal (option (triple int int int)) None (first_decrease reads)
 
-let load_average_some_non_negative () =
-  match Thumper_clock.load_average () with
-  | None -> fail "load_average is None on this host (getloadavg failed)"
-  | Some l -> if l < 0.0 then failf "load_average is negative: %g" l
-
-(* Two consecutive reads must land within 1 ms of each other: a clock
-   whose reads are that close is fine-grained (and cheap) enough for 5 ms
-   batches. A single pair could be descheduled between the reads, so take
-   the minimum over many pairs. *)
-let resolution_below_1ms () =
-  let min_delta = ref max_int in
-  for _ = 1 to 1_000 do
+(* The step between two readings that differ, the smallest over many steps,
+   since a reading can be descheduled; a clock that never moves hangs here
+   until the test's limit. *)
+let now_ns_resolves_below_1ms () =
+  let step () =
     let a = Thumper_clock.now_ns () in
-    let b = Thumper_clock.now_ns () in
-    min_delta := min (b - a) !min_delta
+    let rec next () =
+      let b = Thumper_clock.now_ns () in
+      if b = a then next () else b - a
+    in
+    next ()
+  in
+  let smallest = ref (step ()) in
+  for _ = 1 to 1_000 do
+    smallest := Int.min !smallest (step ())
   done;
-  if !min_delta >= 1_000_000 then
-    failf "consecutive now_ns reads are %d ns apart (>= 1 ms)" !min_delta
+  less ~msg:"ns between two readings" int ~than:1_000_000 !smallest
 
-(* A ticks-vs-nanoseconds confusion in the stubs (e.g. dropping the mach
-   timebase conversion on Apple Silicon, where raw ticks run at 24 MHz, so
-   every value is ~42x too small) passes both the monotonicity and the
-   resolution tests above. Only cross-checking against an independently
-   timed wall-clock interval catches a constant-factor unit error. The
-   bounds are loose ([0.04, 0.5] s for a 50 ms sleep) to tolerate
-   scheduler delay while still catching any such factor. *)
-let tracks_sleep () =
-  let t0 = Thumper_clock.now_ns () in
-  Unix.sleepf 0.05;
-  let t1 = Thumper_clock.now_ns () in
-  let s = float_of_int (t1 - t0) /. 1e9 in
-  if s < 0.04 || s > 0.5 then
-    failf "now_ns measured %.6f s across a 50 ms sleep (unit error?)" s
+(* A wall-clock reading and the monotonic readings either side of it, retried
+   until they are less than 100 us apart. *)
+let paired () =
+  let rec attempt n =
+    if n = 0 then skip ~reason:"no two readings less than 100 us apart" ();
+    let before = Thumper_clock.now_ns () in
+    let wall = Unix.gettimeofday () in
+    let after = Thumper_clock.now_ns () in
+    if after - before < 100_000 then (before + ((after - before) / 2), wall)
+    else attempt (n - 1)
+  in
+  attempt 1_000
+
+(* A ticks-for-nanoseconds error in the stubs, such as a dropped mach timebase
+   (24 MHz ticks on Apple Silicon, 41.67 times too few), passes the two tests
+   above. Both clocks read the same interval, however long the scheduler makes
+   the sleep, and the pairing bounds their disagreement by 0.2 ms against 10%
+   of 20 ms. *)
+let now_ns_counts_nanoseconds () =
+  let mono0, wall0 = paired () in
+  Unix.sleepf 0.02;
+  let mono1, wall1 = paired () in
+  equal
+    (float_rel ~rel:0.1 ~abs:0.)
+    (wall1 -. wall0)
+    (float_of_int (mono1 - mono0) *. 1e-9)
+
+let load_average_is_non_negative () =
+  match Thumper_clock.load_average () with
+  | None -> skip ~reason:"the host reports no load average" ()
+  | Some l -> at_least float_exact ~than:0. l
+
+(* The lines [prog] prints, or none if it cannot run. *)
+let lines prog args =
+  match Unix.open_process_args_in prog (Array.of_list (prog :: args)) with
+  | exception Unix.Unix_error _ -> []
+  | ic ->
+      let lines = In_channel.input_lines ic in
+      ignore (Unix.close_process_in ic);
+      lines
+
+(* ioreg reads the hardware UUID from the I/O Registry, apart from
+   [gethostuuid(2)]. *)
+let host_uuid_is_the_hardware_uuid () =
+  let expected =
+    match lines "uname" [ "-s" ] with
+    | [ "Darwin" ] ->
+        List.find_map
+          (fun line ->
+            match String.split_on_char '"' line with
+            | [ _; "IOPlatformUUID"; _; uuid; _ ] -> Some uuid
+            | _ -> None)
+          (lines "/usr/sbin/ioreg" [ "-rd1"; "-c"; "IOPlatformExpertDevice" ])
+    | _ -> None
+  in
+  equal (option string) expected (Thumper_clock.host_uuid ())
 
 let () =
-  run "thumper_clock"
-    [
-      group "clock"
-        [
-          test "now_ns is non-decreasing over 10k rapid reads"
-            now_non_decreasing;
-          test "consecutive now_ns reads differ by less than 1 ms"
-            resolution_below_1ms;
-          test "now_ns tracks a 50 ms wall-clock sleep" tracks_sleep;
-        ];
-      group "load"
-        [
-          test "load_average is Some non-negative on this host"
-            load_average_some_non_negative;
-        ];
-    ]
-  |> exit
+  exit
+    (run "thumper_clock"
+       [
+         test "now_ns never decreases over 10k readings" now_ns_never_decreases;
+         test ~timeout:10. "now_ns resolves below 1 ms"
+           now_ns_resolves_below_1ms;
+         test "now_ns counts nanoseconds, as the wall clock does"
+           now_ns_counts_nanoseconds;
+         test "load_average is non-negative when the host reports one"
+           load_average_is_non_negative;
+         test ~timeout:10.
+           "host_uuid is the hardware UUID on Darwin and None elsewhere"
+           host_uuid_is_the_hardware_uuid;
+       ])
