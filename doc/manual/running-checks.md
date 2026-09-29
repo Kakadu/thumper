@@ -1,9 +1,9 @@
 # Running checks
 
 These recipes run a suite whose baseline is committed: while you change the
-code, when you accept a new baseline, on several machines, in CI and on
+code, when you record a new baseline, on several machines, in CI and on
 loaded hosts. The transcripts run `examples/02-getting-started` as a
-project's `bench/` directory, with its baseline accepted as at the end of
+project's `bench/` directory, with its baseline recorded as at the end of
 the [tutorial](getting-started.md). Their numbers are one run's.
 
 ## Measuring one case while iterating
@@ -12,60 +12,62 @@ To measure one case after an edit, run the executable with `-f` and the
 case's id, and `--quick` for 11 samples in place of 20. `dune exec` builds
 the executable and passes it the arguments after `--`:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe -- -f fib/20 --quick
-thumper: digest — 1 case vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 21.0 on 10 cores; timing verdicts degraded
+digest: 1 case vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  14.18 ns  ±106.0%  0 w  fib/20
-      environment  +0.5% [-8.5, +81.9]; equivalent (alloc exact)
+  passed  10.84 ns  ±0.4%  0 w  fib/20
 
-  1 case: 0 passed, 1 inconclusive.
+1 passed in 0.3s.
 ```
 
 `-f` selects every case whose id contains its pattern, as [selecting
 cases](command-line.md#selecting-cases) shows. A `--quick` run judges its
 11 samples against the baseline's `n=20` rows. Its intervals are wider
-than a default run's, so more rows can read `inconclusive: wide interval`,
-and a row that its improvement advances records `n=22`.
+than a default run's, so more comparisons can be inconclusive for
+`wide interval`.
 
 ## Re-measuring a failing case
 
-A failing run outside a dune rule action prints a `rerun:` line, which
-measures the failing cases again with the run's flags. A rule action is the
-command a `rule` stanza runs, as `dune build @bench` runs the benchmark; a
-run by hand or under `dune exec` is not one. After the tutorial's
-[regression](getting-started.md#a-regression):
+A failing run prints a `rerun:` line, the command that measures the
+failing cases again with the run's flags. It pastes where the run was
+started, or from the workspace root after `dune build`. After the
+tutorial's [regression](getting-started.md#a-regression):
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe
-thumper: digest — 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 21.0 on 10 cores; timing verdicts degraded
+digest: 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  208.84 ns  ±1.1%  4 w  md5/string-64
-      environment  +0.8% [-1.7, +2.6]; equivalent (alloc exact)
-  inconclusive   11.60 ns  ±0.2%  0 w  fib/10
-      environment  +67.5% [+59.9, +69.4]; equivalent (alloc exact)
-  inconclusive   20.64 ns  ±0.7%  0 w  fib/20
-      environment  +79.6% [+34.5, +82.1]; equivalent (alloc exact)
+  passed     199.31 ns  ±0.5%  4 w  md5/string-64
+  REGRESSED   13.07 ns  ±0.3%  0 w  fib/10
+      +99.5% [+99.1, +99.9]  budget +5%
+  REGRESSED   21.63 ns  ±0.2%  0 w  fib/20
+      +99.7% [+99.5, +99.9]  budget +5%
 
-  3 cases: 0 passed, 3 inconclusive.
+rerun: ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
+1 passed, 2 regressed in 1.6s.
 ```
 
 To measure them again, paste the line:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
-thumper: digest — 2 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 21.0 on 10 cores; timing verdicts degraded
+digest: 2 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  11.55 ns  ±0.3%  0 w  fib/10
-      environment  +65.8% [+57.2, +68.5]; equivalent (alloc exact)
-  inconclusive  20.48 ns  ±1.0%  0 w  fib/20
-      environment  +76.0% [+32.1, +80.5]; equivalent (alloc exact)
+  REGRESSED  13.06 ns  ±0.2%  0 w  fib/10
+      +99.4% [+99.0, +99.8]  budget +5%
+  REGRESSED  21.61 ns  ±0.3%  0 w  fib/20
+      +99.6% [+99.3, +99.9]  budget +5%
 
-  2 cases: 0 passed, 2 inconclusive.
+rerun: ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
+2 regressed in 1.3s.
 ```
+
+A run with an inconclusive comparison that another measurement may settle
+prints a `rerun:` line too ([reasons](report.md#inconclusive-reasons)).
 
 ## Running the benchmarks again
 
@@ -73,78 +75,81 @@ Dune caches the benchmark rule like any other. With the executable and the
 baseline unchanged, `dune build @bench` measures nothing and prints nothing.
 To measure again anyway, add `--force`:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
 $ dune build @bench --force
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 20.0 on 10 cores; timing verdicts degraded
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  206.20 ns  ±0.7%  4 w  md5/string-64
-      environment  -1.3% [-3.8, +0.2]; equivalent (alloc exact)
-  inconclusive    6.82 ns  ±1.1%  0 w  fib/10
-      environment  -1.3% [-5.8, +0.2]; equivalent (alloc exact)
-  inconclusive   11.31 ns  ±1.4%  0 w  fib/20
-      environment  -3.6% [-27.6, -0.3]; equivalent (alloc exact)
+  passed  199.18 ns  ±0.6%  4 w  md5/string-64
+  passed    6.55 ns  ±0.3%  0 w  fib/10
+  passed   10.83 ns  ±0.2%  0 w  fib/20
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 0.9s.
 ```
 
-## Accepting an improvement
+## Recording an improvement
 
-An improvement fails the build too, until you accept it. The corrected file
-advances the improved rows, and `diff?` fails the build on its diff until
-`dune promote` accepts it. Here the `fib` cases do half the work: in
-`bench/bench_digest.ml`, `fib (Thumper.black_box n)` becomes:
+A confirmed improvement passes, and its row reads `improved`. The
+`accept:` line names the `bless` command that records the improved cases.
+Until they are recorded, later runs compare with their old rows. Here the
+`fib` cases do half the work: in `bench/bench_digest.ml`,
+`fib (Thumper.black_box n)` becomes:
 
 ```ocaml
 fib (Thumper.black_box (n / 2))
 ```
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 20.0 on 10 cores; timing verdicts degraded
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  203.04 ns  ±1.3%  4 w  md5/string-64
-      environment  -3.0% [-5.5, -0.8]; equivalent (alloc exact)
-  inconclusive    4.99 ns  ±0.5%  0 w  fib/10
-      environment  -28.0% [-31.3, -27.1]; equivalent (alloc exact)
-  inconclusive    7.02 ns  ±0.4%  0 w  fib/20
-      environment  -38.8% [-54.2, -38.1]; equivalent (alloc exact)
+  passed    199.08 ns  ±0.6%  4 w  md5/string-64
+  improved    4.43 ns  ±0.3%  0 w  fib/10
+      -32.3% [-32.6, -32.0]
+  improved    6.61 ns  ±0.2%  0 w  fib/20
+      -39.0% [-39.2, -38.8]
 
-  3 cases: 0 passed, 3 inconclusive.
-$ dune promote
+accept: ./_build/default/bench/bench_digest.exe bless -f fib/10 -f fib/20
+3 passed (2 improved) in 1.6s.
+$ ./_build/default/bench/bench_digest.exe bless -f fib/10 -f fib/20
+digest: 2 cases for machine 5c1e0a7f3b9d2486
+
+  blessed  4.42 ns  ±0.2%  0 w  fib/10
+  blessed  6.60 ns  ±0.2%  0 w  fib/20
+
+2 blessed into bench/digest.thumper in 0.6s.
 ```
 
-Outside a rule action, the report's `accept:` line is the `mv` that accepts
-the corrected file. Against a current section, `check`'s corrected file
-never records a slower row ([what the corrected file may
-change](how-checks-decide.md#what-the-corrected-file-may-change)).
+`bless -f` records the cases it selects and keeps every other row of the
+section. A pattern selects every case whose id contains it, and `bless`'s
+report lists each case it recorded. `git diff bench/digest.thumper` shows
+the rows that changed, for review before the commit.
 
-## Accepting an intended slowdown
+## Recording an intended slowdown
 
-To accept a slowdown you intend, re-record the cases with `bless`, then
-accept its corrected file. `bless -f fib` re-records the cases whose id
-contains `fib` in this machine's section, and keeps every other row. With
-the regression's edit in place:
+To keep a slowdown you intend, record the slower cases with `bless`.
+`bless -f fib` records the cases whose id contains `fib` in this machine's
+section. With the regression's edit in place:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe -- bless -f fib
-thumper: bless refused: load 19.8 on 10 cores; rerun with --wait-quiet SECS, or with --force to record it anyway
-$ mv bench/digest.thumper.corrected bench/digest.thumper
-mv: bench/digest.thumper.corrected: No such file or directory
+digest: 2 cases for machine 5c1e0a7f3b9d2486
+
+  blessed  13.05 ns  ±0.3%  0 w  fib/10
+  blessed  21.60 ns  ±0.2%  0 w  fib/20
+
+2 blessed into bench/digest.thumper in 0.6s.
 $ dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 19.8 on 10 cores; timing verdicts degraded
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  206.03 ns   ±1.3%  4 w  md5/string-64
-      environment  -0.4% [-1.6, +1.7]; equivalent (alloc exact)
-  inconclusive   11.77 ns   ±2.8%  0 w  fib/10
-      environment  +68.6% [+6.0, +72.9]; equivalent (alloc exact)
-  inconclusive   21.03 ns  ±24.9%  0 w  fib/20
-      environment  +81.4% [+76.8, +159.0]; equivalent (alloc exact)
+  passed  199.22 ns  ±0.5%  4 w  md5/string-64
+  passed   13.06 ns  ±0.2%  0 w  fib/10
+  passed   21.62 ns  ±0.3%  0 w  fib/20
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 1.0s.
 ```
 
 `bless` refuses a loaded host ([checking on a loaded
@@ -153,165 +158,149 @@ the place to say why the case is slower.
 
 ## Adding a machine
 
-A machine with no section in the baseline proposes one on its first run, as
-the tutorial's [first run](getting-started.md#the-first-run) does, and
-`dune promote` accepts it. Each machine needs one accept when a suite is
-born, and one after each compiler upgrade. A run judges only its own
-machine's section, and never changes another's.
+A machine with no section in the baseline passes its first run with every
+row `proposed`, as the tutorial's [first
+run](getting-started.md#the-first-run) does, and `bless` records its
+section. Each machine records once when a suite is born, and again after
+each compiler upgrade. A run judges only its own machine's section, and
+`bless` never changes another's.
 
 ## Upgrading the compiler
 
 A section recorded under another compiler is stale. Every row reads
-`proposed`, and the corrected file records the section again. After a
-compiler upgrade, the header names both compilers:
+`proposed`, and `bless` records the section again. After a compiler
+upgrade, the header names both compilers:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe
-thumper: waiting for the measurement lock (another run is measuring) ...
-thumper: the measurement lock changed owner; waiting on the new holder ...
-thumper: digest — stale baseline for machine 5c1e0a7f3b9d2486 (ocaml 5.2.0 · 64-bit · release → 5.5.1 · 64-bit · release)
+digest: stale baseline for machine 5c1e0a7f3b9d2486 (ocaml 5.2.0 · 64-bit · release → 5.5.1 · 64-bit · release)
 
-  proposed  204.43 ns  ±0.7%  4 w  md5/string-64
-  proposed    6.79 ns  ±0.5%  0 w  fib/10
-  proposed   11.46 ns  ±1.9%  0 w  fib/20
+  proposed  199.20 ns  ±0.6%  4 w  md5/string-64
+  proposed    6.55 ns  ±0.3%  0 w  fib/10
+  proposed   10.83 ns  ±0.2%  0 w  fib/20
 
-  accept:  mv bench/digest.thumper.corrected bench/digest.thumper
-  warning: load 18.7 on 10 cores; prefer a quiet host before accepting
+accept: ./_build/default/bench/bench_digest.exe bless
+3 proposed in 0.9s.
 ```
 
-Accept its corrected file as a first run's. Flambda is not part of the
-compiler identity (Baselines in [`lib/thumper.mli`](../../lib/thumper.mli)).
-After a move to a flambda compiler of the same version, re-record every case
-with `bless` and accept the corrected file.
+Flambda is not part of the compiler identity (Baselines in
+[`lib/thumper.mli`](../../lib/thumper.mli)). After a move to a flambda
+compiler of the same version, record every case again with `bless`.
 
-## Checking on a fleet of CI runners
+## Checking in CI
 
-Each runner of a fleet has its own machine key, and its own first run. To
-give them one section, set `THUMPER_MACHINE` to a name of your choosing in
-the job's environment. The name claims that every runner using it times
-alike, as identical machines you control do.
+A run passes when this machine has no section in the baseline, unless an
+exact count is over its `at_most` cap. Every row then reads `proposed`,
+and nothing is compared. Thumper cannot tell a
+runner that should compare from a new machine, and a CI job that must
+compare says so with `--strict`. It fails a run with a proposed metric,
+and an inconclusive comparison still passes. Run each suite from a CI step
+with `dune exec`, as here on a runner whose key has no section:
 
-Dune reruns a rule only when one of its dependencies changes, and an
-environment variable is a dependency only when the rule declares it.
-Without that, a run under a new key measures and prints nothing:
-
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
-$ THUMPER_MACHINE=ci-linux dune build @bench
-```
+$ THUMPER_MACHINE=ci-linux dune exec bench/bench_digest.exe -- --strict
+digest: no baseline for machine ci-linux (Apple M1 Max)
 
-In the rule of `bench/dune`, beside its `locks` field, declare the
-variable:
+  proposed  199.14 ns  ±0.7%  4 w  md5/string-64
+  proposed    6.55 ns  ±0.4%  0 w  fib/10
+  proposed   10.84 ns  ±0.2%  0 w  fib/20
 
-```dune
-(deps (env_var THUMPER_MACHINE))
-```
-
-The rule then runs under each key, and the first run under a new key
-proposes its section:
-
-```
-$ THUMPER_MACHINE=ci-linux dune build @bench
-thumper: digest — no baseline for machine ci-linux (Apple M1 Max)
-
-  proposed  206.65 ns  ±1.6%  4 w  md5/string-64
-  proposed    6.95 ns  ±2.0%  0 w  fib/10
-  proposed   11.46 ns  ±1.4%  0 w  fib/20
-
-  accept:  dune promote
-  warning: load 18.7 on 10 cores; prefer a quiet host before accepting
-File "bench/digest.thumper", line 1, characters 0-0:
-diff --git a/_build/default/bench/digest.thumper b/_build/default/bench/digest.thumper.corrected
-index e39d426..fe19fa0 100644
---- a/_build/default/bench/digest.thumper
-+++ b/_build/default/bench/digest.thumper.corrected
-@@ -11,3 +11,14 @@ fib/20	alloc_words	exact	0
- fib/20	wall_time	batch=524288	n=20	1.146e-08	1.102e-08 1.105e-08 1.111e-08 1.123e-08 1.127e-08 1.133e-08 1.134e-08 1.138e-08 1.142e-08 1.146e-08 1.146e-08 1.150e-08 1.156e-08 1.165e-08 1.176e-08 1.178e-08 1.260e-08 1.313e-08 1.471e-08 1.589e-08
- md5/string-64	alloc_words	exact	4
- md5/string-64	wall_time	batch=32768	n=20	2.045e-07	1.949e-07 1.988e-07 2.004e-07 2.013e-07 2.013e-07 2.020e-07 2.023e-07 2.024e-07 2.029e-07 2.043e-07 2.046e-07 2.047e-07 2.047e-07 2.047e-07 2.049e-07 2.054e-07 2.062e-07 2.072e-07 2.083e-07 2.465e-07
-+
-+# machine: ci-linux
-+# host: laptop · Apple M1 Max · arm64 · macos
-+# ocaml: 5.5.1 · 64-bit · release
-+
-+fib/10	alloc_words	exact	0
-+fib/10	wall_time	batch=1048576	n=20	6.947e-09	6.711e-09 6.734e-09 6.863e-09 6.877e-09 6.888e-09 6.891e-09 6.896e-09 6.920e-09 6.925e-09 6.944e-09 6.949e-09 6.967e-09 6.976e-09 7.027e-09 7.175e-09 7.341e-09 7.752e-09 8.402e-09 9.096e-09 9.931e-09
-+fib/20	alloc_words	exact	0
-+fib/20	wall_time	batch=524288	n=20	1.145e-08	1.113e-08 1.130e-08 1.130e-08 1.133e-08 1.133e-08 1.134e-08 1.135e-08 1.140e-08 1.144e-08 1.144e-08 1.147e-08 1.150e-08 1.156e-08 1.162e-08 1.166e-08 1.172e-08 1.172e-08 1.191e-08 1.192e-08 1.474e-08
-+md5/string-64	alloc_words	exact	4
-+md5/string-64	wall_time	batch=32768	n=20	2.067e-07	2.013e-07 2.024e-07 2.039e-07 2.056e-07 2.056e-07 2.057e-07 2.059e-07 2.064e-07 2.065e-07 2.066e-07 2.067e-07 2.084e-07 2.089e-07 2.098e-07 2.123e-07 2.161e-07 2.200e-07 2.400e-07 2.401e-07 2.451e-07
-```
-
-The runner's corrected file is
-`_build/default/bench/digest.thumper.corrected`, the whole baseline with its
-section. To accept it, keep it as a job artifact and commit it as
-`bench/digest.thumper`. A confirmed improvement fails the job the same way,
-until its corrected file is accepted.
-
-## Checking on hosted CI runners
-
-Hosted runners give each job a new virtual machine. Set `THUMPER_MACHINE`
-in the job's environment, as on [a fleet](#checking-on-a-fleet-of-ci-runners).
-Without it, each job is a new machine whose rows are all proposed, and even
-an allocation budget judges nothing.
-
-Not every virtual machine has the same CPU model, so the shared section
-holds two CPUs' timings, and a slower CPU reads as a confirmed regression.
-On hosted runners, budget allocation alone, such as
-`~budgets:[ Thumper.Budget.no_more_alloc_than 0. ]` given to `run` with no
-time budget. An exact count is the same on every CPU and under any load, and
-the time is reported and fails nothing ([exact
-counts](how-checks-decide.md#exact-counts)). Check timing on machines you
-control.
-
-## Failing CI on anything but a pass
-
-An inconclusive row, a proposed row and a stale section fail nothing. To
-fail the run on anything but a pass, add `--strict`; under dune, add it to
-the rule's `run` action. On a runner whose key has no section yet, every row
-is proposed, and the run exits 1:
-
-```
-$ THUMPER_MACHINE=ci-arm dune exec bench/bench_digest.exe -- --strict
-thumper: waiting for the measurement lock (another run is measuring) ...
-thumper: the measurement lock changed owner; waiting on the new holder ...
-thumper: digest — no baseline for machine ci-arm (Apple M1 Max)
-
-  proposed  207.98 ns  ±7.3%  4 w  md5/string-64
-  proposed    6.82 ns  ±1.7%  0 w  fib/10
-  proposed   11.29 ns  ±0.7%  0 w  fib/20
-
-  accept:  mv bench/digest.thumper.corrected bench/digest.thumper
-  warning: load 18.7 on 10 cores; prefer a quiet host before accepting
+accept: ./_build/default/bench/bench_digest.exe bless
+3 proposed in 0.9s; failed under --strict.
 $ echo $?
 1
 ```
 
-Use `--strict` on a runner that runs nothing else. On a shared host, a
-loaded moment turns the timing rows inconclusive and fails the job.
+## Recording a CI runner's section
+
+Each runner has its own machine key, and so its own section. To give
+runners that time alike one section, set `THUMPER_MACHINE` to a name of
+your choosing in the job's environment. The name claims that every runner
+using it times alike, as identical machines you control do. Record the
+section with `bless` on one of those runners, and commit the baseline it
+writes:
+
+<!-- placeholder: Q1 regenerates this transcript -->
+```
+$ THUMPER_MACHINE=ci-linux dune exec bench/bench_digest.exe -- bless
+digest: 3 cases for machine ci-linux
+
+  blessed  199.10 ns  ±0.6%  4 w  md5/string-64
+  blessed    6.55 ns  ±0.3%  0 w  fib/10
+  blessed   10.83 ns  ±0.2%  0 w  fib/20
+
+3 blessed into bench/digest.thumper in 0.9s.
+$ THUMPER_MACHINE=ci-linux dune exec bench/bench_digest.exe -- --strict
+digest: 3 cases vs bench/digest.thumper for machine ci-linux
+
+  passed  199.16 ns  ±0.5%  4 w  md5/string-64
+  passed    6.56 ns  ±0.4%  0 w  fib/10
+  passed   10.84 ns  ±0.2%  0 w  fib/20
+
+3 passed in 0.9s.
+```
+
+How the file leaves the runner, as a job artifact or a commit, is the
+project's choice.
+
+## Checking on hosted CI runners
+
+Hosted runners give each job a new virtual machine, and not every one has
+the same CPU model. A section recorded under one `THUMPER_MACHINE` name
+holds one CPU's timings, and a slower CPU reads as a confirmed regression.
+An exact count is the same on every CPU and under any load ([exact
+counts](how-checks-decide.md#exact-counts)). A suite that collects only
+`alloc_words` (`Config.metrics`, with no `wall_time` budget) compares
+alike on every runner. To compare timings on hosted
+runners, measure the base and the head in one job, as the next section
+does.
+
+## Comparing a base and a head on one runner
+
+To compare a change with its base on one host, measure both trees in one
+job. `bless` records the base's cases in a scratch baseline, and the
+head's run checks against it:
+
+```
+git worktree add ../base main
+(cd ../base && dune exec bench/bench_digest.exe -- bless --baseline /tmp/base.thumper)
+dune exec bench/bench_digest.exe -- --baseline /tmp/base.thumper
+```
+
+`main` names the base revision. When both trees build with one compiler,
+the head's run compares every case the base recorded, and a case the base
+lacks reads `proposed`. `bless` refuses a loaded host here too.
 
 ## Checking on a loaded host
 
-On a loaded host, every timing row reads `inconclusive: environment`, or
-`inconclusive: non-positive sample` when a sample is zero or negative, and
-exact counts are still judged ([the report](report.md#the-header)). To wait
-for a quiet host before measuring, add `--wait-quiet SECS`. When the host is
-still loaded after `SECS` seconds, `check` warns and measures anyway:
+On a loaded host every sampled comparison is inconclusive for
+`environment`, or for `non-positive sample` when a sample is zero or
+negative, or for `exactness lost`, which the load does not change. Exact
+counts are still judged. The warning under the header
+names the load and the one at which a host is loaded ([the
+header](report.md#the-header)). To wait for a quiet host before measuring,
+add `--wait-quiet SECS`. When the host is still loaded after `SECS`
+seconds, `check` warns and measures anyway:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe -- --wait-quiet 30
-thumper: waiting up to 30s for a quiet host (load 18.7 on 10 cores)
+thumper: waiting up to 30s for a quiet host (load 18.7 on 10 cores, over 5.0)
 thumper: warning: host still loaded after 30s; measuring anyway
-thumper: digest — 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 18.4 on 10 cores; timing verdicts degraded
+digest: 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
+warning: load 18.4 on 10 cores, over 5.0; timing verdicts degraded
 
   inconclusive  204.11 ns  ±0.9%  4 w  md5/string-64
-      environment  +0.1% [-1.3, +1.6]; equivalent (alloc exact)
+      environment  +0.1% [-1.3, +1.6]
   inconclusive    6.80 ns  ±0.6%  0 w  fib/10
-      environment  +0.1% [-0.8, +1.1]; equivalent (alloc exact)
+      environment  +0.1% [-0.8, +1.1]
   inconclusive   11.25 ns  ±1.0%  0 w  fib/20
-      environment  -2.2% [-4.7, -0.3]; equivalent (alloc exact)
+      environment  -2.2% [-4.7, -0.3]
 
-  3 cases: 0 passed, 3 inconclusive.
+rerun: ./_build/default/bench/bench_digest.exe
+3 inconclusive in 1.0s.
 ```
 
 `bless` refuses a host still loaded after the wait. With `--force`, it
@@ -321,32 +310,42 @@ records its rows anyway, and the section's `# forced:` line records the load
 ## Measuring in a container
 
 Inside a container the load average is the host's, and the container's own
-CPU limit does not show in it. A starved container can read quiet. On such a
-runner, schedule the job alone on its host and add `--strict`, in place of
-`--wait-quiet`.
+CPU limit does not show in it. A starved container can read quiet, and
+`--wait-quiet` then does not wait. Schedule such a job alone on its host.
 
 ## Reading the verdict from a script
 
 The exit code is the one `run` in [`lib/thumper.mli`](../../lib/thumper.mli)
 states, and `--json PATH` writes the verdict as a [JSON document](json.md).
 
-GitHub sets `GITHUB_ACTIONS` in every job. The report then ends with one
+GitHub sets `GITHUB_ACTIONS` in every job. The report then holds one
 `::error::` line for each metric that fails its case, which GitHub shows as
 an annotation ([GitHub annotations](report.md#github-annotations)):
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ GITHUB_ACTIONS=true dune build @bench
-thumper: digest — 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 17.4 on 10 cores; timing verdicts degraded
+File "bench/dune", lines 5-11, characters 0-127:
+ 5 | (rule
+ 6 |  (alias bench)
+ 7 |  (locks %{project_root}/bench)
+ 8 |  (deps
+ 9 |   (glob_files *.thumper))
+10 |  (action
+11 |   (run %{exe:bench_digest.exe})))
+digest: 3 cases vs digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  202.59 ns  ±1.1%  4 w  md5/string-64
-      environment  -0.3% [-2.0, +1.3]; equivalent (alloc exact)
-  inconclusive   11.58 ns  ±0.3%  0 w  fib/10
-      environment  +70.4% [+69.0, +71.7]; equivalent (alloc exact)
-  inconclusive   20.51 ns  ±0.3%  0 w  fib/20
-      environment  +78.9% [+74.4, +81.6]; equivalent (alloc exact)
+  passed     199.27 ns  ±0.5%  4 w  md5/string-64
+  REGRESSED   13.08 ns  ±0.2%  0 w  fib/10
+      +99.6% [+99.2, +99.9]  budget +5%
+  REGRESSED   21.64 ns  ±0.3%  0 w  fib/20
+      +99.8% [+99.5, +100.1]  budget +5%
 
-  3 cases: 0 passed, 3 inconclusive.
+::error::fib/10 regressed: wall_time +99.6% [+99.2, +99.9], budget +5%
+::error::fib/20 regressed: wall_time +99.8% [+99.5, +100.1], budget +5%
+
+rerun: ./_build/default/bench/bench_digest.exe -f fib/10 -f fib/20
+1 passed, 2 regressed in 1.6s.
 ```
 
 ## Running two benchmarks at once
@@ -355,20 +354,17 @@ Two runs of one user with one lock directory never measure at once. Each
 holds the measurement lock while it measures, and another run waits for it,
 up to 600 s per holder, with a notice on stderr:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_digest.exe
 thumper: waiting for the measurement lock (another run is measuring) ...
-thumper: digest — 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
-warning: load 17.4 on 10 cores; timing verdicts degraded
+digest: 3 cases vs bench/digest.thumper for machine 5c1e0a7f3b9d2486
 
-  inconclusive  206.22 ns   ±1.1%  4 w  md5/string-64
-      environment  +1.0% [-0.8, +2.7]; equivalent (alloc exact)
-  inconclusive    6.83 ns   ±1.0%  0 w  fib/10
-      environment  +1.0% [+0.1, +2.7]; equivalent (alloc exact)
-  inconclusive   11.40 ns  ±13.7%  0 w  fib/20
-      environment  +0.4% [-1.8, +25.0]; equivalent (alloc exact)
+  passed  199.24 ns  ±0.6%  4 w  md5/string-64
+  passed    6.55 ns  ±0.3%  0 w  fib/10
+  passed   10.83 ns  ±0.2%  0 w  fib/20
 
-  3 cases: 0 passed, 3 inconclusive.
+3 passed in 0.9s.
 ```
 
 The lock's file and directory are under Measuring in
@@ -381,8 +377,9 @@ the measurement lock every run of one user.
 ## Keeping the baseline elsewhere
 
 To keep the baseline elsewhere than beside the benchmark's source, pass
-`--baseline PATH`. Under dune, the default follows dune's environment,
-whatever the build directory is called. Run by hand from a build directory
-not named `_build`, an executable finds no dune environment and looks for
-the default in the working directory. Pass it `--baseline`. The rules are
+`--baseline PATH`, and name the file in the rule's `deps` when a rule
+passes it. Under dune, the default follows dune's environment, whatever
+the build directory is called. Run by hand from a build directory not
+named `_build`, an executable finds no dune environment and looks for the
+default in the working directory. Pass it `--baseline`. The rules are
 under Files in [`lib/thumper.mli`](../../lib/thumper.mli).
