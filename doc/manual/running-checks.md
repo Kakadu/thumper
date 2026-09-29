@@ -24,12 +24,17 @@ warning: load 21.0 on 10 cores; timing verdicts degraded
 ```
 
 `-f` selects every case whose id contains its pattern, as [selecting
-cases](command-line.md#selecting-cases) shows.
+cases](command-line.md#selecting-cases) shows. A `--quick` run judges its
+11 samples against the baseline's `n=20` rows. Its intervals are wider
+than a default run's, so more rows can read `inconclusive: wide interval`,
+and a row that its improvement advances records `n=22`.
 
 ## Re-measuring a failing case
 
-A failing run outside a dune rule prints a `rerun:` line, which measures the
-failing cases again with the run's flags. After the tutorial's
+A failing run outside a dune rule action prints a `rerun:` line, which
+measures the failing cases again with the run's flags. A rule action is the
+command a `rule` stanza runs, as `dune build @bench` runs the benchmark; a
+run by hand or under `dune exec` is not one. After the tutorial's
 [regression](getting-started.md#a-regression):
 
 ```
@@ -89,7 +94,7 @@ warning: load 20.0 on 10 cores; timing verdicts degraded
 An improvement fails the build too, until you accept it. The corrected file
 advances the improved rows, and `diff?` fails the build on its diff until
 `dune promote` accepts it. Here the `fib` cases do half the work: in
-`bench/bench_digest.ml`, `fib (Thumper.black_box n)` became:
+`bench/bench_digest.ml`, `fib (Thumper.black_box n)` becomes:
 
 ```ocaml
 fib (Thumper.black_box (n / 2))
@@ -111,9 +116,9 @@ warning: load 20.0 on 10 cores; timing verdicts degraded
 $ dune promote
 ```
 
-Outside a dune rule, the report's `accept:` line is the `mv` that accepts
-the corrected file. A corrected file never records a slower row ([what the
-corrected file may
+Outside a rule action, the report's `accept:` line is the `mv` that accepts
+the corrected file. Against a current section, `check`'s corrected file
+never records a slower row ([what the corrected file may
 change](how-checks-decide.md#what-the-corrected-file-may-change)).
 
 ## Accepting an intended slowdown
@@ -174,10 +179,10 @@ thumper: digest — stale baseline for machine 5c1e0a7f3b9d2486 (ocaml 5.2.0 · 
   warning: load 18.7 on 10 cores; prefer a quiet host before accepting
 ```
 
-Accept it as a first run. Flambda is not part of the compiler identity
-(Baselines in [`lib/thumper.mli`](../../lib/thumper.mli)). After a move to a
-flambda compiler of the same version, re-record every case with `bless` and
-accept the corrected file.
+Accept its corrected file as a first run's. Flambda is not part of the
+compiler identity (Baselines in [`lib/thumper.mli`](../../lib/thumper.mli)).
+After a move to a flambda compiler of the same version, re-record every case
+with `bless` and accept the corrected file.
 
 ## Checking on a fleet of CI runners
 
@@ -186,9 +191,9 @@ give them one section, set `THUMPER_MACHINE` to a name of your choosing in
 the job's environment. The name claims that every runner using it times
 alike, as identical machines you control do.
 
-Dune reruns a rule only when one of its dependencies changes. An environment
-variable is one only when the rule declares it, and a run under a new key
-prints nothing:
+Dune reruns a rule only when one of its dependencies changes, and an
+environment variable is a dependency only when the rule declares it.
+Without that, a run under a new key measures and prints nothing:
 
 ```
 $ THUMPER_MACHINE=ci-linux dune build @bench
@@ -243,10 +248,14 @@ until its corrected file is accepted.
 
 ## Checking on hosted CI runners
 
-Hosted runners give each job a new virtual machine, and not every one has
-the same CPU model. A fleet key then puts two CPUs' timings in one section,
-and a slower CPU reads as a confirmed regression. On hosted runners, budget
-allocation alone, such as
+Hosted runners give each job a new virtual machine. Set `THUMPER_MACHINE`
+in the job's environment, as on [a fleet](#checking-on-a-fleet-of-ci-runners).
+Without it, each job is a new machine whose rows are all proposed, and even
+an allocation budget judges nothing.
+
+Not every virtual machine has the same CPU model, so the shared section
+holds two CPUs' timings, and a slower CPU reads as a confirmed regression.
+On hosted runners, budget allocation alone, such as
 `~budgets:[ Thumper.Budget.no_more_alloc_than 0. ]` given to `run` with no
 time budget. An exact count is the same on every CPU and under any load, and
 the time is reported and fails nothing ([exact
@@ -281,7 +290,8 @@ loaded moment turns the timing rows inconclusive and fails the job.
 
 ## Checking on a loaded host
 
-On a loaded host, every timing row reads `inconclusive: environment`, and
+On a loaded host, every timing row reads `inconclusive: environment`, or
+`inconclusive: non-positive sample` when a sample is zero or negative, and
 exact counts are still judged ([the report](report.md#the-header)). To wait
 for a quiet host before measuring, add `--wait-quiet SECS`. When the host is
 still loaded after `SECS` seconds, `check` warns and measures anyway:
@@ -316,9 +326,8 @@ runner, schedule the job alone on its host and add `--strict`, in place of
 
 ## Reading the verdict from a script
 
-The exit code is `0` for a passing check, `1` for a failing one and `2` for
-a run that stopped (`run` in [`lib/thumper.mli`](../../lib/thumper.mli)).
-`--json PATH` writes the verdict as a [JSON document](json.md).
+The exit code is the one `run` in [`lib/thumper.mli`](../../lib/thumper.mli)
+states, and `--json PATH` writes the verdict as a [JSON document](json.md).
 
 GitHub sets `GITHUB_ACTIONS` in every job. The report then ends with one
 `::error::` line for each metric that fails its case, which GitHub shows as
@@ -341,9 +350,9 @@ warning: load 17.4 on 10 cores; timing verdicts degraded
 
 ## Running two benchmarks at once
 
-Two runs of one user never measure at once. Each holds the measurement lock
-while it measures, and another run waits for it, up to 600 s per holder,
-with a notice on stderr:
+Two runs of one user with one lock directory never measure at once. Each
+holds the measurement lock while it measures, and another run waits for it,
+up to 600 s per holder, with a notice on stderr:
 
 ```
 $ dune exec bench/bench_digest.exe
@@ -361,11 +370,12 @@ warning: load 17.4 on 10 cores; timing verdicts degraded
   3 cases: 0 passed, 3 inconclusive.
 ```
 
-The lock is the file `thumper-<euid>.lock` in `THUMPER_LOCK_DIR`, else in
-the temporary directory. Thumper creates it with mode `0600`. A file of that
-name that another user owns, or whose mode grants others any access, stops
-the run with exit 2. Dune's `(locks bench)` orders the benchmark rules of
-one workspace, and the measurement lock every run of one user.
+The lock's file and directory are under Measuring in
+[`lib/thumper.mli`](../../lib/thumper.mli). Thumper creates the file with
+mode `0600`. A lock file that another user owns, or whose mode grants
+others any access, stops the run with exit 2. Dune's `(locks bench)` orders
+the benchmark rules of one workspace, and the measurement lock every run of
+one user.
 
 ## Keeping the baseline elsewhere
 
