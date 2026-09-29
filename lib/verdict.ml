@@ -287,14 +287,14 @@ let over_cap budget c =
   | Some (Budget.Absolute_max cap) -> float_of_int c > cap
   | Some (Budget.Relative _) | None -> false
 
-let strong_estimate = function
-  | Confirmed { first; _ } -> Some first.estimate
-  | Exact_change { baseline; candidate } ->
-      if baseline = 0 then None
-      else
-        Some
-          ((float_of_int candidate -. float_of_int baseline)
-          /. float_of_int baseline)
+(* The relative size of an exact change from [baseline] to [candidate], and
+   [None] for growth from zero, which has none. *)
+let exact_estimate ~baseline ~candidate =
+  if baseline = 0 then None
+  else
+    Some
+      ((float_of_int candidate -. float_of_int baseline)
+      /. float_of_int baseline)
 
 (* First-pass judgment of one exact (integer) comparison. The count was
    probed at [Measure.probe_k], the case's frozen k unless this trial's k is
@@ -316,7 +316,7 @@ let judge_exact ~budget ~case_k ~trial_k ~b ~c =
   else
     (* [None] for growth from zero, which has no relative size: it exceeds
        any relative budget, and under a cap it is the point [infinity]. *)
-    let growth = strong_estimate strong in
+    let growth = exact_estimate ~baseline:b ~candidate:c in
     let within =
       let point = Option.value growth ~default:infinity in
       Changed_within_budget { estimate = point; lower = point; upper = point }
@@ -718,9 +718,9 @@ let deltas_of_verdict ~exact = function
   | Judged (Improved (Confirmed { first; _ }))
   | Judged (Regressed (Confirmed { first; _ })) ->
       (Some first.estimate, Some first.lower, Some first.upper)
-  | Judged (Improved (Exact_change _ as s))
-  | Judged (Regressed (Exact_change _ as s)) ->
-      (strong_estimate s, None, None)
+  | Judged (Improved (Exact_change { baseline; candidate }))
+  | Judged (Regressed (Exact_change { baseline; candidate })) ->
+      (exact_estimate ~baseline ~candidate, None, None)
 
 let json_metric buf case_report report =
   let status =

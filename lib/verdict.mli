@@ -299,11 +299,6 @@ val case_overall : case_report -> [ `Pass | `Fail | `Inconclusive ]
     ({!report_fails}), else [`Inconclusive] if one of its reports has a budget
     and is [Inconclusive], else [`Pass]. *)
 
-val strong_estimate : strong -> float option
-(** [strong_estimate s] is the estimate of the first shift for [Confirmed], and
-    [(c - b) / b] for [Exact_change] with counts [b] and [c], [None] when
-    [b = 0]. *)
-
 val warnings : t -> string list
 (** [warnings t] is the run's warnings about rows the corrected file drops:
     - under a [`Full] selection of a compared section, one per row id of the

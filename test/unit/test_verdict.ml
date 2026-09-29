@@ -1441,25 +1441,6 @@ let exit_codes =
       (0, 1) );
   ]
 
-let a_shift = { Verdict.estimate = 0.3; lower = 0.2; upper = 0.4 }
-
-let strong_estimates =
-  [
-    ( "a confirmed relation's is its first shift's",
-      Verdict.Confirmed
-        { first = a_shift; confirmation = a_shift; pooled = [||]; k = 1 },
-      Some 0.3 );
-    ( "a growth's is relative to the row",
-      Exact_change { baseline = 54; candidate = 81 },
-      Some 0.5 );
-    ( "a drop's is relative to the row",
-      Exact_change { baseline = 100; candidate = 50 },
-      Some (-0.5) );
-    ( "growth from 0 has none",
-      Exact_change { baseline = 0; candidate = 3 },
-      None );
-  ]
-
 (* The row ids of the section are "a", "b-dead" and "a-dead"; the run judges
    the cases of [ids]. *)
 let warned =
@@ -1670,11 +1651,6 @@ let observers =
       cases "case_overall"
         ~name:(fun (name, _, _, _, _) -> name)
         case_outcomes case_outcome;
-      cases "strong_estimate"
-        ~name:(fun (name, _, _) -> name)
-        strong_estimates
-        (fun (_, s, expected) ->
-          equal (option (float 1e-12)) expected (Verdict.strong_estimate s));
       cases "warnings" ~name:(fun (name, _, _, _, _) -> name) warned warnings_of;
       cases "exit_code, then under strict"
         ~name:(fun (name, _, _) -> name)
