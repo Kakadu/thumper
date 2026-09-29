@@ -1,17 +1,14 @@
-A corrupt baseline is exit 2, never treated as absent.
-The stored median is a per-row checksum: it must string-equal its
-re-derivation from the stored samples, so one flipped digit is corruption.
+A corrupt baseline stops the run with exit 2; it is never read as absent.
+A row's stored median must equal the one its samples give, as text, so one
+changed digit is corruption.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
   $ $FIX check --quick -f busy/spin > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
 
-Flip the leading digit of the first sampled row's stored median.
+Change the leading digit of the first sampled row's stored median.
 
   $ awk 'BEGIN { FS = OFS = "\t" }
   >      $3 ~ /^batch=/ && !done {
@@ -21,29 +18,23 @@ Flip the leading digit of the first sampled row's stored median.
   >      { print }' fixture.thumper > doctored
   $ mv doctored fixture.thumper
 
-  $ $FIX check --quick > out.log 2>&1
+check stops before measuring: the line names the file and the row, nothing
+reads as a first run, and no corrected file is written.
+
+  $ $FIX check --quick 2> err.log
   [2]
-  $ grep -q 'corrupt baseline (line' out.log && echo corrupt-named
-  corrupt-named
-  $ grep -q 'stored median' out.log && echo checksum-failed
-  checksum-failed
+  $ sed -E "s/stored median [^ ]+/stored median M/; s/re-derived '[^']*'/re-derived 'R'/" err.log
+  thumper: $TESTCASE_ROOT/fixture.thumper: corrupt baseline (line 9): stored median M does not match its samples (re-derived 'R')
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
 
-Never the NEW flow, and no artifact is written.
+bless reads the same file, since it keeps the other machines' sections
+byte for byte, so it stops the same way: read as absent, a forced bless
+would propose a file without them.
 
-  $ grep -c 'no baseline for machine' out.log
-  0
-  [1]
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
-
-bless reads the same file (it must byte-preserve other machines' sections):
-a corrupt baseline refuses bless identically — if corruption were ever
-mis-read as absence, a forced bless would emit a candidate silently
-dropping every other machine's section.
-
-  $ $FIX bless --force --quick > bless.log 2>&1
+  $ $FIX bless --force --quick 2> err.log
   [2]
-  $ grep -q 'corrupt baseline (line' bless.log && echo corrupt-named
-  corrupt-named
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ sed -E "s/stored median [^ ]+/stored median M/; s/re-derived '[^']*'/re-derived 'R'/" err.log
+  thumper: $TESTCASE_ROOT/fixture.thumper: corrupt baseline (line 9): stored median M does not match its samples (re-derived 'R')
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
