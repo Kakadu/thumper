@@ -13,6 +13,7 @@ nothing measures, no lease is taken — the lock directory stays empty.
   busy/spin
   busy/half
   alloc/list
+  alloc/array
   err/raise
   err/kill9
   nondet/flip

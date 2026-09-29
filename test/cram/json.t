@@ -41,11 +41,11 @@ sustained load — never "fail" either way.
   > esac
   overall-ok
 
-The exact allocation summary is load-immune: six equivalent cases, zero
+The exact allocation summary is load-immune: seven equivalent cases, zero
 drift, deterministically.
 
-  $ grep -o '"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":6,"n_inconclusive":0' out.json
-  "alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":6,"n_inconclusive":0
+  $ grep -o '"alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":7,"n_inconclusive":0' out.json
+  "alloc_words":{"n_improved":0,"n_regressed":0,"n_equivalent":7,"n_inconclusive":0
 
 The summary is keyed by metric id, and every measured case reports.
 

@@ -36,8 +36,8 @@ section, and one row per case-metric in canonical (id, metric) order.
   $ grep -c '^# ocaml: ' fixture.thumper.corrected
   1
   $ grep -v '^#' fixture.thumper.corrected | grep -v '^$' | cut -f1,2 | tr '\t' ' '
+  alloc/array alloc_words
   alloc/list alloc_words
-  alloc/list wall_time
   busy/half alloc_words
   busy/half wall_time
   busy/spin alloc_words

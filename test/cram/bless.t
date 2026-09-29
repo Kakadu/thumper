@@ -33,10 +33,10 @@ The report: the bless header, one proposed row per case, the accept
 command naming the candidate (unstaged run: the mv spelling, absolute
 paths).
 
-  $ grep -c 'fixture — blessed 6 cases for machine testkey' out.log
+  $ grep -c 'fixture — blessed 7 cases for machine testkey' out.log
   1
   $ grep -Ec '^  proposed ' out.log
-  6
+  7
   $ grep -Eq 'accept:  mv /.*/fixture.thumper.corrected /.*/fixture.thumper' out.log && echo names-candidate
   names-candidate
 

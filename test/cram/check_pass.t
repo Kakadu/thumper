@@ -44,9 +44,9 @@ the gate did: on a quiet host every case passes; on a loaded host the
 verdicts degrade to inconclusive and the summary says so — the shape is
 identical.
 
-  $ grep -c 'fixture — 6 cases vs /.*/fixture.thumper for machine testkey' out.log
+  $ grep -c 'fixture — 7 cases vs /.*/fixture.thumper for machine testkey' out.log
   1
-  $ grep -Ec '6 cases: [0-9]+ passed' out.log
+  $ grep -Ec '7 cases: [0-9]+ passed' out.log
   1
   $ grep -Ec ' [0-9.]+ [mun]?s .* busy/spin$' out.log
   1

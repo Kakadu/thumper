@@ -14,6 +14,7 @@ list prints the selected case ids without measuring.
   busy/spin
   busy/half
   alloc/list
+  alloc/array
   err/raise
   err/kill9
   nondet/flip
@@ -30,6 +31,7 @@ carries both the group's "cpu" tag and its own "lab" tag.
   $ $FIX list --tag lab
   busy/half
   alloc/list
+  alloc/array
   $ $FIX list --tag lab --tag cpu
   busy/half
 

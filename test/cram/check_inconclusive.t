@@ -1,7 +1,7 @@
-Noise cannot fail the build and cannot poison the baseline: nondet mode makes nondet/flip alternate between two timing plateaus on
-a wall-clock cadence, so every trial mixes both levels — drifted or
-unstable evidence that can only resolve as inconclusive, never as a
-confirmed relation.
+An inconclusive case cannot fail the build and never enters the corrected
+file. Under alloc_grow, alloc/list allocates more on each call than on the
+one before, so the exactness probe fails and the run's sampled count cannot
+be compared with the baseline's exact one: exactness lost, whatever the load.
 
   $ export THUMPER_MACHINE=testkey
   $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
@@ -9,26 +9,22 @@ confirmed relation.
   $ unset GITHUB_ACTIONS
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f nondet > /dev/null 2>&1
+  $ $FIX check --quick -f alloc/list > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
   $ cp fixture.thumper before.thumper
 
-Inconclusive is exit 0 — the only outcome that leaves the build green
-without action — and never ratchets: no candidate is written. The verdict
-cell names the reason directly (there is no -v; the report is always
-whole), and the summary counts it.
+Inconclusive exits 0, the reason is named, and the summary counts it.
 
-  $ THUMPER_FIXTURE_MODE=nondet $FIX check --quick -f nondet > out.log 2>&1
-  $ grep -A1 -E '^  inconclusive .* nondet/flip$' out.log | grep -Ec '^      [a-z]'
-  1
-  $ grep -c '1 case: 0 passed, 1 inconclusive.' out.log
-  1
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
-  $ cmp -s fixture.thumper before.thumper && echo baseline-untouched
-  baseline-untouched
+  $ THUMPER_FIXTURE_MODE=alloc_grow $FIX check --quick -f alloc/list > out.log 2>&1
+  $ grep -o 'exactness lost' out.log
+  exactness lost
+  $ grep -o '1 case: .*' out.log
+  1 case: 0 passed, 1 inconclusive.
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
+  $ cmp fixture.thumper before.thumper
 
---strict turns inconclusive into failure (dedicated runners).
+--strict turns inconclusive into failure.
 
-  $ THUMPER_FIXTURE_MODE=nondet $FIX check --quick -f nondet --strict > out2.log 2>&1
+  $ THUMPER_FIXTURE_MODE=alloc_grow $FIX check --quick -f alloc/list --strict > out.log 2>&1
   [1]

@@ -1,8 +1,8 @@
-The exact allocation gate: alloc_more mode allocates
-one extra cons cell per call in alloc/list — an exact-integer regression
-against the suite's no_more_alloc_than 0.0 pin — while the case's timing,
-dominated by fixed busy work, stays equivalent. The exact gate fails the
-build even when time passes; determinism owes nothing to load.
+The exact allocation gate. The alloc cases collect alloc_words alone, and
+the fixture's modes change their counts by whole words: alloc_more adds a
+cons cell to each call of alloc/list, alloc_less takes a word from each call
+of alloc/array. Every verdict below compares integers, so no load can move
+it.
 
   $ export THUMPER_MACHINE=testkey
   $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
@@ -13,72 +13,85 @@ build even when time passes; determinism owes nothing to load.
 
   $ $FIX check --quick -f alloc > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
+  $ cp fixture.thumper fast.thumper
 
-The bootstrapped row is proven exact evidence, not a sampled vector.
+The recorded rows are exact counts, not sampled vectors.
 
-  $ awk -F'\t' '$1 == "alloc/list" && $2 == "alloc_words" { print $3 }' fixture.thumper
-  exact
+  $ grep '^alloc/' fixture.thumper | cut -f 1-3
+  alloc/array	alloc_words	exact
+  alloc/list	alloc_words	exact
+
+An exact regression fails the run with exit 1 and writes no corrected file:
+nothing improved, so there is nothing to propose.
 
   $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick -f alloc > out.log 2>&1
   [1]
-  $ grep -A1 -E '^  REGRESSED .* alloc/list$' out.log | grep -q '^      alloc ' && echo alloc-gated
-  alloc-gated
-  $ grep -q '(exact)' out.log && echo integer-compared
-  integer-compared
-  $ grep -c '1 case: 0 passed, 1 regressed.' out.log
-  1
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ grep -o '[0-9]* w → [0-9]* w (exact)' out.log
+  300 w → 303 w (exact)
+  $ grep -o '2 cases: .*' out.log
+  2 cases: 1 passed, 1 regressed.
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
 
-The mirror image ratchets, equally load-immune: fast mode against an
-alloc_more baseline is an exact allocation improvement, confirmed by
-integers alone (no CI, no confirmation pass), and the candidate
-advances exactly that one row.
+An exact improvement passes, and the corrected file advances that one row.
 
-  $ rm fixture.thumper
-  $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick -f alloc > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
-  $ $FIX check --quick -f alloc > out2.log 2>&1
-  $ test -f fixture.thumper.corrected && echo candidate
-  candidate
-  $ diff fixture.thumper fixture.thumper.corrected | grep '^[<>]' | cut -f1,2 | sed 's/^[<>] //' | sort -u | tr '\t' ' '
-  alloc/list alloc_words
-
-The rerun hint is the exact command (getting-started): the preset and an
-explicit --baseline are reproduced, so the pasted command measures under
-the same protocol and judges the same ruler — without --baseline, a rerun
-from the same shell would resolve the default path and judge a different
-file.
-
-  $ mv fixture.thumper.corrected alt.thumper
-  $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out4.log 2>&1
+  $ cp fixture.thumper before.thumper
+  $ THUMPER_FIXTURE_MODE=alloc_less $FIX check --quick -f alloc > out.log 2>&1
+  $ grep -o '2 cases: .*' out.log
+  2 cases: 1 passed, 1 improved.
+  $ diff fixture.thumper fixture.thumper.corrected
+  8c8
+  < alloc/array	alloc_words	exact	101
+  ---
+  > alloc/array	alloc_words	exact	100
   [1]
-  $ grep -A1 'rerun:' out4.log
+  $ cmp fixture.thumper before.thumper
+  $ rm fixture.thumper.corrected
+
+One run can regress and improve. It fails, and the corrected file still
+advances the improved row alone, since a regressed row cannot enter it. The
+rerun line names the failing case; the accept line names the corrected file.
+
+  $ THUMPER_FIXTURE_MODE=alloc_more,alloc_less $FIX check --quick -f alloc > out.log 2>&1
+  [1]
+  $ diff fixture.thumper fixture.thumper.corrected
+  8c8
+  < alloc/array	alloc_words	exact	101
+  ---
+  > alloc/array	alloc_words	exact	100
+  [1]
+  $ grep -e 'rerun:' -e 'accept:' out.log
+    rerun:   ./fixture/bench_fixture.exe --quick -f alloc/list
+    accept:  mv $TESTCASE_ROOT/fixture.thumper.corrected $TESTCASE_ROOT/fixture.thumper
+  $ rm fixture.thumper.corrected
+
+The rerun line is the command to paste: it carries the preset and an
+explicit --baseline, and names the executable relative to the working
+directory when it lies under it, absolute otherwise.
+
+  $ mv fixture.thumper alt.thumper
+  $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc/list > out.log 2>&1
+  [1]
+  $ grep -A1 'rerun:' out.log
     rerun:   ./fixture/bench_fixture.exe --quick --baseline alt.thumper \
              -f alloc/list
-
-The rerun line names the executable relative to the working directory
-when it lies under it, and absolute otherwise, however it was invoked.
-
-  $ THUMPER_FIXTURE_MODE=alloc_more "$(pwd -P)/fixture/bench_fixture.exe" check --quick --baseline alt.thumper -f alloc > out6.log 2>&1
+  $ THUMPER_FIXTURE_MODE=alloc_more "$(pwd -P)/fixture/bench_fixture.exe" check --quick --baseline alt.thumper -f alloc/list > out.log 2>&1
   [1]
-  $ grep -o 'rerun: *[^ ]*' out6.log
+  $ grep -o 'rerun: *[^ ]*' out.log
   rerun:   ./fixture/bench_fixture.exe
   $ mkdir sub && cd sub
-  $ THUMPER_FIXTURE_MODE=alloc_more ../fixture/bench_fixture.exe check --quick --baseline ../alt.thumper -f alloc > ../out7.log 2>&1
+  $ THUMPER_FIXTURE_MODE=alloc_more ../fixture/bench_fixture.exe check --quick --baseline ../alt.thumper -f alloc/list > ../out.log 2>&1
   [1]
   $ cd ..
-  $ grep -o 'rerun: *[^ ]*' out7.log
+  $ grep -o 'rerun: *[^ ]*' out.log
   rerun:   $TESTCASE_ROOT/fixture/bench_fixture.exe
 
-Under a dune rule action (INSIDE_DUNE set and the cwd in the build tree,
-as cram's is) there is no rerun line: its exe path is relative to the
-action's cwd and could not be pasted. The failing id stays in the table.
+A dune rule action (INSIDE_DUNE set and the working directory in the build
+tree, as a cram session's is) gets no rerun line: the executable's path is
+relative to the action's directory and could not be pasted.
 
-  $ INSIDE_DUNE="$CONTEXT" THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc > out5.log 2>&1
+  $ INSIDE_DUNE="$CONTEXT" THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc/list > out.log 2>&1
   [1]
-  $ grep -c 'rerun:' out5.log
+  $ grep -c 'rerun:' out.log
   0
   [1]
-  $ grep -A1 -E 'REGRESSED.* alloc/list$' out5.log | grep -q '^      alloc ' && echo failing-id-in-table
-  failing-id-in-table

@@ -21,7 +21,7 @@ Doctor the compiler identity to a version that never existed.
   $ grep -q 'stale baseline for machine testkey' out.log && echo stale-rendered
   stale-rendered
   $ grep -Ec '^  proposed ' out.log
-  6
+  7
   $ grep -q 'accept:  ' out.log && echo remedy-named
   remedy-named
 
@@ -49,7 +49,7 @@ silent partial re-record would read as data loss after promotion.
 
   $ $FIX check --quick -f busy/spin > out3.log 2>&1
   $ grep -o 'warning: partial selection on a stale section.*' out3.log
-  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 5 unselected cases
+  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 6 unselected cases
   $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
   2
   $ rm fixture.thumper.corrected
@@ -59,7 +59,7 @@ says so in the same words.
 
   $ $FIX bless --quick --force -f busy/spin > out4.log 2>&1
   $ grep -o 'warning: partial selection on a stale section.*' out4.log
-  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 5 unselected cases
+  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 6 unselected cases
   $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
   2
   $ rm fixture.thumper.corrected

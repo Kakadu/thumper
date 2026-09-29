@@ -3,49 +3,53 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The deterministic CLI fixture behind the cram suite.
+(* The benchmark executable behind the cram suite: one suite of seven cases,
+   whose behaviour THUMPER_FIXTURE_MODE selects. It holds a comma-separated
+   list of modes; unset, every case runs as recorded in a fast baseline.
 
-   One suite, six sub-millisecond cases, one environment knob:
+     slow         busy/spin does twice its work (a regression against a fast
+                  baseline) and busy/half half of its work (an improvement)
+     alloc_more   alloc/list allocates one more cons cell per call
+     alloc_less   alloc/array allocates one word less per call
+     alloc_grow   alloc/list allocates more on each call than on the call
+                  before, so the exactness probe fails
+     raise        err/raise raises
+     kill9        err/kill9 kills its worker with SIGKILL
+     nondet       nondet/flip alternates between two costs on a 20 ms wall
+                  clock cadence, so its samples never settle
+     hang         err/raise never returns, under a 1 s deadline per case
+     uncollected  adds the case cpu, which budgets wall_time and collects
+                  cpu_time only
 
-   THUMPER_FIXTURE_MODE
-     fast (default)  every case at its baseline behavior
-     slow            busy/spin does 2x the work (a guaranteed confirmed
-                     regression against a fast baseline) and busy/half does
-                     half (a guaranteed confirmed improvement)
-     alloc_more      alloc/list allocates one more cons cell per call — an
-                     exact allocation regression with equivalent timing
-     raise           err/raise raises (containment: exit 2, exception
-                     captured, never re-raised)
-     kill9           err/kill9 SIGKILLs its worker (containment: exit 2,
-                     worker-death message)
-     nondet          nondet/flip alternates between two timing plateaus on a
-                     20 ms wall-clock cadence — bimodal samples that can only
-                     resolve as inconclusive (drift/unstable/unconfirmed),
-                     never as a confirmed relation
-     hang            err/raise spins forever, and the suite runs under a 1 s
-                     per-case deadline — the parent-side wait bound turns a
-                     wedged case into Deadline_exceeded (exit 2), never a
-                     wedged run
-     uncollected     adds a case "cpu" that collects cpu_time only under a
-                     wall_time budget — a contradiction every subcommand
-                     refuses before the lease
+   THUMPER_FIXTURE_RAN_PATH, when set, gets one line per process start: how a
+   session sees whether dune reran a rule action. *)
 
-   THUMPER_FIXTURE_RAN_PATH, when set, gets one line appended per process
-   start — how the cram suite observes whether dune re-ran the @bench action
-   (the caching scenario) without ever asserting timings. *)
+let known =
+  [
+    "slow";
+    "alloc_more";
+    "alloc_less";
+    "alloc_grow";
+    "raise";
+    "kill9";
+    "nondet";
+    "hang";
+    "uncollected";
+  ]
 
-let mode =
+let modes =
   match Sys.getenv_opt "THUMPER_FIXTURE_MODE" with
-  | None | Some "fast" -> `Fast
-  | Some "slow" -> `Slow
-  | Some "alloc_more" -> `Alloc_more
-  | Some "raise" -> `Raise
-  | Some "kill9" -> `Kill9
-  | Some "nondet" -> `Nondet
-  | Some "hang" -> `Hang
-  | Some "uncollected" -> `Uncollected
-  | Some other ->
-      failwith ("bench_fixture: unknown THUMPER_FIXTURE_MODE: " ^ other)
+  | None -> []
+  | Some s ->
+      let modes = String.split_on_char ',' s in
+      List.iter
+        (fun m ->
+          if not (List.mem m known) then
+            failwith ("bench_fixture: unknown THUMPER_FIXTURE_MODE: " ^ m))
+        modes;
+      modes
+
+let mode m = List.mem m modes
 
 let () =
   match Sys.getenv_opt "THUMPER_FIXTURE_RAN_PATH" with
@@ -56,70 +60,75 @@ let () =
         ~finally:(fun () -> close_out_noerr oc)
         (fun () -> output_string oc "ran\n")
 
-(* Allocation-free busy work: tail recursion, immediate values only, so the
-   busy cases prove exact 0-word allocation rows. *)
+(* Allocation-free busy work: tail recursion over immediate values, so the
+   busy cases record exact rows of 0 words. *)
 let rec spin acc i = if i = 0 then acc else spin (acc lxor i) (i - 1)
 
-(* ~4000 xor iterations is a few microseconds per call: far above the 1 ns
-   fold threshold, far below the 5 ms batch floor, so every scenario stays
-   fast under --quick. *)
-let spin_iters = match mode with `Slow -> 8_000 | _ -> 4_000
+(* About 4000 iterations take a few microseconds: far above the 1 ns fold
+   threshold, far below the 5 ms batch floor. *)
+let spin_iters = if mode "slow" then 8_000 else 4_000
+let half_iters = if mode "slow" then 4_000 else 8_000
 let rec hang () = hang (ignore (spin 0 4_000))
-let half_iters = match mode with `Slow -> 4_000 | _ -> 8_000
-let list_len = match mode with `Alloc_more -> 101 | _ -> 100
 
-(* Fixed busy work dominates the timing of alloc/list, so the one extra cons
-   cell of alloc_more regresses alloc_words exactly while wall_time stays
-   equivalent — the exact gate fails even when time passes. *)
-let alloc_case () =
-  let l = List.init (Thumper.black_box list_len) (fun i -> i) in
-  ignore (Sys.opaque_identity l);
-  spin 0 4_000
+(* The alloc cases collect alloc_words alone, so no timed value enters their
+   verdicts, and a case without a sampled row has no frozen batch size, so a
+   changed count is never read as a drifted batch. *)
+let list_len = if mode "alloc_more" then 101 else 100
+let array_len = if mode "alloc_less" then 99 else 100
+
+(* Under alloc_grow each call allocates 32 cells (96 words) more than the one
+   before. The probe's batches of k and 2k calls then fit a whole per-call
+   count only with a per-batch overhead of h0 - 288k^2 words, where h0 is the
+   counter reads' own: negative at every k, so the probe fails and the count
+   stays sampled. Each call also spins for about a millisecond, which keeps a
+   trial to a few hundred calls, so the lists stay short. *)
+let calls = ref 0
+
+let alloc_list () =
+  if mode "alloc_grow" then begin
+    incr calls;
+    ignore (spin 0 2_000_000)
+  end;
+  let len = list_len + (32 * !calls) in
+  List.init (Thumper.black_box len) Fun.id
+
+let alloc_array () = Array.make (Thumper.black_box array_len) 0
 
 let raise_case () =
-  match mode with
-  | `Raise -> failwith "fixture raise mode"
-  | `Hang -> hang ()
-  | _ -> spin 0 2_000
+  if mode "raise" then failwith "fixture raise mode"
+  else if mode "hang" then hang ()
+  else spin 0 2_000
 
 let kill9_case () =
-  (match mode with `Kill9 -> Unix.kill (Unix.getpid ()) Sys.sigkill | _ -> ());
+  if mode "kill9" then Unix.kill (Unix.getpid ()) Sys.sigkill;
   spin 0 2_000
 
-(* Two plateaus, flipped by the wall clock every 20 ms: an 11-batch trial at
-   the 5 ms floor spans several windows, so its sample vector always mixes
-   both levels — drifted or unstable, never a confirmable shift. *)
+(* Two costs, switched by the wall clock every 20 ms: an 11-batch trial at the
+   5 ms floor spans several windows, so its samples always mix both. *)
 let flip_case () =
   let iters =
-    match mode with
-    | `Nondet ->
-        let ms = int_of_float (Unix.gettimeofday () *. 1000.) in
-        if ms / 20 mod 2 = 0 then 4_000 else 12_000
-    | _ -> 4_000
+    if mode "nondet" then
+      let ms = int_of_float (Unix.gettimeofday () *. 1000.) in
+      if ms / 20 mod 2 = 0 then 4_000 else 12_000
+    else 4_000
   in
   spin 0 (Thumper.black_box iters)
 
-(* The hang scenario needs a bound the protocol enforces: a short per-case
-   deadline (a cap on damage, not a timing assertion — the cram budget is
-   sixty times larger). Forked workers are also deadline-killed mid-call,
-   which is exactly the containment under test. *)
+(* A deadline bounds the hang: a cap on damage, far below the session's own
+   time, never a timing claim. *)
 let config =
-  match mode with
-  | `Hang -> Thumper.Config.(default |> deadline 1.)
-  | _ -> Thumper.Config.default
+  if mode "hang" then Thumper.Config.(default |> deadline 1.)
+  else Thumper.Config.default
 
-(* The uncollected scenario's contradiction: a wall_time budget on a case
-   that collects cpu_time only. *)
 let uncollected =
-  match mode with
-  | `Uncollected ->
-      [
-        Thumper.bench "cpu"
-          ~metrics:[ Thumper.Metric.cpu_time ]
-          ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
-          (fun () -> spin 0 (Thumper.black_box 4_000));
-      ]
-  | _ -> []
+  if mode "uncollected" then
+    [
+      Thumper.bench "cpu"
+        ~metrics:[ Thumper.Metric.cpu_time ]
+        ~budgets:[ Thumper.Budget.no_slower_than 0.05 ]
+        (fun () -> spin 0 (Thumper.black_box 4_000));
+    ]
+  else []
 
 let () =
   exit
@@ -138,7 +147,10 @@ let () =
                   spin 0 (Thumper.black_box half_iters));
             ];
           Thumper.group "alloc" ~tags:[ "lab" ]
-            [ Thumper.bench "list" alloc_case ];
+            ~metrics:[ Thumper.Metric.alloc_words ]
+            [
+              Thumper.bench "list" alloc_list; Thumper.bench "array" alloc_array;
+            ];
           Thumper.group "err"
             [
               Thumper.bench "raise" raise_case; Thumper.bench "kill9" kill9_case;

@@ -156,15 +156,17 @@ effects, and grep'd output shapes — never timings**.
 
 The determinism kit:
 
-- **The fixture** — `test/cram/fixture/bench_fixture.exe`, six
-  sub-millisecond cases driven by one knob, `THUMPER_FIXTURE_MODE`:
-  `fast` (baseline behavior), `slow` (busy/spin does 2× the work — a
-  guaranteed confirmed regression — and busy/half does half — a
-  guaranteed improvement), `alloc_more` (one extra cons cell — an
-  exact allocation regression with equivalent timing), `raise` and
-  `kill9` (worker containment), `nondet` (bimodal plateaus that can
-  only resolve inconclusive), `hang` (a case that spins forever under
-  a 1 s per-case deadline — parent-side containment).
+- **The fixture** — `test/cram/fixture/bench_fixture.exe`, seven
+  cases driven by `THUMPER_FIXTURE_MODE`, a comma-separated list of
+  modes: `slow` (busy/spin does 2× the work — a regression — and
+  busy/half half — an improvement), `alloc_more` and `alloc_less` (one
+  cons cell more for alloc/list, one word less for alloc/array),
+  `alloc_grow` (alloc/list allocates more on every call, so the
+  exactness probe fails), `raise` and `kill9` (worker containment),
+  `nondet` (bimodal plateaus that can only resolve inconclusive),
+  `hang` (a case that spins forever under a 1 s per-case deadline —
+  parent-side containment). The alloc cases collect `alloc_words`
+  alone, so their verdicts compare whole counts that no load can move.
   `THUMPER_FIXTURE_RAN_PATH` appends a line per process start — how
   the dune-caching scenario observes re-runs without asserting time.
 - **Environment pinning** — every scenario exports
