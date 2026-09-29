@@ -176,12 +176,6 @@ let runs =
           let r = Run.create [] in
           equal (list string) [] (Run.case_ids r);
           equal (option int) None (Run.exact r ~case:"a" Metric.alloc_words));
-      cases "trial finds a case's trial"
-        ~name:(fun (id, _) -> id)
-        [ ("a", Some 1); ("c", None) ]
-        (fun (id, k) ->
-          equal (option int) k
-            (Option.map Run.Trial.k (Run.trial (two_cases ()) id)));
       cases "samples"
         ~name:(fun (name, _, _, _) -> name)
         [

@@ -100,9 +100,6 @@ val create : (string * Trial.t) list -> t
 val trials : t -> (string * Trial.t) list
 (** [trials r] is [r]'s (case id, trial) pairs, in run order. *)
 
-val trial : t -> string -> Trial.t option
-(** [trial r id] is the trial of the case with id [id] in [r], if any. *)
-
 val case_ids : t -> string list
 (** [case_ids r] is [r]'s case ids, in run order. *)
 
