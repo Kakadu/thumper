@@ -9,7 +9,6 @@ type prepared = { run_batch : int -> unit; teardown : unit -> unit }
 
 type case = {
   id : string;
-  name : string;
   full_name : string;
   tags : string list;
   metrics : Metric.t list option;
@@ -197,7 +196,6 @@ let flatten benches =
         [
           {
             id = id_path;
-            name = s.name;
             full_name = name_path;
             tags;
             metrics;
@@ -275,9 +273,7 @@ let check_collected ~metrics ~budgets benches =
 (* Case observers *)
 
 let id (c : case) = c.id
-let name (c : case) = c.name
 let full_name (c : case) = c.full_name
-let tags (c : case) = c.tags
 let metrics (c : case) = c.metrics
 let budgets (c : case) = c.budgets
 

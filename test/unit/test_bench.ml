@@ -164,7 +164,7 @@ let constructors =
         explicit_ids
         (fun (_, id, name) ->
           let c = the_case [ Bench.bench ~id name noop ] in
-          equal (pair string string) (id, name) (Bench.id c, Bench.name c));
+          equal (pair string string) (id, name) (Bench.id c, Bench.full_name c));
       cases "a malformed node is refused, naming its constructor"
         ~name:(fun (name, _, _) -> name)
         refusals
@@ -212,6 +212,28 @@ let selections =
       [ "sha256/incremental-1mib" ] );
   ]
 
+(* The tags [`Tag] matches, among [candidate_tags]: a case's own and its
+   groups'. *)
+let tag_scopes =
+  [
+    ("none without tags", (fun () -> Bench.bench "x" noop), []);
+    ( "the groups' and the case's own",
+      (fun () ->
+        Bench.group ~tags:[ "outer" ] "g"
+          [ Bench.bench ~tags:[ "inner" ] "x" noop ]),
+      [ "outer"; "inner" ] );
+    ( "a tag the case gives again",
+      (fun () ->
+        Bench.group ~tags:[ "outer" ] "g"
+          [ Bench.bench ~tags:[ "outer"; "inner" ] "x" noop ]),
+      [ "outer"; "inner" ] );
+    ( "any string",
+      (fun () -> Bench.bench ~tags:[ ""; "a b" ] "x" noop),
+      [ ""; "a b" ] );
+  ]
+
+let candidate_tags = [ "outer"; "inner"; ""; "a b"; "a" ]
+
 let selection =
   group "Selection"
     [
@@ -223,6 +245,13 @@ let selection =
             (List.map Bench.id
                (List.filter (Bench.matches filter)
                   (resolved (selection_suite ())))));
+      cases "`Tag matches a case's tags"
+        ~name:(fun (name, _, _) -> name)
+        tag_scopes
+        (fun (_, tree, expected) ->
+          let c = the_case [ tree () ] in
+          equal (list string) expected
+            (List.filter (fun t -> Bench.matches (`Tag t) c) candidate_tags));
     ]
 
 (* Resolving *)
@@ -429,18 +458,18 @@ let paths =
   [
     ( "a group prefixes the id and the full name",
       (fun () -> Bench.group "sha256" [ Bench.bench "string-64" noop ]),
-      ("sha256/string-64", "string-64", "sha256/string-64") );
+      ("sha256/string-64", "sha256/string-64") );
     ( "a group's segment is its slug, its full name part its name",
       (fun () -> Bench.group "Hash Functions" [ Bench.bench "md5" noop ]),
-      ("Hash-Functions/md5", "md5", "Hash Functions/md5") );
+      ("Hash-Functions/md5", "Hash Functions/md5") );
     ( "a group's explicit id is its segment",
       (fun () ->
         Bench.group ~id:"sha" "SHA-256 family" [ Bench.bench "x" noop ]),
-      ("sha/x", "x", "SHA-256 family/x") );
+      ("sha/x", "SHA-256 family/x") );
     ( "nested groups join every segment",
       (fun () ->
         Bench.group "outer" [ Bench.group "inner" [ Bench.bench "leaf" noop ] ]),
-      ("outer/inner/leaf", "leaf", "outer/inner/leaf") );
+      ("outer/inner/leaf", "outer/inner/leaf") );
   ]
 
 (* A group named "a/b" slugs to the segment "a-b": its id cannot be that of
@@ -455,24 +484,6 @@ let a_slash_in_a_name_forges_no_id () =
   in
   equal (list string) [ "a-b/c"; "a/b/c" ] (List.map Bench.id cases);
   equal (list string) [ "a/b/c"; "a/b/c" ] (List.map Bench.full_name cases)
-
-let tag_scopes =
-  [
-    ("none without tags", (fun () -> Bench.bench "x" noop), []);
-    ( "outer scopes first",
-      (fun () ->
-        Bench.group ~tags:[ "outer" ] "g"
-          [ Bench.bench ~tags:[ "inner" ] "x" noop ]),
-      [ "outer"; "inner" ] );
-    ( "each once",
-      (fun () ->
-        Bench.group ~tags:[ "t"; "a" ] "g"
-          [ Bench.bench ~tags:[ "a"; "b"; "t" ] "x" noop ]),
-      [ "t"; "a"; "b" ] );
-    ( "any string",
-      (fun () -> Bench.bench ~tags:[ ""; "a b" ] "x" noop),
-      [ ""; "a b" ] );
-  ]
 
 let metric_scopes =
   [
@@ -546,21 +557,13 @@ let budget_scopes =
 let case_observers =
   group "Case observers"
     [
-      cases "id, name and full_name"
+      cases "id and full_name"
         ~name:(fun (name, _, _) -> name)
         paths
         (fun (_, tree, expected) ->
           let c = the_case [ tree () ] in
-          equal
-            (triple string string string)
-            expected
-            (Bench.id c, Bench.name c, Bench.full_name c));
+          equal (pair string string) expected (Bench.id c, Bench.full_name c));
       test "a '/' in a group's name forges no id" a_slash_in_a_name_forges_no_id;
-      cases "tags"
-        ~name:(fun (name, _, _) -> name)
-        tag_scopes
-        (fun (_, tree, expected) ->
-          equal (list string) expected (Bench.tags (the_case [ tree () ])));
       cases "metrics"
         ~name:(fun (name, _, _) -> name)
         metric_scopes

@@ -24,9 +24,9 @@ type t
     closures inside. *)
 
 type case
-(** The type for resolved cases: a case id, display names, the tags, metrics and
-    budgets after inheritance, and the setup that {!prepare} runs. Only
-    {!resolve} builds one. *)
+(** The type for resolved cases: a case id, a full display name, the tags,
+    metrics and budgets after inheritance, and the setup that {!prepare} runs.
+    Only {!resolve} builds one. *)
 
 (** {1:constructors Constructors}
 
@@ -90,7 +90,8 @@ type filter =
   [ `Id of string
     (** The cases whose id contains the string, compared byte for byte; [`Id ""]
         selects every case. *)
-  | `Tag of string  (** The cases whose tags include the string. *)
+  | `Tag of string
+    (** The cases tagged with the string, or inside a group tagged with it. *)
   | `And of filter list
     (** The cases every filter selects; [`And []] selects every case. *)
   | `Or of filter list
@@ -149,17 +150,10 @@ val id : case -> string
 (** [id c] is [c]'s case id: the ['/']-joined segments of its groups and its
     own. Baseline rows, the JSON document and [`Id] selections key on it. *)
 
-val name : case -> string
-(** [name c] is [c]'s display name, as written. *)
-
 val full_name : case -> string
 (** [full_name c] is the ['/']-joined display names of [c]'s groups and [c]. The
     JSON document carries it, but nothing keys on it: a name that contains ['/']
     can make two cases' full names equal. *)
-
-val tags : case -> string list
-(** [tags c] is the tags of [c] and its groups, outer scopes first, each once.
-*)
 
 val metrics : case -> Metric.t list option
 (** [metrics c] is the [metrics] of the nearest scope that gave one, or [None]
