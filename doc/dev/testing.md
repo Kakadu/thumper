@@ -356,8 +356,8 @@ started, budgets, fixtures, tags, protocol, programmatic);
 alias, `(locks %{project_root}/bench)`, `(deps (glob_files *.thumper))` and
 a bare `run`. Nothing in `examples/` measures under
 runtest, since the `@bench` alias is manual. Every OCaml and dune snippet
-in the manual and the README is a run of lines of an example's file, and
-`dune build` compiles the examples.
+in the manual and the README is a run of lines of an example's file, or
+a one-line change to one, and `dune build` compiles the examples.
 `test_thumper` holds the facade's two examples verbatim: the module
 doc's compiles, and `Check.run`'s, the check of `07-programmatic`, runs
 against a synthetic baseline and changes no file.

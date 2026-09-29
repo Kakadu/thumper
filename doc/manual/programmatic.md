@@ -120,7 +120,8 @@ The library has no counterpart for these parts of `Thumper.run`:
 - the removal of the rows of cases the suite no longer has;
 - the GitHub annotations.
 
-`measure` and `Check.run` print nothing, and a program renders the verdict
-itself. `Check.run` samples the load once it holds the measurement lock,
-and again before any second trials, and never waits for a quiet host. A program names its baseline, and a relative
-name resolves in its working directory.
+`measure` and `Check.run` print nothing, and a program renders the
+verdict itself. `Check.run` samples the load once it holds the
+measurement lock, and again before any second trials, and never waits
+for a quiet host. A program names its baseline, and a relative name
+resolves in its working directory.
