@@ -1,0 +1,10 @@
+thumper: digest — no baseline for machine testkey (Test CPU)
+
+  proposed  1.00 us  ±0.0%       0 w  zero
+  proposed  1.00 us  ±0.0%      54 w  alpha
+  proposed  1.00 us  ±0.0%     320 w  beta
+  proposed  1.00 us  ±0.0%   3,000 w  gamma
+  proposed  1.00 us  ±0.0%  32,730 w  epsilon
+  proposed  1.00 us  ±0.0%   ~2.1 kw  delta
+
+  accept:  dune promote

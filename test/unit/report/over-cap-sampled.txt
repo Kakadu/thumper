@@ -1,0 +1,6 @@
+thumper: digest — 1 case vs digest.thumper for machine testkey
+
+  regressed  1.00 us  ±0.0%  ~200 w  alpha
+      alloc +100.0% [+100.0, +100.0]
+
+  1 case: 1 passed.

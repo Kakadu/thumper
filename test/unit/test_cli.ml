@@ -8,10 +8,7 @@
    errors — including the deleted spellings [explore], [-v], [--no-fork],
    [--no-color], and the v1 aliases), filter composition, the config policy
    ([config_of]: presets only — the CLI never flips [fork]), color
-   resolution ([use_color]), the status-line formatter, the INSIDE_DUNE hint
-   fork, the block-report rendering goldens over synthetic verdicts —
-   including terminal/exit-code agreement on the absolute-cap case,
-   per-column time unit scaling, and thousands separators — the
+   resolution ([use_color]), the INSIDE_DUNE hint fork, the
    startup-unlink and write-target-preflight policy through [main]
    on non-measuring paths, and fast end-to-end runs (the NEW check flow, a
    partial bless) under a millisecond protocol. Everything that measures at
@@ -23,14 +20,9 @@ open Windtrap
 module Baseline = Thumper.Private.Baseline
 module Bench = Thumper.Private.Bench
 module Budget = Thumper.Private.Budget
-module Check = Thumper.Private.Check
 module Cli = Thumper.Private.Cli
 module Config = Thumper.Private.Config
 module Env = Thumper.Private.Env
-module Metric = Thumper.Private.Metric
-module Report = Thumper.Private.Report
-module Run = Thumper.Private.Run
-module Verdict = Thumper.Private.Verdict
 
 (* Helpers *)
 
@@ -99,9 +91,6 @@ let capturing_stderr f =
 
 (* Fixtures *)
 
-let m_wall = Metric.wall_time
-let m_alloc = Metric.alloc_words
-
 let ident =
   {
     Baseline.machine = "testkey";
@@ -110,115 +99,18 @@ let ident =
   }
 
 let ties n v = Array.make n v
-let sam sorted = Run.sampled ~sorted ~drifted:false
-
-let trial ?(k = 8) ?(alloc = Some 54) wall =
-  let ms = [ (m_wall, Run.Samples (sam wall)) ] in
-  let ms =
-    match alloc with Some n -> ms @ [ (m_alloc, Run.Exact n) ] | None -> ms
-  in
-  Run.Trial.make ~k ms
 
 let wall_row ?(k = 8) id samples =
   Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples
 
 let alloc_row id n = Baseline.exact_row ~id ~metric:"alloc_words" n
-
-let file_of rows =
-  Baseline.set_section (Baseline.empty ~suite:"digest") ident rows
-
 let section_of file = Option.get (Baseline.section file "testkey")
-
-let bcase id =
-  match Bench.resolve [ Bench.bench id (fun () -> ()) ] with
-  | Ok [ c ] -> c
-  | _ -> assert false
-
-let bcase_budgeted ~budgets id =
-  match Bench.resolve [ Bench.bench ~budgets id (fun () -> ()) ] with
-  | Ok [ c ] -> c
-  | _ -> assert false
 
 let benches =
   [
     Bench.bench "alpha" (fun () -> ());
     Bench.group "g" [ Bench.bench ~tags:[ "lab" ] "beta" (fun () -> ()) ];
   ]
-
-(* Judge cases against [rows], confirm with [confirm] (a trial per queued
-   id), decide under [decide_load]. *)
-let empty_file = Result.get_ok (Baseline.of_string "")
-
-let verdict_of_cases ?(load = Env.Quiet) ?(decide_load = Env.Quiet)
-    ?(file = empty_file) ?(confirm = fun _ -> None) cases =
-  let p =
-    Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection:`Full
-      ~budgets:[] ~file ~cases
-  in
-  let confirmations =
-    List.filter_map
-      (fun id -> Option.map (fun t -> (id, t)) (confirm id))
-      (Verdict.confirmations p)
-  in
-  Verdict.decide ~load:decide_load ~confirmations p
-
-let verdict_of ?load ?decide_load ?file ?confirm case_trial =
-  verdict_of_cases ?load ?decide_load ?file ?confirm [ case_trial ]
-
-(* A confirmed wall-time regression (1 us -> 2 us) with an unchanged exact
-   allocation, judged against a committed section. *)
-let fail_fixture () =
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  verdict_of ~file
-    ~confirm:(fun _ -> Some (trial (ties 5 2e-6)))
-    (bcase "alpha", trial (ties 5 2e-6))
-
-(* A confirmed wall-time improvement (2 us -> 1 us). *)
-let improved_fixture () =
-  let file = file_of [ wall_row "alpha" (ties 5 2e-6); alloc_row "alpha" 54 ] in
-  verdict_of ~file
-    ~confirm:(fun _ -> Some (trial (ties 5 1e-6)))
-    (bcase "alpha", trial (ties 5 1e-6))
-
-let new_fixture () = verdict_of (bcase "alpha", trial (ties 5 1e-6))
-
-(* A confirmed sampled-allocation regression (100 w -> 200 w) whose only
-   alloc budget is an absolute cap: the relation is reported, but an
-   [Absolute_max] contract gates proven exact evidence only — the case
-   passes and exits 0. Sampled alloc (a failed exactness probe) is the one
-   way sampled evidence meets a cap now that [at_most] refuses never-exact
-   metrics at construction. *)
-let absolute_cap_fixture () =
-  let file =
-    file_of
-      [
-        wall_row "alpha" (ties 5 1e-6);
-        Baseline.sampled_row ~id:"alpha" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 100.0);
-      ]
-  in
-  let alloc_sampled wall alloc =
-    Run.Trial.make ~k:8
-      [
-        (m_wall, Run.Samples (sam wall));
-        (m_alloc, Run.Samples (sam (ties 5 alloc)));
-      ]
-  in
-  let case =
-    bcase_budgeted ~budgets:[ Budget.at_most ~metric:m_alloc 150. ] "alpha"
-  in
-  verdict_of ~file
-    ~confirm:(fun _ -> Some (alloc_sampled (ties 5 1e-6) 200.0))
-    (case, alloc_sampled (ties 5 1e-6) 200.0)
-
-(* An exact allocation regression (54 w -> 71 w) under the zero pin, with
-   equivalent timing: the case fails on the alloc side alone. *)
-let exact_alloc_fail_fixture () =
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let case =
-    bcase_budgeted ~budgets:[ Budget.no_more_alloc_than 0.0 ] "alpha"
-  in
-  verdict_of ~file (case, trial ~alloc:(Some 71) (ties 5 1e-6))
 
 (* A protocol small enough for in-process end-to-end runs through [main]:
    3 batches at a 0.1 ms floor with a token warmup — per case, milliseconds.
@@ -233,23 +125,6 @@ let fast_config =
 let e2e_env dir =
   Unix.putenv "THUMPER_MACHINE" "testkey";
   Unix.putenv "THUMPER_LOCK_DIR" dir
-
-let ctx ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
-    ?(github = false) ?(baseline = "digest.thumper") ?(wrote = false)
-    ?(rerun_flags = []) ?(rerun_patterns = []) ?(strict = false)
-    ?(cpu_model = "Test CPU") () =
-  {
-    Report.color;
-    accept;
-    exe;
-    github;
-    baseline_path = baseline;
-    wrote_corrected = wrote;
-    rerun_flags;
-    rerun_patterns;
-    strict;
-    cpu_model;
-  }
 
 (* Parsing *)
 
@@ -532,16 +407,6 @@ let use_color_resolution () =
   is_true ~msg:"never beats a tty"
     (not (Cli.use_color `Never ~is_tty:true ~rule_action:false ~no_color:false))
 
-(* The status line *)
-
-let status_line_formats () =
-  equal ~msg:"measuring" string "thumper: measuring 3/6: busy/spin"
-    (Report.status_line
-       { Check.phase = `Measuring; index = 3; total = 6; case = "busy/spin" });
-  equal ~msg:"confirming" string "thumper: confirming 1/2: alloc/list"
-    (Report.status_line
-       { Check.phase = `Confirming; index = 1; total = 2; case = "alloc/list" })
-
 (* The acceptance-hint fork *)
 
 let promotion_staged_predicate () =
@@ -585,94 +450,6 @@ let accept_command_quotes_hostile_paths () =
     (Cli.accept_command ~promotion_staged:false
        ~corrected:"My Projects/d.thumper.corrected"
        ~baseline:"My Projects/d.thumper")
-
-let rerun_hint_reproduces_the_invocation () =
-  (* The rerun line is "the exact command" (getting-started): the preset,
-     an explicit --baseline and every --tag are carried; a hostile exe path
-     is quoted. Under a rule action (no exe) there is no rerun line. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v =
-    verdict_of ~file
-      ( bcase_budgeted ~budgets:[ Budget.no_more_alloc_than 0.0 ] "alpha",
-        trial ~alloc:(Some 71) (ties 5 1e-6) )
-  in
-  let out =
-    Report.check
-      (ctx ~exe:(Some "my dir/bench.exe") ~baseline:"alt/base.thumper"
-         ~rerun_flags:[ "--quick"; "--baseline alt/base.thumper"; "--tag lab" ]
-         ())
-      v
-  in
-  assert_contains out
-    "rerun:   'my dir/bench.exe' --quick --baseline alt/base.thumper --tag lab \
-     \\\n\
-    \           -f alpha\n";
-  let staged = Report.check (ctx ~exe:None ()) v in
-  is_true ~msg:"no rerun line under a rule action"
-    (not (contains staged "rerun:"));
-  assert_contains ~msg:"the failing id stays in the table" staged
-    "REGRESSED  1.00 us  \xc2\xb10.0%  71 w  alpha"
-
-(* [n] cases failing on their exact allocation, ids [case-01]... *)
-let failing_cases n =
-  let ids = List.init n (fun i -> Printf.sprintf "case-%02d" (i + 1)) in
-  let file =
-    file_of
-      (List.concat_map
-         (fun id -> [ wall_row id (ties 5 1e-6); alloc_row id 54 ])
-         ids)
-  in
-  verdict_of_cases ~file
-    (List.map
-       (fun id ->
-         ( bcase_budgeted ~budgets:[ Budget.no_more_alloc_than 0.0 ] id,
-           trial ~alloc:(Some 71) (ties 5 1e-6) ))
-       ids)
-
-let rerun_hint_wraps_within_80_columns () =
-  (* One pasteable command: an item that would pass column 80 starts the
-     next line behind a backslash, indented under the executable. *)
-  let out =
-    Report.check
-      (ctx ~exe:(Some "./_build/default/bench/bench_digest.exe")
-         ~rerun_flags:[ "--quick"; "--baseline bench/digest.thumper" ]
-         ())
-      (failing_cases 4)
-  in
-  assert_contains out
-    "  rerun:   ./_build/default/bench/bench_digest.exe --quick \\\n\
-    \           --baseline bench/digest.thumper -f case-01 -f case-02 -f \
-     case-03 \\\n\
-    \           -f case-04\n"
-
-let rerun_hint_wraps_at_exactly_80_columns () =
-  (* The bound counts the continuation: an item that ends the line at column
-     80, backslash included, stays; one column more moves it down. *)
-  let exe n = "./" ^ String.make n 'x' in
-  let first_line n =
-    let out = Report.check (ctx ~exe:(Some (exe n)) ()) (failing_cases 2) in
-    List.find (fun l -> contains l "rerun:") (String.split_on_char '\n' out)
-  in
-  equal ~msg:"80 columns: the item stays" string
-    ("  rerun:   " ^ exe 54 ^ " -f case-01 \\")
-    (first_line 54);
-  equal ~msg:"81 columns: the item moves" string
-    ("  rerun:   " ^ exe 55 ^ " \\")
-    (first_line 55)
-
-let rerun_hint_names_at_most_ten_cases () =
-  (* Ten failing cases are named; an eleventh turns the hint into the run's
-     own selection. *)
-  let ten = Report.check (ctx ()) (failing_cases 10) in
-  assert_contains ~msg:"ten named" ten "-f case-10\n";
-  let eleven =
-    Report.check
-      (ctx ~rerun_patterns:[ "case"; "my case" ] ())
-      (failing_cases 11)
-  in
-  assert_contains ~msg:"the run's own selection" eleven
-    "  rerun:   bench.exe -f case -f 'my case'\n";
-  is_true ~msg:"no failing id named" (not (contains eleven "-f case-01"))
 
 (* The default baseline path
 
@@ -773,520 +550,6 @@ let default_dir_stays_in_a_build_cwd () =
     (map ~cwd:"/ws/_build/default/bench" ~dirs:[ "/ws/bench" ]
        "/ws/_build/default/bench/b.exe")
 
-(* Check rendering
-
-   The block report: header / table /
-   actions / summary, blank-line separated, empty blocks omitted, printed
-   always. *)
-
-let mixed_run_renders_all_four_blocks () =
-  (* One confirmed regression, one confirmed improvement, one equivalent:
-     the specimen shape — header, table, actions (rerun + accept),
-     summary. *)
-  let file =
-    file_of
-      [
-        wall_row "alpha" (ties 5 1e-6);
-        alloc_row "alpha" 54;
-        wall_row "beta" (ties 5 2e-6);
-        alloc_row "beta" 2100;
-        wall_row "gamma" (ties 5 1e-6);
-        alloc_row "gamma" 3000;
-      ]
-  in
-  let trial_for = function
-    | "alpha" -> trial (ties 5 2e-6)
-    | "beta" -> trial ~alloc:(Some 2100) (ties 5 1e-6)
-    | _ -> trial ~alloc:(Some 3000) (ties 5 1e-6)
-  in
-  let v =
-    verdict_of_cases ~file
-      ~confirm:(fun id -> Some (trial_for id))
-      [
-        (bcase "alpha", trial_for "alpha");
-        (bcase "beta", trial_for "beta");
-        (bcase "gamma", trial_for "gamma");
-      ]
-  in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 3 cases vs digest.thumper for machine testkey
-
-  REGRESSED   2.00 us  ±0.0%     54 w  alpha
-      +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
-  improved    1.00 us  ±0.0%  2,100 w  beta
-      -50.0% [-50.0, -50.0]
-  equivalent  1.00 us  ±0.0%  3,000 w  gamma
-
-  rerun:   bench.exe -f alpha
-  accept:  dune promote
-
-  3 cases: 1 passed, 1 improved, 1 regressed.
-|}
-
-let pass_run_renders_header_table_summary () =
-  (* The report always prints — the silence-on-pass era is over. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  equivalent  1.00 us  ±0.0%  54 w  alpha
-
-  1 case: 1 passed.
-|}
-
-let new_run_renders_proposed_rows_and_the_accept_prompt () =
-  let v = new_fixture () in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — no baseline for machine testkey (Test CPU)
-
-  proposed  1.00 us  ±0.0%  54 w  alpha
-
-  accept:  dune promote
-|}
-
-let a_proposed_metric_reads_as_proposed () =
-  (* The time compared equivalent; the allocation has no baseline row yet:
-     the row opens on the compared metric's word and the detail names what
-     is proposed. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
-  let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  equivalent  1.00 us  ±0.0%  54 w  alpha
-      proposed alloc
-
-  accept:  dune promote
-
-  1 case: 1 passed.
-|}
-
-let mv_hint_replaces_promote_outside_dune () =
-  let v = new_fixture () in
-  let out =
-    Report.check
-      (ctx ~wrote:true ~accept:"mv digest.thumper.corrected digest.thumper" ())
-      v
-  in
-  assert_contains out "accept:  mv digest.thumper.corrected digest.thumper"
-
-let loaded_run_warns_under_the_header () =
-  (* The compared run's one load message: a yellow line directly under the
-     header; the sampled verdict degrades to inconclusive (environment), with
-     its estimate and interval as information, while the exact alloc verdict
-     stays visible. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let loaded = Env.Loaded { load = 7.9; cores = 8 } in
-  let v =
-    verdict_of ~load:loaded ~decide_load:loaded ~file
-      (bcase "alpha", trial (ties 5 2e-6))
-  in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-warning: load 7.9 on 8 cores; timing verdicts degraded
-
-  inconclusive  2.00 us  ±0.0%  54 w  alpha
-      environment  +100.0% [+100.0, +100.0]; equivalent (alloc exact)
-
-  1 case: 0 passed, 1 inconclusive.
-|}
-
-let loaded_new_run_warns_beside_the_prompt () =
-  (* Acceptance states put the run's one load message in the actions block
-     instead — never two load messages. *)
-  let loaded = Env.Loaded { load = 7.9; cores = 8 } in
-  let v =
-    verdict_of ~load:loaded ~decide_load:loaded
-      (bcase "alpha", trial (ties 5 1e-6))
-  in
-  let out = Report.check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"prompt kept" out "accept:  dune promote";
-  assert_contains ~msg:"load message beside the prompt" out
-    "  warning: load 7.9 on 8 cores; prefer a quiet host before accepting";
-  is_true ~msg:"no header-side load warning"
-    (not (contains out "timing verdicts degraded"))
-
-let improvement_only_renders_the_accept_line () =
-  let v = improved_fixture () in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  improved  1.00 us  ±0.0%  54 w  alpha
-      -50.0% [-50.0, -50.0]
-
-  accept:  dune promote
-
-  1 case: 0 passed, 1 improved.
-|}
-
-let within_budget_prints_its_interval () =
-  (* A noisy row whose interval ends within the budget passes within budget
-     and prints its interval, which shows no change; a demonstrated change
-     within budget prints its estimate. *)
-  let file =
-    file_of
-      [
-        wall_row "alpha" (ties 5 1e-6);
-        alloc_row "alpha" 54;
-        wall_row "beta" (ties 5 1e-6);
-        alloc_row "beta" 54;
-      ]
-  in
-  let v =
-    verdict_of_cases ~file
-      [
-        (bcase "alpha", trial [| 0.9e-6; 0.95e-6; 1e-6; 1.03e-6; 1.04e-6 |]);
-        (bcase "beta", trial (ties 5 1.03e-6));
-      ]
-  in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 2 cases vs digest.thumper for machine testkey
-
-  within budget  1.00 us  ±7.0%  54 w  alpha
-      +0.0% [-10.0, +4.0]
-  within budget  1.03 us  ±0.0%  54 w  beta
-      +3.0%
-
-  2 cases: 2 passed.
-|}
-
-let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
-  (* The provisional regression is never confirmed: decide folds an empty
-     confirmation list in, and the cell names the reason — there is no -v. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v = verdict_of ~file (bcase "alpha", trial (ties 5 2e-6)) in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  inconclusive  2.00 us  ±0.0%  54 w  alpha
-      unconfirmed; equivalent (alloc exact)
-
-  1 case: 0 passed, 1 inconclusive.
-|}
-
-let exact_alloc_failure_names_the_alloc_side () =
-  (* A case failing on alloc alone: the alloc-side detail carries the cell
-     (the "REGRESSED alloc" form), integers with no interval. *)
-  let v = exact_alloc_fail_fixture () in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  REGRESSED  1.00 us  ±0.0%  71 w  alpha
-      alloc 54 w → 71 w (exact)
-
-  rerun:   bench.exe -f alpha
-
-  1 case: 0 passed, 1 regressed.
-|}
-
-let per_column_time_unit_scaling () =
-  (* A column holding 1.4 us and 33 ms renders at one unit — the smallest
-     magnitude's — so cells stay comparable down the column. *)
-  let file =
-    file_of
-      [
-        wall_row "fast" (ties 5 1.4e-6);
-        alloc_row "fast" 54;
-        wall_row "slow" (ties 5 3.3e-2);
-        alloc_row "slow" 54;
-      ]
-  in
-  let v =
-    verdict_of_cases ~file
-      [
-        (bcase "fast", trial (ties 5 1.4e-6));
-        (bcase "slow", trial ~k:1 (ties 5 3.3e-2));
-      ]
-  in
-  let out = Report.check (ctx ()) v in
-  assert_contains ~msg:"fast cell in us" out "1.40 us";
-  assert_contains ~msg:"slow cell in the same unit" out "33000.00 us";
-  is_true ~msg:"no ms cell" (not (contains out " ms"))
-
-let exact_alloc_prints_whole_words () =
-  (* An exact count prints whole words, grouped, whatever the other rows:
-     the same count reads the same in every table. *)
-  let v =
-    verdict_of_cases
-      [
-        (bcase "alpha", trial ~alloc:(Some 3000) (ties 5 1e-6));
-        (bcase "beta", trial ~alloc:(Some 32730) (ties 5 1e-6));
-      ]
-  in
-  let out = Report.check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"whole words" out "3,000 w";
-  assert_contains ~msg:"grouped" out "32,730 w";
-  let v =
-    verdict_of_cases
-      [
-        (bcase "alpha", trial ~alloc:(Some 54) (ties 5 1e-6));
-        (bcase "beta", trial ~alloc:(Some 32730) (ties 5 1e-6));
-      ]
-  in
-  let out = Report.check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"small counts" out "54 w";
-  assert_contains ~msg:"the same cell beside a small count" out "32,730 w"
-
-let sampled_alloc_scales_per_column () =
-  (* Sampled cells take the unit of the column's smallest sampled magnitude,
-     as the time column does; exact cells beside them keep whole words.
-     Where [%.3g] would turn to exponent notation, a sampled cell prints a
-     grouped integer in the column's unit. *)
-  let sampled v =
-    Run.Trial.make ~k:8
-      [
-        (m_wall, Run.Samples (sam (ties 5 1e-6)));
-        (m_alloc, Run.Samples (sam (ties 5 v)));
-      ]
-  in
-  let v =
-    verdict_of_cases
-      [
-        (bcase "a", trial ~alloc:(Some 3000) (ties 5 1e-6));
-        (bcase "b", trial ~alloc:(Some 12_345_678) (ties 5 1e-6));
-        (bcase "c", sampled 2_345_678.);
-        (bcase "d", sampled 3000.);
-        (bcase "e", trial ~alloc:(Some 6) (ties 5 1e-6));
-        (bcase "g", sampled 999_500.);
-      ]
-  in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — no baseline for machine testkey (Test CPU)
-
-  proposed  1.00 us  ±0.0%       3,000 w  a
-  proposed  1.00 us  ±0.0%  12,345,678 w  b
-  proposed  1.00 us  ±0.0%     ~2,346 kw  c
-  proposed  1.00 us  ±0.0%         ~3 kw  d
-  proposed  1.00 us  ±0.0%           6 w  e
-  proposed  1.00 us  ±0.0%     ~1,000 kw  g
-
-  accept:  dune promote
-|};
-  let v =
-    verdict_of_cases
-      [
-        (bcase "a", trial ~alloc:(Some 54) (ties 5 1e-6));
-        (bcase "b", sampled 1234.5);
-      ]
-  in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — no baseline for machine testkey (Test CPU)
-
-  proposed  1.00 us  ±0.0%      54 w  a
-  proposed  1.00 us  ±0.0%  ~1.23 kw  b
-
-  accept:  dune promote
-|}
-
-let sampled_alloc_renders_approximate () =
-  (* A failed exactness probe leaves sampled allocation evidence: the cell
-     says so with the ~ marker, scaled, without a ci% of its own — one
-     representation (the time ci already carries the run's sampling noise). *)
-  let t =
-    Run.Trial.make ~k:8
-      [
-        (m_wall, Run.Samples (sam (ties 5 1e-6)));
-        (m_alloc, Run.Samples (sam (ties 5 2100.)));
-      ]
-  in
-  let v = verdict_of (bcase "alpha", t) in
-  let out = Report.check (ctx ~wrote:true ()) v in
-  assert_contains ~msg:"approximate, scaled" out "~2.1 kw";
-  is_true ~msg:"no alloc-side ci%" (not (contains out "kw \xc2\xb1"))
-
-let measurement_warnings_render_after_the_table () =
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let warned =
-    Run.Trial.make ~k:8
-      ~warnings:[ "possibly folded: wrap the input in black_box" ]
-      [ (m_wall, Run.Samples (sam (ties 5 1e-6))); (m_alloc, Run.Exact 54) ]
-  in
-  let v = verdict_of ~file (bcase "alpha", warned) in
-  expect (Report.check (ctx ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  equivalent  1.00 us  ±0.0%  54 w  alpha
-  warning: alpha: possibly folded: wrap the input in black_box
-
-  1 case: 1 passed.
-|}
-
-let absent_columns_leave_no_gap () =
-  (* A column no case fills is left out whole, its separator included. *)
-  let wall_only =
-    Run.Trial.make ~k:8 [ (m_wall, Run.Samples (sam (ties 5 1e-6))) ]
-  in
-  let alloc_only = Run.Trial.make ~k:8 [ (m_alloc, Run.Exact 54) ] in
-  assert_contains ~msg:"no alloc column"
-    (Report.check (ctx ()) (verdict_of (bcase "alpha", wall_only)))
-    "\n  proposed  1.00 us  \xc2\xb10.0%  alpha\n";
-  assert_contains ~msg:"no time column"
-    (Report.check (ctx ()) (verdict_of (bcase "alpha", alloc_only)))
-    "\n  proposed  54 w  alpha\n"
-
-let github_annotations_on_confirmed_regressions () =
-  let v = fail_fixture () in
-  let out = Report.check (ctx ~github:true ()) v in
-  assert_contains out
-    "::error::alpha regressed: wall_time +100.0% [+100.0, +100.0], budget +5%\n";
-  assert_contains ~msg:"exact"
-    (Report.check (ctx ~github:true ()) (exact_alloc_fail_fixture ()))
-    "::error::alpha regressed: alloc_words 54 \xe2\x86\x92 71 w (exact)\n"
-
-let absolute_cap_on_sampled_evidence_agrees_with_the_exit_code () =
-  let v = absolute_cap_fixture () in
-  (* Sanity: the fixture really reaches the dangerous state — a confirmed
-     regressed relation, reported to JSON, on the only budgeted metric. *)
-  assert_contains ~msg:"relation reported" (Verdict.to_json v)
-    "\"relation\":\"regressed\"";
-  equal ~msg:"exit code is 0 (absolute caps gate exact evidence only)" int 0
-    (Verdict.exit_code v);
-  let out = Report.check (ctx ~github:true ()) v in
-  is_true ~msg:"no capital REGRESSED on an exit-0 run"
-    (not (contains out "REGRESSED"));
-  assert_contains ~msg:"the demonstrated relation stays visible" out
-    "regressed  1.00 us  \xc2\xb10.0%  ~200 w  alpha\n      alloc +100.0%";
-  is_true ~msg:"no ::error:: annotation" (not (contains out "::error"));
-  assert_contains ~msg:"summary agrees" out "1 case: 1 passed."
-
-(* A 71-word exact count under a 64-word cap, with no baseline row for it:
-   on a first run ([file] empty), or beside a compared time row. *)
-let cap_without_a_row_fixture ?file ?(cap = 64.) ?(count = 71) () =
-  let case =
-    bcase_budgeted ~budgets:[ Budget.at_most ~metric:m_alloc cap ] "alpha"
-  in
-  verdict_of ?file (case, trial ~alloc:(Some count) (ties 5 1e-6))
-
-let a_cap_fails_a_first_run () =
-  let v = cap_without_a_row_fixture () in
-  expect (Report.check (ctx ~wrote:true ~github:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — no baseline for machine testkey (Test CPU)
-
-  REGRESSED  1.00 us  ±0.0%  71 w  alpha
-      alloc 71 w, over its 64 w cap (exact); proposed
-
-  rerun:   bench.exe -f alpha
-  accept:  dune promote
-
-::error::alpha regressed: alloc_words 71 w, over its 64 w cap (exact)
-|};
-  equal ~msg:"exit 1" int 1 (Verdict.exit_code v)
-
-let a_cap_fails_a_new_row () =
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6) ] in
-  let v = cap_without_a_row_fixture ~file () in
-  expect (Report.check (ctx ~wrote:true ()) v)
-  @@ __POS_OF__
-       {|
-thumper: digest — 1 case vs digest.thumper for machine testkey
-
-  REGRESSED  1.00 us  ±0.0%  71 w  alpha
-      alloc 71 w, over its 64 w cap (exact)
-
-  rerun:   bench.exe -f alpha
-  accept:  dune promote
-
-  1 case: 0 passed, 1 regressed.
-|};
-  equal ~msg:"exit 1" int 1 (Verdict.exit_code v);
-  assert_contains ~msg:"a fractional cap"
-    (Report.check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.5 ()))
-    "alloc 71 w, over its 64.5 w cap (exact)";
-  assert_contains ~msg:"a fraction below six decimals"
-    (Report.check (ctx ()) (cap_without_a_row_fixture ~file ~cap:64.0000001 ()))
-    "alloc 71 w, over its 64 w cap (exact)";
-  (* Large counts and caps print grouped, never in exponent notation. *)
-  let big cap = cap_without_a_row_fixture ~file ~cap ~count:1_234_568 () in
-  let out = Report.check (ctx ~github:true ()) (big 1e6) in
-  assert_contains ~msg:"cell, integral cap" out
-    "alloc 1,234,568 w, over its 1,000,000 w cap (exact)";
-  assert_contains ~msg:"annotation, integral cap" out
-    "::error::alpha regressed: alloc_words 1,234,568 w, over its 1,000,000 w \
-     cap (exact)";
-  let out = Report.check (ctx ~github:true ()) (big 1234567.5) in
-  assert_contains ~msg:"cell, fractional cap" out
-    "alloc 1,234,568 w, over its 1,234,567.5 w cap (exact)";
-  assert_contains ~msg:"annotation, fractional cap" out
-    "::error::alpha regressed: alloc_words 1,234,568 w, over its 1,234,567.5 w \
-     cap (exact)"
-
-let color_uses_ansi_only_when_enabled () =
-  let v = fail_fixture () in
-  let plain = Report.check (ctx ()) v in
-  let colored = Report.check (ctx ~color:true ()) v in
-  is_true ~msg:"no escapes when off" (not (contains plain "\027["));
-  assert_contains ~msg:"red REGRESSED when on" colored "\027[31m";
-  assert_contains ~msg:"red summary line" colored "\027[31m1 case:";
-  (* The cell styles: equivalent is faint. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  assert_contains ~msg:"faint equivalent cell when on"
-    (Report.check (ctx ~color:true ()) pass)
-    "\027[2mequivalent\027[0m"
-
-let summary_color_follows_the_exit_code () =
-  (* An inconclusive run exits 0 and ends yellow; under --strict it exits 1,
-     and its summary is red like any failing run's. The words stay. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let loaded = Env.Loaded { load = 7.9; cores = 8 } in
-  let v =
-    verdict_of ~load:loaded ~decide_load:loaded ~file
-      (bcase "alpha", trial (ties 5 2e-6))
-  in
-  equal ~msg:"strict exits 1" int 1 (Verdict.exit_code ~strict:true v);
-  let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-  assert_contains ~msg:"green when every case passes"
-    (Report.check (ctx ~color:true ()) pass)
-    "\027[32m1 case: 1 passed.\027[0m";
-  assert_contains ~msg:"yellow without --strict"
-    (Report.check (ctx ~color:true ()) v)
-    "\027[33m1 case: 0 passed, 1 inconclusive.\027[0m";
-  assert_contains ~msg:"red under --strict, which the words say"
-    (Report.check (ctx ~color:true ~strict:true ()) v)
-    "\027[31m1 case: 0 passed, 1 inconclusive; failed under --strict.\027[0m"
-
-let summary_counts_proposed_cases () =
-  (* A case with no baseline row was never compared: proposed, not passed.
-     Under --strict the run fails on it, and the summary says so. *)
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v =
-    verdict_of_cases ~file
-      [
-        (bcase "alpha", trial (ties 5 1e-6)); (bcase "beta", trial (ties 5 1e-6));
-      ]
-  in
-  assert_contains (Report.check (ctx ()) v) "  2 cases: 1 passed, 1 proposed.\n";
-  assert_contains ~msg:"strict"
-    (Report.check (ctx ~strict:true ()) v)
-    "  2 cases: 1 passed, 1 proposed; failed under --strict.\n"
-
 (* Main: validation, unlinks, list, exits *)
 
 let rejects_a_bad_suite_name () =
@@ -1370,31 +633,6 @@ let a_wrong_suite_name_is_quoted () =
   is_true ~msg:"no raw escape" (not (String.contains err '\027'));
   assert_contains err
     "baseline is for suite 'x\\x1b]0;owned\\x07', not 'digest'"
-
-let a_stale_identity_with_a_control_byte_is_quoted () =
-  let header recorded =
-    let file =
-      Baseline.set_section
-        (Baseline.empty ~suite:"digest")
-        { ident with Baseline.ocaml = recorded }
-        [ wall_row "alpha" (ties 5 1e-6) ]
-    in
-    let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
-    List.hd (String.split_on_char '\n' (Report.check (ctx ()) v))
-  in
-  let current = ident.Baseline.ocaml in
-  equal ~msg:"an escape" string
-    ("thumper: digest — stale baseline for machine testkey (ocaml \
-      '5.4.0\\x1b[2J' \xe2\x86\x92 " ^ current ^ ")")
-    (header "5.4.0\027[2J");
-  equal ~msg:"a DEL byte" string
-    ("thumper: digest — stale baseline for machine testkey (ocaml '5.4\\x7f' \
-      \xe2\x86\x92 " ^ current ^ ")")
-    (header "5.4\127");
-  equal ~msg:"plain text stays bare" string
-    ("thumper: digest — stale baseline for machine testkey (ocaml 5.4.0 · \
-      64-bit \xe2\x86\x92 " ^ current ^ ")")
-    (header "5.4.0 · 64-bit")
 
 let startup_unlinks_both_owned_artifacts () =
   let dir = temp_dir () in
@@ -1842,8 +1080,6 @@ let () =
         [
           test "per-stream resolution: auto, always, never" use_color_resolution;
         ];
-      group "status"
-        [ test "the status line formats both sweeps" status_line_formats ];
       group "hints"
         [
           test "promotion is staged only in a rule action"
@@ -1851,14 +1087,6 @@ let () =
           test "accept command forks on staging" accept_command_fork;
           test "accept command quotes hostile paths"
             accept_command_quotes_hostile_paths;
-          test "rerun hint reproduces the invocation"
-            rerun_hint_reproduces_the_invocation;
-          test "rerun hint wraps within 80 columns"
-            rerun_hint_wraps_within_80_columns;
-          test "rerun hint wraps at exactly 80 columns"
-            rerun_hint_wraps_at_exactly_80_columns;
-          test "rerun hint names at most ten cases"
-            rerun_hint_names_at_most_ten_cases;
         ];
       group "baseline path"
         [
@@ -1871,50 +1099,6 @@ let () =
           test "a build-directory cwd resolves in the cwd"
             default_dir_stays_in_a_build_cwd;
         ];
-      group "render check"
-        [
-          test "mixed run: header, table, actions, summary"
-            mixed_run_renders_all_four_blocks;
-          test "pass run: header, table, summary (never silent)"
-            pass_run_renders_header_table_summary;
-          test "NEW run: proposed rows and the accept prompt"
-            new_run_renders_proposed_rows_and_the_accept_prompt;
-          test "mv hint replaces promote outside dune"
-            mv_hint_replaces_promote_outside_dune;
-          test "loaded compared run warns directly under the header"
-            loaded_run_warns_under_the_header;
-          test "loaded NEW run warns beside the prompt (one load message)"
-            loaded_new_run_warns_beside_the_prompt;
-          test "improvement-only run renders the accept line"
-            improvement_only_renders_the_accept_line;
-          test "within budget prints its interval"
-            within_budget_prints_its_interval;
-          test "unconfirmed inconclusive names the reason in the cell"
-            unconfirmed_inconclusive_names_the_reason_in_the_cell;
-          test "exact alloc failure names the alloc side"
-            exact_alloc_failure_names_the_alloc_side;
-          test "per-column time unit scaling never mixes units"
-            per_column_time_unit_scaling;
-          test "exact alloc prints whole words" exact_alloc_prints_whole_words;
-          test "sampled alloc renders approximate with the ~ marker"
-            sampled_alloc_renders_approximate;
-          test "sampled alloc scales per column" sampled_alloc_scales_per_column;
-          test "measurement warnings render after the table"
-            measurement_warnings_render_after_the_table;
-          test "an absent column leaves no gap" absent_columns_leave_no_gap;
-          test "a proposed metric reads as proposed"
-            a_proposed_metric_reads_as_proposed;
-          test "GitHub annotations on confirmed regressions"
-            github_annotations_on_confirmed_regressions;
-          test "an absolute cap on sampled evidence agrees with the exit code"
-            absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
-          test "a cap fails a first run" a_cap_fails_a_first_run;
-          test "a cap fails a new row" a_cap_fails_a_new_row;
-          test "ANSI color only when enabled" color_uses_ansi_only_when_enabled;
-          test "the summary counts proposed cases" summary_counts_proposed_cases;
-          test "the summary's color follows the exit code"
-            summary_color_follows_the_exit_code;
-        ];
       group "main"
         [
           test "rejects an empty suite name" rejects_a_bad_suite_name;
@@ -1925,8 +1109,6 @@ let () =
           test "list prints resolved ids" list_prints_resolved_ids;
           test "list honors the selection" list_honors_the_selection;
           test "a wrong suite name is quoted" a_wrong_suite_name_is_quoted;
-          test "a stale identity with a control byte is quoted"
-            a_stale_identity_with_a_control_byte_is_quoted;
           test "empty selection exits 2" empty_selection_exits_2;
           test "startup unlinks both owned artifacts"
             startup_unlinks_both_owned_artifacts;

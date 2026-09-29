@@ -1,0 +1,13 @@
+thumper: digest — 2 cases vs digest.thumper for machine testkey
+
+  REGRESSED  2.00 us  ±0.0%  54 w  alpha
+      +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
+  REGRESSED  1.00 us  ±0.0%  71 w  beta
+      alloc 54 w → 71 w (exact)
+
+  rerun:   bench.exe -f alpha -f beta
+
+  2 cases: 0 passed, 2 regressed.
+
+::error::alpha regressed: wall_time +100.0% [+100.0, +100.0], budget +5%
+::error::beta regressed: alloc_words 54 → 71 w (exact)

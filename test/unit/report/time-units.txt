@@ -1,0 +1,6 @@
+thumper: digest — 2 cases vs digest.thumper for machine testkey
+
+  equivalent      1.40 us  ±0.0%  54 w  fast
+  equivalent  33000.00 us  ±0.0%  54 w  slow
+
+  2 cases: 2 passed.

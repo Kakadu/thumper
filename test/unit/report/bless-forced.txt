@@ -1,0 +1,9 @@
+thumper: digest — blessed 2 cases for machine testkey
+
+  proposed  1.00 us  ±0.0%     54 w  alpha
+  proposed  2.50 us  ±0.0%  3,000 w  beta
+  warning: beta: possibly folded: wrap the input in black_box
+
+  warning: blessed under load 7.9 on 8 cores (--force recorded)
+  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 1 unselected case
+  accept:  dune promote

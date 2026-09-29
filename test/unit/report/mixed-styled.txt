@@ -1,0 +1,12 @@
+[2mthumper: [0m[1mdigest[0m[2m — 3 cases vs digest.thumper for machine testkey[0m
+
+  [31mREGRESSED[0m   2.00 us  ±0.0%     54 w  alpha
+      +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
+  [32mimproved[0m    1.00 us  ±0.0%  2,100 w  beta
+      -50.0% [-50.0, -50.0]
+  [2mequivalent[0m  1.00 us  ±0.0%  3,000 w  gamma
+
+  rerun:   bench.exe -f alpha
+  accept:  dune promote
+
+  [31m3 cases: 1 passed, 1 improved, 1 regressed.[0m

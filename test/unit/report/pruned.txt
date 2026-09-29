@@ -1,0 +1,8 @@
+thumper: digest — 1 case vs digest.thumper for machine testkey
+
+  equivalent  1.00 us  ±0.0%  54 w  alpha
+  warning: case gone no longer exists in this binary; its rows will be pruned from the corrected file
+
+  accept:  dune promote
+
+  1 case: 1 passed.

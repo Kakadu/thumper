@@ -1,0 +1,8 @@
+thumper: digest — 1 case vs digest.thumper for machine testkey
+
+  REGRESSED  1.00 us  ±0.0%  71 w  alpha
+      alloc 54 w → 71 w (exact)
+
+  rerun:   bench.exe -f alpha
+
+  1 case: 0 passed, 1 regressed.

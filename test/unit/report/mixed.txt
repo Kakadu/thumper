@@ -1,0 +1,12 @@
+thumper: digest — 3 cases vs digest.thumper for machine testkey
+
+  REGRESSED   2.00 us  ±0.0%     54 w  alpha
+      +100.0% [+100.0, +100.0]  budget +5%; equivalent (alloc exact)
+  improved    1.00 us  ±0.0%  2,100 w  beta
+      -50.0% [-50.0, -50.0]
+  equivalent  1.00 us  ±0.0%  3,000 w  gamma
+
+  rerun:   bench.exe -f alpha
+  accept:  dune promote
+
+  3 cases: 1 passed, 1 improved, 1 regressed.

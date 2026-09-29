@@ -18,18 +18,24 @@ a duration.
 
 ## Layout
 
-One windtrap suite per module under `test/unit/`: `test_os`, `test_stats`,
-`test_metric`, `test_budget`, `test_config`, `test_run`, `test_bench`,
-`test_env`, `test_baseline`, `test_measure`, `test_verdict`,
-`test_check`, `test_cli`, plus `test_thumper` (facade smoke through
-the public surface only) and `test_clock` (the vendored stubs). The
-library's internal modules are unreachable through the public surface,
-so the unit suites reach them through `Thumper.Private` — the facade's
-unconstrained re-export, existing for exactly this purpose
-(`thumper.mli`). The library is built once and linked; no test
-compiles its own copy of a unit, so an edit to any `lib/` source
-rebuilds exactly the tests that depend on it, under the library's own
-flags (`test/unit/dune`'s header comment).
+One windtrap suite per module under `test/unit/`: `test_os`,
+`test_stats`, `test_metric`, `test_budget`, `test_config`, `test_run`,
+`test_bench`, `test_env`, `test_baseline`, `test_measure`,
+`test_verdict`, `test_check`, `test_report`, `test_cli`, plus
+`test_thumper` (facade smoke through the public surface only) and
+`test_clock` (the vendored stubs). The library's internal modules are
+unreachable through the public surface, so the unit suites reach them
+through `Thumper.Private` — the facade's unconstrained re-export,
+existing for exactly this purpose (`thumper.mli`). The library is built
+once and linked; no test compiles its own copy of a unit, so an edit to
+any `lib/` source rebuilds exactly the tests that depend on it, under
+the library's own flags (`test/unit/dune`'s header comment).
+
+`test_report` owns the report's layout: one golden per report state
+under `test/unit/report/`, rendered from verdicts that `Verdict.judge`
+and `Verdict.decide` build over recorded trials, and one styled golden
+that keeps its escapes. A changed layout shows as a `diff?` of its
+golden; read it, then `dune promote`.
 
 The laws of [`architecture.md`](architecture.md) are the test
 obligations. The pure-core laws are windtrap properties — notably the
