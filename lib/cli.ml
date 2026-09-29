@@ -408,10 +408,11 @@ let fail2 fmt =
 let pp_str pp v = Format.asprintf "%a" pp v
 
 (* A corrected file or JSON document left by an earlier run must not survive
-   into this one, where a reader would take it for this run's. *)
+   into this one, where a reader would take it for this run's. A path under a
+   regular file ([ENOTDIR]) cannot exist either; the pre-flight names it. *)
 let unlink_owned path =
   try Unix.unlink path with
-  | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  | Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> ()
   | Unix.Unix_error (e, _, _) ->
       fail2 "cannot remove stale artifact %s: %s" path (Unix.error_message e)
 

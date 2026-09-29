@@ -1174,9 +1174,8 @@ let running =
       cases "a stop" ~name:fst stops stops_the_run;
       test ~timeout:60. (fst a_raising_case) (fun () ->
           stops_the_run a_raising_case);
-      xfail ~reason:"the removal of the stale file stops the run first"
-        (test "a --json path under a file stops as not a directory"
-           a_json_path_under_a_file);
+      test "a --json path under a file stops as not a directory"
+        a_json_path_under_a_file;
       test "list reads neither the baseline nor THUMPER_MACHINE"
         list_reads_no_baseline_and_no_key;
       cases "every subcommand first removes the stale files" ~name:fst
