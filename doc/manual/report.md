@@ -119,10 +119,15 @@ display, and the check judges the unrounded values.
 
 A case's verdict is a list of fragments, one per notable relation, most
 severe first: `REGRESSED`, `regressed`, `inconclusive`, `improved`,
-`within budget`, `proposed`, `equivalent`. The row opens on the first
-fragment's word. When there is more, a detail line follows, indented six
-spaces: the rest of the first fragment, then every other fragment whole,
-joined by `; `. A row with nothing notable reads `equivalent` and has no
+`within budget`, `proposed`, `equivalent`. The row opens on the case's
+outcome, as the summary counts it: `REGRESSED` when the case fails,
+`inconclusive` when a metric with a budget is inconclusive, and otherwise
+a passing word, taken from the first fragment that carries one, or
+`equivalent` when none does. When there is more, a detail line follows,
+indented six spaces: the rest of the opening fragment, then every other
+fragment whole, joined by `; `. A `regressed` that fails nothing and an
+`inconclusive` without a budget decide nothing, so they print on the
+detail line. A row with nothing notable reads `equivalent` and has no
 detail line. The fragments are:
 
 | fragment | meaning |
