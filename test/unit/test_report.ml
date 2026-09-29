@@ -354,7 +354,8 @@ let exact_alloc () =
       (bcase "delta", sampled_alloc 2100.);
     ]
 
-(* Sampled counts whose scaled [%.3g] would turn to exponent notation. *)
+(* Sampled counts in each unit, beside exact ones: at the edge of a unit, and
+   past the largest one, where [%.3g] would turn to exponent notation. *)
 let sampled_alloc_large () =
   verdict_of_cases
     [
@@ -364,6 +365,7 @@ let sampled_alloc_large () =
       (bcase "d", sampled_alloc 3000.);
       (bcase "e", trial ~alloc:(Some 6) (ties 5 1e-6));
       (bcase "g", sampled_alloc 999_500.);
+      (bcase "h", sampled_alloc 2.5e9);
     ]
 
 let sampled_alloc_small () =
@@ -484,13 +486,14 @@ let check_states =
       "a failing exact count prints both counts and the budget" exact_regression;
     check "inconclusive" "every inconclusive reason prints in its words"
       every_reason;
-    check "time-units" "the time column takes the unit of its smallest value"
+    check "time-units" "each time cell takes the unit of its own magnitude"
       time_units;
     check "exact-alloc"
       "an exact count prints whole words beside a scaled sampled one"
       exact_alloc;
     check "sampled-alloc"
-      "a large sampled count prints a grouped integer in the column's unit"
+      "a sampled count takes the unit of its own magnitude, grouped past 999.5 \
+       Mw"
       sampled_alloc_large;
     check "sampled-alloc-small"
       "a small sampled count keeps three significant digits" sampled_alloc_small;
@@ -693,11 +696,32 @@ let a_cap_prints_grouped (_, cap, count, cell, annotation) =
   contains ~sub:("\n      " ^ cell ^ "\n") report;
   contains ~sub:("\n::error::alpha regressed: " ^ annotation ^ "\n") report
 
-(* A unit starts at its own magnitude. *)
+(* A unit starts at its own magnitude, as the cell prints it. *)
 let units =
   [
     ("a millisecond", (fun () -> trial ~alloc:None (ties 5 1e-3)), " 1.00 ms ");
     ("a second", (fun () -> trial ~alloc:None (ties 5 1.)), " 1.00 s ");
+    ( "a time that rounds up to a microsecond",
+      (fun () -> trial ~alloc:None (ties 5 999.996e-9)),
+      " 1.00 us " );
+    ( "a time just under a microsecond",
+      (fun () -> trial ~alloc:None (ties 5 999.99e-9)),
+      " 999.99 ns " );
+    ( "a time at the microsecond's rounding edge",
+      (fun () -> trial ~alloc:None (ties 5 999.995e-9)),
+      " 1.00 us " );
+    ( "a time at the millisecond's rounding edge",
+      (fun () -> trial ~alloc:None (ties 5 999.995e-6)),
+      " 1.00 ms " );
+    ( "a time at the second's rounding edge",
+      (fun () -> trial ~alloc:None (ties 5 0.999995)),
+      " 1.00 s " );
+    ( "a sampled count at the kiloword's edge",
+      (fun () -> sampled_alloc 999.5),
+      " ~1 kw " );
+    ( "a sampled count past 999.5 Mw",
+      (fun () -> sampled_alloc 999.5e6),
+      " ~1,000 Mw " );
     ("a thousand words", (fun () -> sampled_alloc 1e3), " ~1 kw ");
     ("a million words", (fun () -> sampled_alloc 1e6), " ~1 Mw ");
   ]

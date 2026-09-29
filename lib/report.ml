@@ -52,34 +52,38 @@ let group_int n =
     s;
   (if n < 0 then "-" else "") ^ Buffer.contents buf
 
-let time_unit v =
+(* Each cell carries the unit of its own magnitude, so a cell reads the same
+   whatever the other rows hold. *)
+
+(* A time in seconds: [%.2f] and its unit ("1.40 us", "33.00 ms"). The unit
+   is chosen on the value as printed, so a cell never reads [1000.00 ns]. *)
+let time_str v =
   let a = Float.abs v in
-  if a < 1e-6 then ("ns", 1e9)
-  else if a < 1e-3 then ("us", 1e6)
-  else if a < 1. then ("ms", 1e3)
-  else ("s", 1.)
+  let unit, scale =
+    if a < 999.995e-9 then ("ns", 1e9)
+    else if a < 999.995e-6 then ("us", 1e6)
+    else if a < 0.999995 then ("ms", 1e3)
+    else ("s", 1.)
+  in
+  strf "%.2f %s" (v *. scale) unit
 
-(* An exact count prints whole words, grouped ("32,730 w"), whatever the
-   column holds: an exact count never rounds. Sampled allocation is
-   approximate by nature: its cells scale per column like the time column,
-   from the smallest sampled magnitude, and say so with [~] ("~3 kw",
-   "~32.7 kw"), without a ci% of their own; the time ci already carries the
-   run's sampling noise. *)
-let words_unit v =
+(* An exact count prints whole words, grouped ("32,730 w"): an exact count
+   never rounds. Sampled allocation is approximate by nature: it prints
+   three significant digits in the unit of its magnitude and says so with
+   [~] ("~3 kw", "~32.7 kw"), without a ci% of its own; the time ci already
+   carries the run's sampling noise. Past [999.5] of the largest unit, where
+   [%.3g] would turn to exponent notation, it prints a grouped integer
+   ("~2,500 Mw"). *)
+let approx_words v =
   let a = Float.abs v in
-  if a < 1e3 then ("w", 1.) else if a < 1e6 then ("kw", 1e-3) else ("Mw", 1e-6)
-
-(* A scaled sampled value prints as a grouped integer from where its [%.3g]
-   would turn to exponent notation ([1.23e+03 kw]), at four integer digits.
-   Below that, the cell keeps its significant digits. *)
-let approx_exponent_at = 999.5
-
-let grouped_scaled v unit =
-  group_int (Float.to_int (Float.round v)) ^ " " ^ unit
-
-let approx_words ~unit ~wscale v =
-  let v = v *. wscale in
-  if Float.abs v >= approx_exponent_at then "~" ^ grouped_scaled v unit
+  let unit, scale =
+    if a < 999.5 then ("w", 1.)
+    else if a < 999.5e3 then ("kw", 1e-3)
+    else ("Mw", 1e-6)
+  in
+  let v = v *. scale in
+  if Float.abs v >= 999.5 then
+    "~" ^ group_int (Float.to_int (Float.round v)) ^ " " ^ unit
   else strf "~%.3g %s" v unit
 
 (* A metric's unit in a cell: [w] for the word counters, whose own unit is
@@ -143,9 +147,8 @@ let pad_left s w =
    The status word opens the row and the id closes it, so only an id longer
    than the room left runs a row past 80 columns. The value columns show the
    first time-kind and first allocation-kind metrics; everything else
-   surfaces through the cell. Widths are content-derived; the time column is
-   unit-scaled per column (the unit of its smallest magnitude), so cells stay
-   comparable down the column. *)
+   surfaces through the cell. Widths are content-derived, and each value
+   cell carries its own unit. *)
 
 (* A cell fragment: its relation word ([REGRESSED], [inconclusive], ...),
    the separator that follows it ([" "], [": "], or [""] without a detail),
@@ -197,42 +200,10 @@ let alloc_of_trial trial =
   | None -> No_alloc
 
 let table_lines ~color rows =
-  let unit, scale =
-    let min_v =
-      List.fold_left
-        (fun acc r ->
-          match r.time with
-          | Some (v, _) when v > 0. -> (
-              match acc with None -> Some v | Some m -> Some (Float.min m v))
-          | _ -> acc)
-        None rows
-    in
-    match min_v with None -> ("ns", 1e9) | Some v -> time_unit v
-  in
-  let aunit, ascale =
-    let mag = function
-      | Alloc_approx v when v <> 0. -> Some (Float.abs v)
-      | Alloc_exact _ | Alloc_approx _ | No_alloc -> None
-    in
-    let min_v =
-      List.fold_left
-        (fun acc r ->
-          match (mag r.alloc, acc) with
-          | Some v, None -> Some v
-          | Some v, Some m -> Some (Float.min m v)
-          | None, acc -> acc)
-        None rows
-    in
-    match min_v with None -> ("w", 1.) | Some v -> words_unit v
-  in
   let cells =
     List.map
       (fun r ->
-        let t =
-          match r.time with
-          | Some (v, _) -> strf "%.2f %s" (v *. scale) unit
-          | None -> ""
-        in
+        let t = match r.time with Some (v, _) -> time_str v | None -> "" in
         let ci =
           match r.time with
           | Some (_, Some p) -> strf "\xc2\xb1%.1f%%" p
@@ -241,7 +212,7 @@ let table_lines ~color rows =
         let alloc =
           match r.alloc with
           | Alloc_exact n -> group_int n ^ " w"
-          | Alloc_approx v -> approx_words ~unit:aunit ~wscale:ascale v
+          | Alloc_approx v -> approx_words v
           | No_alloc -> ""
         in
         (r.row_id, t, ci, alloc, r.cell))

@@ -112,7 +112,7 @@
   (progn
    (run %{test} --corrected)
    (diff? report/bless.txt report/bless.txt.corrected)
-   (diff? report/undecided.txt report/undecided.txt.corrected)
+   (diff? report/default-budget.txt report/default-budget.txt.corrected)
    (diff? report/failing-first.txt report/failing-first.txt.corrected)
    (diff? report/loaded-proposed.txt report/loaded-proposed.txt.corrected)
    (diff? report/bless-forced.txt report/bless-forced.txt.corrected)

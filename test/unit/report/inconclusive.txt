@@ -2,7 +2,7 @@ thumper: digest — 6 cases vs digest.thumper for machine testkey
 
   inconclusive  1.00 us  ±150.0%         wide-interval
       wide interval
-  inconclusive  0.00 us    ±0.0%         non-positive
+  inconclusive  0.00 ns    ±0.0%         non-positive
       non-positive sample
   inconclusive  2.00 us    ±0.0%         unconfirmed
       unconfirmed
