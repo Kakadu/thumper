@@ -162,9 +162,6 @@ val section : t -> string -> section option
 
 (** {1:sections Section observers} *)
 
-val machine_of : section -> string
-(** [machine_of s] is [s]'s machine key. *)
-
 val ocaml_of : section -> string
 (** [ocaml_of s] is the body of [s]'s [# ocaml:] line. {!Verdict} compares it
     with the running program's identity to decide staleness. *)

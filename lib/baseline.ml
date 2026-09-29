@@ -490,7 +490,6 @@ let machines t = List.map (fun s -> s.s_machine) t.t_sections
 let section t key =
   List.find_opt (fun s -> String.equal s.s_machine key) t.t_sections
 
-let machine_of s = s.s_machine
 let ocaml_of s = s.s_ocaml
 let rows s = s.s_rows
 

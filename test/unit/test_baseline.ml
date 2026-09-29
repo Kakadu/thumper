@@ -814,10 +814,10 @@ let files =
                 (it heads fresh baselines)") (fun () -> Baseline.empty ~suite));
       test "section finds a key's section and no other" (fun () ->
           let t = parsed sample in
-          equal (option string) (Some sample_machine)
-            (Option.map Baseline.machine_of (Baseline.section t sample_machine));
+          equal (option string) (Some "5.5.0 · 64-bit · release")
+            (Option.map Baseline.ocaml_of (Baseline.section t sample_machine));
           equal (option string) None
-            (Option.map Baseline.machine_of (Baseline.section t "other")));
+            (Option.map Baseline.ocaml_of (Baseline.section t "other")));
     ]
 
 (* Section observers *)
@@ -843,9 +843,8 @@ let frozen_ks =
 let section_observers =
   group "Section observers"
     [
-      test "machine_of and ocaml_of read the section's header" (fun () ->
+      test "ocaml_of reads the section's header" (fun () ->
           let s = section (parsed sample) sample_machine in
-          equal string sample_machine (Baseline.machine_of s);
           equal string "5.5.0 · 64-bit · release" (Baseline.ocaml_of s));
       test "find_row finds a case and metric's row and no other" (fun () ->
           let s = section (parsed sample) sample_machine in
