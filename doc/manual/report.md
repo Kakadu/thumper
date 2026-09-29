@@ -61,7 +61,9 @@ thumper: digest — stale baseline for machine 5c1e0a7f3b9d2486 (ocaml 5.2.0 · 
   warning: load 83.1 on 10 cores; prefer a quiet host before accepting
 ```
 
-`bless -f fib/20` re-records one case:
+`bless` records its cases in the corrected file, and the baseline takes
+them only when that file is accepted, so the rows under a `blessed` header
+read `proposed`. `bless -f fib/20` re-records one case:
 
 ```
 $ dune exec bench/bench_digest.exe -- bless -f fib/20
@@ -94,11 +96,14 @@ A row is its status word, the time, the `±` interval, the allocation and
 the case id, two spaces apart, in suite order. The status word is padded
 to the widest in the table and the three value columns are right-aligned.
 
-- **Time.** The median of the case's first time metric (`wall_time` by
-  default), with two decimals in the column's unit: `ns`, `us`, `ms` or
-  `s`, whichever fits the smallest time in the column.
-- **`±`.** The half-width of the median's 95% confidence interval, as a
-  percentage of the median.
+- **Time.** The time that The report in
+  [`lib/thumper.mli`](../../lib/thumper.mli) defines, with two decimals in
+  the column's unit: `ns`, `us`, `ms` or `s`, whichever fits the smallest
+  time in the column.
+- **`±`.** The interval that The report defines, with one decimal and a
+  `%`. The interval's ends are two of the trial's samples and need not sit
+  evenly around the median. A `±` past 100% puts its upper end above twice
+  the median, as on a loaded host.
 - **Allocation.** The case's first metric that counts words (`alloc_words`
   by default; `minor_alloc_words`, `major_alloc_words` or
   `promoted_words` when it collects one of those instead). An exact count
@@ -126,11 +131,11 @@ detail line. The fragments are:
 | `within budget <change> [<lower>, <upper>]` | an interval that ends within the budget |
 | `within budget <change>` | a slowdown the run demonstrated and the budget allows, or an exact growth the budget allows |
 | `REGRESSED alloc <baseline> w → <count> w (exact)` | an exact count that grew past its budget; `regressed` and `improved` take the same form |
-| `REGRESSED alloc <count> w, over its <cap> w cap (exact)` | an exact count over its `at_most` cap, with no row to compare |
+| `REGRESSED alloc <count> w, over its <cap> w cap (exact)` | an exact count over its `at_most` cap, with no row to compare or against a sampled row |
 | `inconclusive: <reason>` | a time comparison that was not judged ([reasons](#inconclusive-reasons)) |
 | `inconclusive: environment  <change> [<lower>, <upper>]` | a time comparison on a loaded host, and the change it measured |
 | `inconclusive alloc: <reason>` | an allocation comparison that was not judged |
-| `equivalent (alloc exact)` | an exact count equal to its row, shown on a row that does not pass |
+| `equivalent (alloc exact)` | an exact count equal to its row, shown when the row also holds a `REGRESSED`, `regressed` or `inconclusive` fragment |
 | `proposed alloc` | an allocation with no row to compare, after a time that compared |
 | `proposed` | a case with no row to compare |
 
@@ -202,7 +207,7 @@ JSON spelling is in [the JSON document](json.md#reasons).
 | `non-positive sample` | a sample on either side is zero or negative, as a `cpu_time` sample is when the clock does not tick within a batch | budget `wall_time` in place of `cpu_time`, or raise `Config.batch_floor` |
 | `baseline unstable` | the baseline row's samples have severe outliers, and the change is small | re-record the row on a quiet host with `bless -f <id>`, then accept it |
 | `environment` | the host was loaded when the run sampled its load | run on a quiet host, or pass `--wait-quiet SECS` |
-| `unconfirmed` | the second trial did not reproduce the first trial's regression | measure the case again: the `rerun:` line |
+| `unconfirmed` | the second trial did not reproduce the first trial's regression | measure the case again with `-f <id>` ([Measuring one case while iterating](running-checks.md#measuring-one-case-while-iterating)) |
 | `exactness lost` | one side is an exact count and the other sampled, or both are sampled under a budget of `0` | find why the case allocates differently from batch to batch; when the baseline row is the sampled side, re-record it with `bless -f <id>` |
 | `batch drifted` | the batch size moved from the baseline row's, and the change is small or the exact count changed | when the change is intended, re-record the case with `bless -f <id>` |
 | `unstable` | this run's samples have severe outliers, and the change is small | measure again on a quiet host |
@@ -264,7 +269,7 @@ warning: load 79.8 on 10 cores; timing verdicts degraded
 Stderr carries every line that is not the report:
 
 - while measuring on a terminal, the status line
-  `thumper: measuring <i>/<n> — <id>`, or `confirming` for a second trial,
+  `thumper: measuring <i>/<n>: <id>`, or `confirming` for a second trial,
   rewritten in place and erased before anything else prints;
 - `thumper: waiting for the measurement lock (another run is measuring) ...`
   when another run holds the lock, and
