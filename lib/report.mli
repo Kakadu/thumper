@@ -44,7 +44,7 @@ type render = {
       (** Whether to style the report with ANSI escapes. Removing the escapes
           from a styled report gives the unstyled one. *)
   accept : string;
-      (** The command of the [accept:] line ({!Cli.accept_command}). *)
+      (** The command of the [accept:] line ({!Cli.main} builds it). *)
   exe : string option;
       (** The program the [rerun:] line runs, which {!val-check} quotes with
           {!shell_arg}; [None] for no [rerun:] line. *)

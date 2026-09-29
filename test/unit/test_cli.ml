@@ -249,6 +249,9 @@ let usage_errors =
     row "list --wait-quiet=2.5" [ "list"; "--wait-quiet=2.5" ]
     @@ __POS_OF__
          {| thumper: option '--wait-quiet' applies to check and bless, not list |};
+    row "list --wait-quiet 0" [ "list"; "--wait-quiet"; "0" ]
+    @@ __POS_OF__
+         {| thumper: option '--wait-quiet' applies to check and bless, not list |};
     row "a misplaced flag before a conflict" [ "list"; "--quick"; "--precise" ]
     @@ __POS_OF__
          {| thumper: option '--quick' applies to check and bless, not list |};
@@ -404,14 +407,6 @@ let command_lines =
           starts_with ~affix:line (output ()));
       test "the help names the program by its file name"
         the_help_names_the_program;
-      test "--wait-quiet reads its seconds, zero included" (fun () ->
-          let wait args =
-            require_match
-              (function Cli.Run o -> Some o.Cli.wait_quiet | _ -> None)
-              (Cli.parse (Array.of_list ("bench.exe" :: args)))
-          in
-          equal (option float_exact) (Some 2.5) (wait [ "--wait-quiet"; "2.5" ]);
-          equal (option float_exact) (Some 0.) (wait [ "--wait-quiet"; "0" ]));
     ]
 
 (* Terminal output and the report's variants
