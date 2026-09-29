@@ -19,9 +19,9 @@
     API. [Thumper.run]'s documentation in the facade is the user contract of the
     command line: its grammar, its report, its files, its streams and its exit
     codes. What it states is stable, and so is the summary's colour, which
-    follows the exit code ({!Report.check}). What it leaves unstated may change:
-    the text of each message, the report's column widths, its other colours, and
-    the wrapping of its [rerun:] line. *)
+    follows the exit code ({!Report.val-check}). What it leaves unstated may
+    change: the text of each message, the report's column widths, its other
+    colours, and the wrapping of its [rerun:] line. *)
 
 (** {1:parsing Command lines and options} *)
 
@@ -207,15 +207,15 @@ val main :
     host under [--wait-quiet]. It then holds the measurement lock
     ({!Env.Lock.with_lock}) around {!Check.run_with}, whose own acquisition
     nests. It writes the [--json] file, then the corrected file when
-    {!Verdict.corrected} is [Some], prints {!Report.check}'s report on stdout
-    and returns [Verdict.exit_code ~strict]. Its {!type:Report.render} has [exe]
-    set to [argv.(0)], or [None] in a dune rule action; a path [argv.(0)] is
-    made absolute against the working directory, its directory is resolved with
-    [Unix.realpath], and it is written [./<rel>] when it lies under the working
-    directory, absolute otherwise. Its [rerun_flags] hold [--quick] or
-    [--precise] when given, [--baseline] when [argv] gave one, and one [--tag]
-    per tag. When the corrected file cannot be written, the report prints
-    without its [accept:] line before the stop.
+    {!Verdict.corrected} is [Some], prints {!Report.val-check}'s report on
+    stdout and returns [Verdict.exit_code ~strict]. Its {!type:Report.render}
+    has [exe] set to [argv.(0)], or [None] in a dune rule action; a path
+    [argv.(0)] is made absolute against the working directory, its directory is
+    resolved with [Unix.realpath], and it is written [./<rel>] when it lies
+    under the working directory, absolute otherwise. Its [rerun_flags] hold
+    [--quick] or [--precise] when given, [--baseline] when [argv] gave one, and
+    one [--tag] per tag. When the corrected file cannot be written, the report
+    prints without its [accept:] line before the stop.
 
     [bless] selects the cases as [list] does, validates [THUMPER_MACHINE], reads
     the baseline and waits under [--wait-quiet]. An expired wait stops the run
@@ -223,5 +223,5 @@ val main :
     lock, samples the load, and stops on a loaded host unless [--force] is
     given, and then records the load through {!Verdict.bless}'s [annotations].
     It measures with {!Check.measure}, writes {!Verdict.bless}'s file as the
-    corrected file, prints {!Report.bless}'s report on stdout, and returns [0].
-*)
+    corrected file, prints {!Report.val-bless}'s report on stdout, and returns
+    [0]. *)

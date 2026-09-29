@@ -5,12 +5,12 @@
 
 (** The reports of [check] and [bless], and the progress line.
 
-    {!check} and {!bless} build a report as text, in blocks separated by a blank
-    line and ending in a newline: a header, a table with one row per case, the
-    actions, and for [check] against a current section a summary. They read
-    nothing but their arguments and print nothing: {!Cli.main} prints the report
-    on stdout. {!status_line} is the text of the progress line {!Cli.main}
-    prints on stderr while a run measures.
+    {!val-check} and {!val-bless} build a report as text, in blocks separated by
+    a blank line and ending in a newline: a header, a table with one row per
+    case, the actions, and for [check] against a current section a summary. They
+    read nothing but their arguments and print nothing: {!Cli.main} prints the
+    report on stdout. {!status_line} is the text of the progress line
+    {!Cli.main} prints on stderr while a run measures.
 
     The module is visible only as [Thumper.Private.Report], outside the API.
     [Thumper.run]'s documentation states which parts of the report are stable
@@ -46,7 +46,7 @@ type render = {
   accept : string;
       (** The command of the [accept:] line ({!Cli.accept_command}). *)
   exe : string option;
-      (** The program the [rerun:] line runs, which {!check} quotes with
+      (** The program the [rerun:] line runs, which {!val-check} quotes with
           {!shell_arg}; [None] for no [rerun:] line. *)
   github : bool;
       (** Whether the report ends with one [::error::] line per metric that
@@ -60,7 +60,7 @@ type render = {
           missing or stale, and [Verdict.load] is loaded. *)
   rerun_flags : string list;
       (** The [rerun:] line's arguments before its selection, one item per flag
-          with its argument. {!check} prints them as given, so each argument
+          with its argument. {!val-check} prints them as given, so each argument
           must already be quoted with {!shell_arg}. *)
   rerun_patterns : string list;
       (** The run's patterns. The [rerun:] line selects by them, quoted, in
@@ -73,7 +73,7 @@ type render = {
       (** The host's CPU model, which the header names when this machine has no
           section in the baseline. *)
 }
-(** The type for what {!check} needs besides the verdict. *)
+(** The type for what {!val-check} needs besides the verdict. *)
 
 val check : render -> Verdict.t -> string
 (** [check r v] is the report of the [check] run judged as [v], ending in a
