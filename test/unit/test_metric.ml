@@ -3,15 +3,39 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Unit tests for [Metric].
-   [Metric] is a private module of the library, reached through the facade's
-   [Thumper.Private] re-export: the test links the library itself, and
-   rebuilds track [lib/metric.{ml,mli}]. *)
+(* A built-in is compared as one line of all it states: its id, units, kind,
+   source and whether it is a counter. A counter's source is shown as its
+   reading of one snapshot whose fields are pairwise distinct, so that each
+   projection tells which fields it reads. *)
 
 open Windtrap
 module Metric = Thumper.Private.Metric
 
-(* In the order of the interface's built-in section. *)
+let snapshot =
+  {
+    Metric.minor_words = 1000.;
+    promoted_words = 200.;
+    major_words = 300.;
+    minor_collections = 7;
+    major_collections = 3;
+  }
+
+let described m =
+  let kind =
+    match Metric.kind m with
+    | `Time -> "time"
+    | `Allocation -> "allocation"
+    | `Other -> "other"
+  in
+  let source =
+    match Metric.source m with
+    | Metric.Wall_clock -> "wall clock"
+    | Metric.Cpu_clock -> "cpu clock"
+    | Metric.Gc_counter p -> Printf.sprintf "counter reading %g" (p snapshot)
+  in
+  Printf.sprintf "%s in %s, %s, %s, is_counter %b" (Metric.id m)
+    (Metric.units m) kind source (Metric.is_counter m)
+
 let builtins =
   Metric.
     [
@@ -25,168 +49,59 @@ let builtins =
       major_collections;
     ]
 
-(* A synthetic snapshot with pairwise-distinct fields, so each projection is
-   distinguishable from every other. *)
-let snapshot =
-  {
-    Metric.minor_words = 1000.;
-    promoted_words = 200.;
-    major_words = 300.;
-    minor_collections = 7;
-    major_collections = 3;
-  }
+let gen_builtin = Gen.of_list ~pp:Metric.pp builtins
 
-let project m =
-  match Metric.source m with
-  | Metric.Gc_counter f -> f snapshot
-  | _ -> failf "%s is not a Gc_counter metric" (Metric.id m)
+(* Metrics *)
 
-let ids_are_wire_format () =
-  (* The literal spellings are serialization (baseline rows, JSON): a change
-     here is a wire-format break, not a rename. *)
-  equal (list string)
+let metrics =
+  group "Metrics"
     [
-      "wall_time";
-      "alloc_words";
-      "cpu_time";
-      "minor_alloc_words";
-      "major_alloc_words";
-      "promoted_words";
-      "minor_collections";
-      "major_collections";
+      prop "equal is the equality of ids"
+        ~examples:Metric.[ (wall_time, cpu_time); (wall_time, wall_time) ]
+        (Gen.pair gen_builtin gen_builtin)
+        (fun (a, b) ->
+          equal bool
+            (String.equal (Metric.id a) (Metric.id b))
+            (Metric.equal a b));
+      prop "compare is the order of ids"
+        ~examples:Metric.[ (wall_time, wall_time); (alloc_words, wall_time) ]
+        (Gen.pair gen_builtin gen_builtin)
+        (fun (a, b) ->
+          equal int
+            (String.compare (Metric.id a) (Metric.id b))
+            (Metric.compare a b));
+      prop "pp formats the id" gen_builtin (fun m ->
+          equal string (Metric.id m) (Format.asprintf "%a" Metric.pp m));
     ]
-    (List.map Metric.id builtins)
 
-let builtin_units () =
-  equal
-    (list (pair string string))
-    [
-      ("wall_time", "s");
-      ("alloc_words", "words");
-      ("cpu_time", "s");
-      ("minor_alloc_words", "words");
-      ("major_alloc_words", "words");
-      ("promoted_words", "words");
-      ("minor_collections", "count");
-      ("major_collections", "count");
-    ]
-    (List.map (fun m -> (Metric.id m, Metric.units m)) builtins)
+(* Built-in metrics *)
 
-let builtin_kinds () =
-  equal
-    (list (pair string string))
-    [
-      ("wall_time", "time");
-      ("alloc_words", "allocation");
-      ("cpu_time", "time");
-      ("minor_alloc_words", "allocation");
-      ("major_alloc_words", "allocation");
-      ("promoted_words", "allocation");
-      ("minor_collections", "other");
-      ("major_collections", "other");
-    ]
-    (List.map
-       (fun m ->
-         let kind =
-           match Metric.kind m with
-           | `Time -> "time"
-           | `Allocation -> "allocation"
-           | `Other -> "other"
-         in
-         (Metric.id m, kind))
-       builtins)
+let described_builtins =
+  [
+    (Metric.wall_time, "wall_time in s, time, wall clock, is_counter false");
+    ( Metric.alloc_words,
+      "alloc_words in words, allocation, counter reading 1100, is_counter true"
+    );
+    (Metric.cpu_time, "cpu_time in s, time, cpu clock, is_counter false");
+    ( Metric.minor_alloc_words,
+      "minor_alloc_words in words, allocation, counter reading 1000, \
+       is_counter true" );
+    ( Metric.major_alloc_words,
+      "major_alloc_words in words, allocation, counter reading 300, is_counter \
+       true" );
+    ( Metric.promoted_words,
+      "promoted_words in words, allocation, counter reading 200, is_counter \
+       true" );
+    ( Metric.minor_collections,
+      "minor_collections in count, other, counter reading 7, is_counter true" );
+    ( Metric.major_collections,
+      "major_collections in count, other, counter reading 3, is_counter true" );
+  ]
 
-let source_class m =
-  match Metric.source m with
-  | Metric.Wall_clock -> "wall_clock"
-  | Metric.Cpu_clock -> "cpu_clock"
-  | Metric.Gc_counter _ -> "gc_counter"
+let builtin_metrics =
+  cases "Built-in metrics"
+    ~name:(fun (m, _) -> Metric.id m)
+    described_builtins
+    (fun (m, expected) -> equal string expected (described m))
 
-let builtin_sources () =
-  (* The seam drives each metric by its source class: a clock swapped for a
-     counter (or wall for cpu) would measure the wrong quantity under a frozen
-     id, so the classification is pinned literally. *)
-  equal
-    (list (pair string string))
-    [
-      ("wall_time", "wall_clock");
-      ("alloc_words", "gc_counter");
-      ("cpu_time", "cpu_clock");
-      ("minor_alloc_words", "gc_counter");
-      ("major_alloc_words", "gc_counter");
-      ("promoted_words", "gc_counter");
-      ("minor_collections", "gc_counter");
-      ("major_collections", "gc_counter");
-    ]
-    (List.map (fun m -> (Metric.id m, source_class m)) builtins)
-
-let alloc_words_projection () =
-  (* minor + major - promoted: promoted words are counted by both counters. *)
-  equal float_exact 1100. (project Metric.alloc_words)
-
-let counter_projections () =
-  equal ~msg:"minor_alloc_words" float_exact 1000.
-    (project Metric.minor_alloc_words);
-  equal ~msg:"major_alloc_words" float_exact 300.
-    (project Metric.major_alloc_words);
-  equal ~msg:"promoted_words" float_exact 200. (project Metric.promoted_words);
-  equal ~msg:"minor_collections" float_exact 7.
-    (project Metric.minor_collections);
-  equal ~msg:"major_collections" float_exact 3.
-    (project Metric.major_collections)
-
-let is_counter_classification () =
-  (* Exactly the Gc_counter class: integral counters the k/2k probe can prove
-     an exact integer for. Clocks are always sampled. *)
-  List.iter
-    (fun m ->
-      let expected =
-        match Metric.source m with Metric.Gc_counter _ -> true | _ -> false
-      in
-      equal ~msg:(Metric.id m) bool expected (Metric.is_counter m))
-    builtins;
-  is_false (Metric.is_counter Metric.wall_time);
-  is_false (Metric.is_counter Metric.cpu_time);
-  is_true (Metric.is_counter Metric.alloc_words)
-
-let identity_is_the_id () =
-  (* Baseline rows key on the id alone. *)
-  is_false ~msg:"distinct ids differ"
-    (Metric.equal Metric.wall_time Metric.cpu_time);
-  is_true ~msg:"same metric is equal"
-    (Metric.equal Metric.wall_time Metric.wall_time);
-  equal ~msg:"compare on same id" int 0
-    (Metric.compare Metric.wall_time Metric.wall_time);
-  is_true ~msg:"compare orders ids"
-    (Metric.compare Metric.alloc_words Metric.wall_time < 0)
-
-let pp_prints_the_id () =
-  equal string "wall_time" (Format.asprintf "%a" Metric.pp Metric.wall_time)
-
-let () =
-  run "metric"
-    [
-      group "builtins"
-        [
-          test "ids match the frozen wire spellings" ids_are_wire_format;
-          test "units of every built-in" builtin_units;
-          test "kinds of every built-in" builtin_kinds;
-          test "sources of every built-in" builtin_sources;
-        ];
-      group "gc projections"
-        [
-          test "alloc_words is minor + major - promoted" alloc_words_projection;
-          test "counter metrics project their field" counter_projections;
-        ];
-      group "exactness"
-        [
-          test "is_counter is exactly the Gc_counter class"
-            is_counter_classification;
-        ];
-      group "identity"
-        [
-          test "equal and compare use the id alone" identity_is_the_id;
-          test "pp prints the id" pp_prints_the_id;
-        ];
-    ]
-  |> exit
+let () = exit (run "metric" [ metrics; builtin_metrics ])
