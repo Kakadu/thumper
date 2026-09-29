@@ -67,15 +67,17 @@ We attach the executable to its own alias, `bench`, next to its stanza
 
 (rule
  (alias bench)
- (locks bench)
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_digest.exe})
    (diff? digest.thumper digest.thumper.corrected))))
 ```
 
-`(locks bench)` keeps two benchmark rules from measuring at once, and
-`diff?` shows the corrected file a run writes as a diff to accept.
+`(locks %{project_root}/bench)` keeps two benchmark rules from measuring
+at once: a lock's name is a path, so every suite of the project names
+the same lock. `diff?` shows the corrected file a run writes as a diff
+to accept.
 
 ## The first run
 

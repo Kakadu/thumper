@@ -199,7 +199,8 @@ Without that, a run under a new key measures and prints nothing:
 $ THUMPER_MACHINE=ci-linux dune build @bench
 ```
 
-In the rule of `bench/dune`, beside `(locks bench)`, declare the variable:
+In the rule of `bench/dune`, beside its `locks` field, declare the
+variable:
 
 ```dune
 (deps (env_var THUMPER_MACHINE))
@@ -371,11 +372,11 @@ warning: load 17.4 on 10 cores; timing verdicts degraded
 ```
 
 The lock's file and directory are under Measuring in
-[`lib/thumper.mli`](../../lib/thumper.mli). Thumper creates the file with
-mode `0600`. A lock file that another user owns, or whose mode grants
-others any access, stops the run with exit 2. Dune's `(locks bench)` orders
-the benchmark rules of one workspace, and the measurement lock every run of
-one user.
+[`lib/thumper.mli`](../../lib/thumper.mli). Thumper creates the file
+with mode `0600`. A lock file that another user owns, or whose mode
+grants others any access, stops the run with exit 2. Dune's `(locks
+%{project_root}/bench)` orders the benchmark rules of one project, and
+the measurement lock every run of one user.
 
 ## Keeping the baseline elsewhere
 
