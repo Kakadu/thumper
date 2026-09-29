@@ -151,9 +151,11 @@ measurements never share the host with a cram session's.
 
 `test/cram/` is the executable specification of the CLI: one scenario
 per subcommand × state (NEW, PASS, FAIL, inconclusive, exact
-allocation, stale, corrupt, selection, JSON, bless,
-list, lock, worker death, machine env, usage). Scenarios assert **exit codes, file
-effects, and grep'd output shapes — never timings**.
+allocation, stale, corrupt, selection, JSON, bless, list, lock, worker
+death, machine env, usage). Scenarios assert **exit codes, streams,
+file effects and the lines they own — never timings**. A session in
+`@runtest` judges exact counts only, which no load moves: one run, no
+retry, no `--wait-quiet`.
 
 The determinism kit:
 

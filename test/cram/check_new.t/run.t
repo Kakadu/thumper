@@ -1,115 +1,97 @@
-The NEW flow: a missing baseline is never an error.
-The run measures, proposes the complete baseline as a .corrected candidate,
-prints the promotion hint, and exits 0 — an unpromoted baseline is
-unreviewed evidence, and promotion is the review step.
+A missing baseline is never an error: the run measures, proposes the whole
+baseline as a corrected file, prints how to accept it, and exits 0.
+Accepting it is the review.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ CONTEXT="$INSIDE_DUNE"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ../prelude.sh
   $ FIX=../fixture/bench_fixture.exe
 
-INSIDE_DUNE plus cram's cwd inside the build tree = a rule action's
-environment, so the accept hint is dune promote (dune exec would get the
-mv hint: it sets the variable but stages no promotion).
+INSIDE_DUNE with the working directory in the build tree is a rule
+action's environment, so the accept line is dune promote.
 
   $ INSIDE_DUNE="$CONTEXT" $FIX check --quick > out.log 2>&1
-  $ grep -q 'no baseline for machine testkey' out.log && echo new-banner
-  new-banner
-  $ grep -Ec '^  proposed .* busy/spin$' out.log
-  1
-  $ grep -q 'accept:  dune promote' out.log && echo promotion-hint
-  promotion-hint
+  $ grep -o 'no baseline for machine testkey' out.log
+  no baseline for machine testkey
+  $ grep 'accept:' out.log
+    accept:  dune promote
 
-The candidate is complete: format header, suite header, this machine's
-section, and one row per case-metric in canonical (id, metric) order.
+The corrected file is complete: the format and suite headers, this
+machine's section, and one row per case and metric, in id then metric
+order. The busy cases allocate nothing, and their rows say so exactly.
 
-  $ head -1 fixture.thumper.corrected
+  $ grep '^#' fixture.thumper.corrected | grep -v '^# host: \|^# ocaml: '
   # thumper baseline v1
-  $ grep -c '^# suite: fixture$' fixture.thumper.corrected
-  1
-  $ grep -c '^# machine: testkey$' fixture.thumper.corrected
-  1
-  $ grep -c '^# host: ' fixture.thumper.corrected
-  1
-  $ grep -c '^# ocaml: ' fixture.thumper.corrected
-  1
-  $ grep -v '^#' fixture.thumper.corrected | grep -v '^$' | cut -f1,2 | tr '\t' ' '
-  alloc/array alloc_words
-  alloc/list alloc_words
-  busy/half alloc_words
-  busy/half wall_time
-  busy/spin alloc_words
-  busy/spin wall_time
-  err/kill9 alloc_words
-  err/kill9 wall_time
-  err/raise alloc_words
-  err/raise wall_time
-  nondet/flip alloc_words
-  nondet/flip wall_time
+  # suite: fixture
+  # machine: testkey
+  $ grep -c '^# host: \|^# ocaml: ' fixture.thumper.corrected
+  2
+  $ grep -v '^#' fixture.thumper.corrected | grep -v '^$' | cut -f 1,2
+  alloc/array	alloc_words
+  alloc/list	alloc_words
+  busy/half	alloc_words
+  busy/half	wall_time
+  busy/spin	alloc_words
+  busy/spin	wall_time
+  err/kill9	alloc_words
+  err/kill9	wall_time
+  err/raise	alloc_words
+  err/raise	wall_time
+  nondet/flip	alloc_words
+  nondet/flip	wall_time
+  $ grep '^busy/spin	alloc_words' fixture.thumper.corrected
+  busy/spin	alloc_words	exact	0
 
-The busy cases are allocation-free and prove exact zero rows; hand-checking
-one pins the row grammar.
-
-  $ awk -F'\t' '$1 == "busy/spin" && $2 == "alloc_words" { print $3, $4 }' fixture.thumper.corrected
-  exact 0
-
-Under --strict a NEW baseline is failure — dedicated
-runners refuse to go green on unreviewed evidence — but the exit code is
-computed from the verdicts alone: the candidate is still proposed.
+Under --strict a first run fails, since its evidence is unreviewed, but it
+still proposes the corrected file: the exit code comes from the verdicts
+alone.
 
   $ rm fixture.thumper.corrected
-  $ $FIX check --quick --strict > strict.log 2>&1
+  $ $FIX check --quick --strict > out.log 2>&1
   [1]
-  $ test -f fixture.thumper.corrected && echo candidate-still-proposed
-  candidate-still-proposed
+  $ test -f fixture.thumper.corrected && echo corrected-file
+  corrected-file
 
-The dune promotion flow, in a tiny nested project: the checked-in rule is the two-
-action shape — measure, then diff? the baseline against the candidate. The
-first build proposes the whole file and leaves the build red until someone
-promotes; promotion turns the next build green; and an unchanged exe +
-baseline is a cache hit — no re-measurement, exactly like a passing test.
+The dune flow, in a nested workspace whose rule measures and then hands
+dune the corrected file to diff. The first build proposes the whole file
+and fails until someone promotes; promotion turns the next build green; an
+unchanged executable and baseline is a cache hit, measured no more. The
+rule measures the alloc cases alone, so the second build compares exact
+counts. The build directory is _build_sys: a rule action finds its files in
+its working directory, whatever that directory is called.
 
-  $ attempt() {
-  >   WS=$(mktemp -d "${TMPDIR:-/tmp}/thumper-check-new-XXXXXX")
-  >   cp workspace/dune workspace/dune-project "$WS/"
-  >   cp ../fixture/bench_fixture.exe "$WS/bench.exe"
-  >   chmod +x "$WS/bench.exe"
-  >   mkdir "$WS/wslocks"
-  >   ( cd "$WS" || exit 9
-  >     nested_build() {
-  >       env -u INSIDE_DUNE DUNE_CACHE=disabled \
-  >         THUMPER_MACHINE=testkey THUMPER_LOCK_DIR="$WS/wslocks" \
-  >         THUMPER_FIXTURE_RAN_PATH="$WS/ran.log" \
-  >         dune build --root . @bench
-  >     }
-  >     nested_build > build1.log 2>&1 && exit 1
-  >     grep -q 'fixture.thumper' build1.log || exit 2
-  >     [ "$(wc -l < ran.log | tr -d ' ')" = 1 ] || exit 3
-  >     [ ! -e fixture.thumper ] || exit 4
-  >     env -u INSIDE_DUNE dune promote > promote.log 2>&1 || exit 5
-  >     grep -qc '^# machine: testkey$' fixture.thumper || exit 6
-  >     nested_build > build2.log 2>&1 || exit 7
-  >     [ "$(wc -l < ran.log | tr -d ' ')" = 2 ] || exit 8
-  >     env -u INSIDE_DUNE dune promotion diff --root . > promo.log 2>&1
-  >     [ ! -s promo.log ] || exit 10
-  >     nested_build > build3.log 2>&1 || exit 11
-  >     [ "$(wc -l < ran.log | tr -d ' ')" = 2 ] || exit 12 )
-  >   code=$?
-  >   rm -rf "$WS"
-  >   return $code
-  > }
+  $ WS=$(mktemp -d "${TMPDIR:-/tmp}/thumper-check-new-XXXXXX")
+  $ cp workspace/dune workspace/dune-project "$WS/"
+  $ cp ../fixture/bench_fixture.exe "$WS/bench.exe"
+  $ mkdir "$WS/locks"
+  $ cd "$WS"
+  $ export DUNE_BUILD_DIR=_build_sys DUNE_CACHE=disabled
+  $ export THUMPER_LOCK_DIR="$WS/locks" THUMPER_FIXTURE_RAN_PATH="$WS/ran.log"
 
-The flow is timing-judged (the second build re-measures against the
-promoted numbers), so a load transition between the two builds can turn
-jitter into a confirmed improvement and an extra candidate. Retry a
-fresh workspace up to three times; the invariants themselves are
-asserted on every attempt inside [attempt].
+  $ dune build --root . @bench > build.log 2>&1
+  [1]
+  $ grep '^File' build.log
+  File "fixture.thumper", line 1, characters 0-0:
+  $ wc -l < ran.log | tr -d ' '
+  1
+  $ test ! -e fixture.thumper && echo no-baseline
+  no-baseline
+  $ dune promote --root .
+  Promoting _build_sys/default/fixture.thumper.corrected to fixture.thumper.
+  $ grep -c '^# machine: testkey$' fixture.thumper
+  1
 
-  $ for i in 1 2 3; do if attempt; then echo flow-ok; break; fi; done
-  flow-ok
+  $ dune build --root . @bench > build.log 2>&1
+  $ head -1 build.log
+  thumper: fixture — 2 cases vs fixture.thumper for machine testkey
+  $ grep -o '2 cases: .*' build.log
+  2 cases: 2 passed.
+  $ wc -l < ran.log | tr -d ' '
+  2
+  $ dune promotion diff --root .
 
-The workspace was created outside the sandbox (mktemp); clean it up.
+  $ dune build --root . @bench
+  $ wc -l < ran.log | tr -d ' '
+  2
+
+The workspace is outside the session's directory; remove it.
 
   $ cd / && rm -rf "$WS"

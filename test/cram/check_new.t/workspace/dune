@@ -1,12 +1,13 @@
-; The documented rule shape: measure, then hand dune the candidate to
-; diff. No (universe), no no-infer copy: an unchanged exe + baseline is a
-; cache hit, and diff? tolerates the candidate's absence on a pass.
-; (--quick keeps the cram scenario fast; the shipped template is flagless.)
+; The documented rule shape: measure, then hand dune the corrected file to
+; diff. No (universe), no no-infer copy: an unchanged exe and baseline is a
+; cache hit, and diff? tolerates the corrected file's absence on a pass.
+; (--quick -f alloc keeps the session fast and its verdicts exact; the
+; shipped template is flagless.)
 
 (rule
  (alias bench)
- (locks bench)
+ (locks %{project_root}/bench)
  (action
   (progn
-   (run %{exe:bench.exe} --quick)
+   (run %{exe:bench.exe} --quick -f alloc)
    (diff? fixture.thumper fixture.thumper.corrected))))
