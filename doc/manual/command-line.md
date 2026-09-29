@@ -12,36 +12,83 @@ transcripts on this page run examples from `examples/` as a project's
 `bench/` directory, where `dune exec` passes the arguments after its own
 `--` to the executable:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_hello.exe -- -h
-bench_hello.exe: thumper benchmark suite (thumper dev)
+bench_hello.exe - thumper benchmark suite (thumper dev)
 
-usage: bench_hello.exe [check|bless|list] [OPTS] [PATTERN...]
+usage: bench_hello.exe [check|bless|list] [OPTIONS] [PATTERN...]
 
-subcommands:
-  check      measure, compare against the baseline (default)
-  bless      propose a re-record of the selected cases for this machine
-  list       print the selected case ids; no measurement
+The first argument names the subcommand, check when it names none. Each bare
+PATTERN is read as one -f PATTERN.
 
-options:
-  -f PAT             select cases whose id contains PAT (repeatable,
-                     OR'd); bare PATTERN arguments mean the same
-  --tag T            select cases tagged T (repeatable, AND'd)
-  --quick            quick protocol (fewer samples)
-  --precise          precise protocol (more samples)
-  --baseline PATH    baseline file (default: <suite>.thumper next to
-                     the benchmark's source)
-  --json PATH        check: write the verdict document to PATH
-  --strict           check: inconclusive, proposed, and stale exit 1
-  --wait-quiet SECS  wait up to SECS for a quiet host before measuring
-  --force            bless despite a loaded host (recorded)
-  --color MODE       color the report: auto (default), always, never
-  -h, --help         show this help
-  -V, --version      print the version
+SUBCOMMANDS:
+  check
+      Measure, and compare against the baseline (the default).
 
-environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock
-directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);
-INSIDE_DUNE selects the dune hints and, in a rule action, colour.
+  bless
+      Record the selected cases in the baseline for this machine.
+
+  list
+      Print the selected case ids, measuring nothing.
+
+OPTIONS:
+  -f PATTERN
+      Select cases whose id contains PATTERN (repeatable: any of them).
+
+  --tag=TAG
+      Select cases tagged TAG (repeatable: all of them).
+
+  --quick
+      Measure with the quick protocol (fewer samples).
+
+  --precise
+      Measure with the precise protocol (more samples).
+
+  --baseline=PATH
+      The baseline file (default: <suite>.thumper next to the benchmark's
+      source).
+
+  --json=PATH
+      check: write the verdict document to PATH.
+
+  --strict
+      check: exit 1 when a metric has no baseline row.
+
+  --wait-quiet=SECS
+      Wait up to SECS seconds for a quiet host before measuring.
+
+  --force
+      bless: record on a loaded host, and note the load in the baseline.
+
+  --color=MODE
+      Color the report: auto (the default), always or never.
+
+  -V, --version
+      Print the version and exit.
+
+  -h, --help
+      Print this help and exit.
+
+ENVIRONMENT:
+  THUMPER_MACHINE
+      The machine key, which names this machine's section of the baseline.
+
+  THUMPER_LOCK_DIR
+      The directory of the measurement lock.
+
+  NO_COLOR
+      Any non-empty value: never color (--color auto).
+
+  TERM
+      dumb: never color (--color auto).
+
+  GITHUB_ACTIONS
+      Any value: add an ::error:: line for each metric that fails its case.
+
+  INSIDE_DUNE, DUNE_SOURCEROOT
+      Mark a dune rule action, whose report is colored and whose hints paste
+      from DUNE_SOURCEROOT.
 ```
 
 ## Subcommands
@@ -86,11 +133,13 @@ scan/256-KiB
 ```
 
 Every subcommand selects the same way. A selection that matches no case
-stops the run with exit 2:
+stops the run with exit 2, and names what matched none of the suite's
+cases:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_tags.exe -- list nope
-thumper: no case matches 'nope'
+thumper: no case selected: 'nope' matched none of 4 cases
 $ echo $?
 2
 ```
@@ -115,15 +164,21 @@ $ echo $?
 
 ## Errors
 
-A usage error prints the problem and a pointer to `-h` on stderr, and exits
-2 before measuring or touching a file:
+A usage error prints the problem and the usage line on stderr, and exits 2
+before measuring or touching a file. An unknown long option names the
+nearest long option or subcommand within two edits, or a third of its
+length when that is more, and `-l` and `-u` name `list` and `bless`:
 
+<!-- placeholder: Q1 regenerates this transcript -->
 ```
 $ dune exec bench/bench_hello.exe -- bless --json v.json
 thumper: option '--json' applies to check, not bless
-Try '-h' for usage.
+usage: bench_hello.exe [check|bless|list] [OPTIONS] [PATTERN...]
 $ echo $?
 2
+$ dune exec bench/bench_hello.exe -- -u
+thumper: unknown option '-u'; did you mean 'bless'?
+usage: bench_hello.exe [check|bless|list] [OPTIONS] [PATTERN...]
 ```
 
 A run that stops for another reason prints its one `thumper:` line
