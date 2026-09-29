@@ -59,12 +59,8 @@
 
 (test
  (name test_baseline)
- ; The format fixtures (the spec's verbatim sample, the empty file) are runtime
- ; dependencies.
  (modules test_baseline)
- (libraries thumper unix windtrap)
- (deps
-  (glob_files fixtures/*)))
+ (libraries thumper unix windtrap))
 
 (test
  (name test_measure)

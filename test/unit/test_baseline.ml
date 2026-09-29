@@ -3,990 +3,99 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Codec tests for [Baseline]. [Baseline] is a private module of the library, reached
-   through the facade's [Thumper.Private] re-export.
-
-   Three layers:
-   - fixtures: the format spec's verbatim sample (parses, re-emits byte-identically),
-     the empty file;
-   - units: grammar rejections line by line, the pinned print contract,
-     mutator mechanics;
-   - properties: parse ∘ print byte identity and print ∘ parse structural
-     identity over generated files, checksum corruption detection, and
-     update_rows byte-preservation of everything it does not touch. *)
+(* Files are literals, written under the test's own directory where a claim
+   needs one on disk. A refused text is pinned by the whole message that
+   [pp_error] prints, its line included. The atomic write is [Os]'s, and
+   test_os pins it. *)
 
 open Windtrap
 module Baseline = Thumper.Private.Baseline
 
-(* Helpers *)
-
-let read_file path = In_channel.with_open_bin path In_channel.input_all
-
-let contains hay needle =
-  let nh = String.length hay and nn = String.length needle in
-  let rec go i =
-    i + nn <= nh && (String.equal (String.sub hay i nn) needle || go (i + 1))
-  in
-  go 0
-
-let ok_exn = function
-  | Ok t -> t
-  | Error e -> fail (Format.asprintf "unexpected error: %a" Baseline.pp_error e)
-
-(* [corrupt ?at ?mentions s] asserts that [s] fails to parse with [Corrupt],
-   optionally at line [at] and with a reason mentioning [mentions]. *)
-let corrupt ?at ?mentions s =
-  match Baseline.of_string s with
-  | Ok _ -> failf "parsed, expected Corrupt: %S" s
-  | Error (Baseline.Corrupt { line; reason }) ->
-      Option.iter (fun l -> equal ~msg:"error line" int l line) at;
-      Option.iter
-        (fun sub ->
-          if not (contains reason sub) then
-            failf "reason %S does not mention %S" reason sub)
-        mentions
-  | Error e ->
-      failf "expected Corrupt, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
-
-let an_escaped_error_prints_its_text () =
-  equal string "Thumper.Baseline.Error: corrupt baseline (line 3): boom"
-    (Printexc.to_string
-       (Baseline.Error (Baseline.Corrupt { line = 3; reason = "boom" })))
-
-let invalid fn =
-  raises_match (function Invalid_argument _ -> true | _ -> false) fn
-
 let file lines = String.concat "\n" lines ^ "\n"
 
-let quoted_file_content_writes_no_control_byte () =
-  (* A crafted file must not reach the terminal raw: a machine key holding
-     an OSC title, an erase-line and a carriage return prints them as
-     [\xNN], and UTF-8 is kept. *)
-  let key = "\027]0;x\007\027[2K\rthumper: 6 cases: 6 passed.\127\xc2\xb1" in
-  match
-    Baseline.of_string
-      (file [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: " ^ key ])
-  with
-  | Error (Baseline.Corrupt { reason; _ }) ->
-      equal string
-        "invalid machine key '\\x1b]0;x\\x07\\x1b[2K\\x0dthumper: 6 cases: 6 \
-         passed.\\x7f\xc2\xb1' (must be [A-Za-z0-9._-]+)"
-        reason
-  | Ok _ -> fail "parsed a key with control bytes"
-  | Error e ->
-      failf "expected Corrupt, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
+(* The complete file of doc/manual/baseline-format.md, with its sample
+   vectors. *)
+let sample =
+  file
+    [
+      "# thumper baseline v1";
+      "# suite: digest";
+      "";
+      "# machine: 9f3a1c2e8b4d6a07";
+      "# host: mbp-tmattio · Apple M1 Max · arm64 · macos";
+      "# ocaml: 5.5.0 · 64-bit · release";
+      "";
+      "sha256/incremental-1mib\talloc_words\texact\t399";
+      "sha256/incremental-1mib\twall_time\tbatch=1\tn=20\t5.063e-03\t5.021e-03 \
+       5.024e-03 5.028e-03 5.031e-03 5.035e-03 5.039e-03 5.044e-03 5.049e-03 \
+       5.054e-03 5.060e-03 5.066e-03 5.073e-03 5.081e-03 5.090e-03 5.101e-03 \
+       5.115e-03 5.133e-03 5.158e-03 5.197e-03 5.288e-03";
+      "sha256/string-64\talloc_words\texact\t54";
+      "sha256/string-64\twall_time\tbatch=8192\tn=20\t6.911e-07\t6.883e-07 \
+       6.887e-07 6.888e-07 6.891e-07 6.893e-07 6.898e-07 6.901e-07 6.904e-07 \
+       6.907e-07 6.910e-07 6.913e-07 6.917e-07 6.921e-07 6.926e-07 6.930e-07 \
+       6.942e-07 6.958e-07 6.977e-07 7.012e-07 7.084e-07";
+    ]
 
-let pp_evidence ppf = function
-  | Baseline.Exact_int n -> Format.fprintf ppf "Exact_int %d" n
-  | Baseline.Sampled { k; samples } ->
-      Format.fprintf ppf "Sampled {k=%d; [|%s|]}" k
-        (String.concat "; "
-           (List.map (Printf.sprintf "%.3e") (Array.to_list samples)))
+let sample_machine = "9f3a1c2e8b4d6a07"
+let preamble = [ "# thumper baseline v1"; "# suite: s"; "" ]
 
-(* Stored samples come from [%.3e] texts, so they are never NaN and
-   structural equality is sound. *)
-let evidence = Testable.make ~pp:pp_evidence ~equal:( = )
-let row_key r = (Baseline.row_id r, Baseline.row_metric r)
+(* One section, key [key], with a header and [rows]. *)
+let with_rows rows =
+  file (preamble @ [ "# machine: key"; "# host: h"; "# ocaml: o"; "" ] @ rows)
 
-let identity =
+let printed = Baseline.to_string
+let error_text e = Format.asprintf "%a" Baseline.pp_error e
+let parsed text = require_ok ~pp:Baseline.pp_error (Baseline.of_string text)
+let reprinted text = printed (parsed text)
+
+let refused text =
+  error_text
+    (require_error
+       ~pp:(fun ppf t -> Format.fprintf ppf "%S" (printed t))
+       (Baseline.of_string text))
+
+let section t key = require_some (Baseline.section t key)
+
+let identity key =
   {
-    Baseline.machine = "testkey";
+    Baseline.machine = key;
     host = "mbp-test · Apple M1 · arm64 · macos";
     ocaml = "5.5.0 · 64-bit · release";
   }
 
-(* Canonical files carry "\n\n# machine: " before every section: splitting on
-   it yields the preamble followed by one chunk per section ("KEY\n..."). *)
-let section_chunks text =
-  let sep = "\n\n# machine: " in
-  let ls = String.length sep in
-  let rec go start acc i =
-    if i + ls > String.length text then
-      List.rev (String.sub text start (String.length text - start) :: acc)
-    else if String.equal (String.sub text i ls) sep then
-      go (i + ls) (String.sub text start (i - start) :: acc) (i + ls)
-    else go start acc (i + 1)
-  in
-  go 0 [] 0
-
-(* The format spec's verbatim sample *)
-
-let spec_path = "fixtures/spec_sample.thumper"
-let spec_machine = "9f3a1c2e8b4d6a07"
-
-let spec_sample_parses () =
-  let t = Option.get (Baseline.read_exn spec_path) in
-  equal ~msg:"suite" (option string) (Some "digest") (Baseline.suite t);
-  equal ~msg:"machines" (list string) [ spec_machine ] (Baseline.machines t);
-  let sec = Option.get (Baseline.section t spec_machine) in
-  equal ~msg:"machine_of" string spec_machine (Baseline.machine_of sec);
-  equal ~msg:"ocaml_of" string "5.5.0 · 64-bit · release"
-    (Baseline.ocaml_of sec);
-  equal ~msg:"row keys, canonical order"
-    (list (pair string string))
-    [
-      ("sha256/incremental-1mib", "alloc_words");
-      ("sha256/incremental-1mib", "wall_time");
-      ("sha256/string-64", "alloc_words");
-      ("sha256/string-64", "wall_time");
-    ]
-    (List.map row_key (Baseline.rows sec))
-
-let spec_sample_evidence () =
-  let sec =
-    Option.get
-      (Baseline.section (Option.get (Baseline.read_exn spec_path)) spec_machine)
-  in
-  let row id metric = Option.get (Baseline.find_row sec ~id ~metric) in
-  equal ~msg:"exact 399" evidence (Baseline.Exact_int 399)
-    (Baseline.row_evidence (row "sha256/incremental-1mib" "alloc_words"));
-  equal ~msg:"exact 54" evidence (Baseline.Exact_int 54)
-    (Baseline.row_evidence (row "sha256/string-64" "alloc_words"));
-  match Baseline.row_evidence (row "sha256/string-64" "wall_time") with
-  | Baseline.Sampled { k; samples } ->
-      equal ~msg:"k" int 8192 k;
-      equal ~msg:"n" int 20 (Array.length samples);
-      equal ~msg:"first sample" float_exact 6.883e-07 samples.(0);
-      equal ~msg:"last sample" float_exact 7.084e-07 samples.(19)
-  | Baseline.Exact_int _ -> fail "expected sampled evidence"
-
-let spec_sample_byte_identity () =
-  let src = read_file spec_path in
-  let t = ok_exn (Baseline.of_string src) in
-  equal ~msg:"parse then print is byte-identical" string src
-    (Baseline.to_string t)
-
-(* The empty baseline *)
-
-let empty_file_is_valid () =
-  let t = ok_exn (Baseline.of_string "") in
-  equal ~msg:"no suite" (option string) None (Baseline.suite t);
-  equal ~msg:"no sections" (list string) [] (Baseline.machines t);
-  equal ~msg:"round-trips to empty" string "" (Baseline.to_string t)
-
-let empty_fixture_reads () =
-  let t = Option.get (ok_exn (Baseline.read "fixtures/empty.thumper")) in
-  equal (list string) [] (Baseline.machines t)
-
-let empty_constructor_round_trips () =
-  let t = Baseline.empty ~suite:"digest" in
-  let s = Baseline.to_string t in
-  equal ~msg:"render" string "# thumper baseline v1\n# suite: digest\n" s;
-  equal ~msg:"suite back" (option string) (Some "digest")
-    (Baseline.suite (ok_exn (Baseline.of_string s)))
-
-let empty_constructor_validates () =
-  invalid (fun () -> Baseline.empty ~suite:"");
-  invalid (fun () -> Baseline.empty ~suite:"two\nlines")
-
-(* Grammar rejections
-
-   Every corrupt input is an error, never an absent file. *)
-
-let valid_minimal =
-  file
-    [
-      "# thumper baseline v1";
-      "# suite: s";
-      "";
-      "# machine: key";
-      "# host: h";
-      "# ocaml: o";
-      "";
-      "a\tm\texact\t1";
-    ]
-
-let minimal_parses () = ignore (ok_exn (Baseline.of_string valid_minimal))
-
-let with_row row =
-  file
-    [
-      "# thumper baseline v1";
-      "# suite: s";
-      "";
-      "# machine: key";
-      "# host: h";
-      "# ocaml: o";
-      "";
-      row;
-    ]
-
-let rejects_bad_header () =
-  corrupt ~at:1 ~mentions:"# thumper baseline v1"
-    (file [ "# thumper baselin v1"; ""; "# machine: k"; "# host: h" ]);
-  corrupt ~at:1 ~mentions:"first line" "not a baseline\n"
-
-let rejects_header_only () = corrupt ~at:2 (file [ "# thumper baseline v1" ])
-
-let rejects_truncated () =
-  corrupt ~mentions:"truncated" "# thumper baseline v1\n# suite: s";
-  let src = read_file spec_path in
-  corrupt ~mentions:"truncated" (String.sub src 0 (String.length src - 1))
-
-let rejects_empty_suite_name () =
-  corrupt ~at:2 ~mentions:"suite"
-    (file [ "# thumper baseline v1"; "# suite: " ])
-
-let rejects_junk_after_preamble () =
-  corrupt ~at:2 (file [ "# thumper baseline v1"; "junk" ]);
-  corrupt ~at:3
-    (file [ "# thumper baseline v1"; "# suite: s"; "a\tm\texact\t1" ])
-
-let rejects_trailing_blank () =
-  corrupt ~mentions:"trailing blank"
-    (file [ "# thumper baseline v1"; "# suite: s"; "" ]);
-  corrupt ~mentions:"trailing blank"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: o";
-         "";
-       ])
-
-let rejects_double_blank () =
-  corrupt
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: o";
-         "";
-         "";
-         "a\tm\texact\t1";
-       ])
-
-let rejects_blank_between_rows () =
-  corrupt ~at:10 ~mentions:"# machine:"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: o";
-         "";
-         "a\tm\texact\t1";
-         "";
-         "b\tm\texact\t2";
-       ])
-
-let rejects_comment_among_rows () =
-  corrupt ~at:9 ~mentions:"comment"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: o";
-         "";
-         "a\tm\texact\t1";
-         "# note";
-       ])
-
-let rejects_bad_machine_key () =
-  corrupt ~at:4 ~mentions:"machine key"
-    (file [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: has space" ]);
-  corrupt ~at:4 ~mentions:"machine key"
-    (file [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: " ])
-
-let rejects_section_disorder () =
-  let two a b =
-    file
-      [
-        "# thumper baseline v1";
-        "# suite: s";
-        "";
-        "# machine: " ^ a;
-        "# host: h";
-        "# ocaml: o";
-        "";
-        "# machine: " ^ b;
-      ]
-  in
-  corrupt ~mentions:"duplicate section" (two "k" "k");
-  corrupt ~mentions:"not sorted" (two "kb" "ka")
-
-let rejects_header_block_disorder () =
-  let sec lines' =
-    file ([ "# thumper baseline v1"; "# suite: s"; ""; "# machine: k" ] @ lines')
-  in
-  corrupt ~mentions:"duplicate '# host:'" (sec [ "# host: a"; "# host: b" ]);
-  corrupt ~mentions:"misplaced '# host:'" (sec [ "# ocaml: o"; "# host: a" ]);
-  corrupt ~mentions:"duplicate '# ocaml:'" (sec [ "# ocaml: a"; "# ocaml: b" ]);
-  corrupt ~mentions:"misplaced '# ocaml:'" (sec [ "# note"; "# ocaml: o" ]);
-  corrupt ~mentions:"malformed comment" (sec [ "#bare" ]);
-  (* An annotation may not impersonate a header word (escape-free grammar). *)
-  corrupt ~mentions:"section comment" (sec [ "# suite: nested" ]);
-  corrupt ~mentions:"section comment" (sec [ "# machine:nospace" ])
-
-let rejects_malformed_rows () =
-  corrupt ~at:8 ~mentions:"malformed row" (with_row "a\tm\texact");
-  corrupt ~at:8 ~mentions:"malformed row" (with_row "a\tm\texact\t1\textra");
-  corrupt ~at:8 ~mentions:"exact count" (with_row "a\tm\texact\tx12");
-  corrupt ~at:8 ~mentions:"exact count" (with_row "a\tm\texact\t-1");
-  corrupt ~at:8 ~mentions:"invalid case id" (with_row "a b\tm\texact\t1");
-  corrupt ~at:8 ~mentions:"invalid case id" (with_row "a//b\tm\texact\t1");
-  corrupt ~at:8 ~mentions:"invalid metric id" (with_row "a\tw t\texact\t1");
-  corrupt ~at:8 ~mentions:"batch="
-    (with_row "a\tm\tk=2\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00");
-  corrupt ~at:8 ~mentions:"batch size"
-    (with_row "a\tm\tbatch=0\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00");
-  corrupt ~at:8 ~mentions:"n="
-    (with_row "a\tm\tbatch=1\t3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00");
-  corrupt ~at:8 ~mentions:"minimum of 3"
-    (with_row "a\tm\tbatch=1\tn=2\t1.500e+00\t1.000e+00 2.000e+00");
-  corrupt ~at:8 ~mentions:"but 2 samples"
-    (with_row "a\tm\tbatch=1\tn=3\t1.500e+00\t1.000e+00 2.000e+00");
-  corrupt ~at:8 ~mentions:"finite"
-    (with_row "a\tm\tbatch=1\tn=3\t2.000e+00\t1.000e+00 nan 3.000e+00");
-  corrupt ~at:8 ~mentions:"sorted ascending"
-    (with_row "a\tm\tbatch=1\tn=3\t2.000e+00\t3.000e+00 2.000e+00 1.000e+00")
-
-let rejects_row_disorder () =
-  let two a b =
-    file
-      [
-        "# thumper baseline v1";
-        "# suite: s";
-        "";
-        "# machine: k";
-        "# host: h";
-        "# ocaml: o";
-        "";
-        a;
-        b;
-      ]
-  in
-  corrupt ~at:9 ~mentions:"duplicate row"
-    (two "a\tm\texact\t1" "a\tm\texact\t2");
-  corrupt ~at:9 ~mentions:"not sorted" (two "b\tm\texact\t1" "a\tm\texact\t2");
-  corrupt ~at:9 ~mentions:"not sorted" (two "a\tz\texact\t1" "a\tm\texact\t2")
-
-let rejects_crlf_line_endings () =
-  (* CRLF leaves a \r on every logical line; the very first line already
-     fails the header check. *)
-  match Baseline.of_string "# thumper baseline v1\r\n# suite: s\r\n" with
-  | Ok _ -> fail "parsed a CRLF file"
-  | Error (Baseline.Corrupt { line; _ }) -> equal ~msg:"line" int 1 line
-  | Error e ->
-      failf "expected Corrupt, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
-
-let rejects_trailing_whitespace () =
-  corrupt ~at:1
-    (file [ "# thumper baseline v1 "; "# suite: s"; ""; "# machine: k" ]);
-  corrupt ~at:4 ~mentions:"machine key"
-    (file [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: k " ]);
-  corrupt ~at:8 ~mentions:"exact count" (with_row "a\tm\texact\t1 ");
-  corrupt ~at:8 ~mentions:"sample"
-    (with_row "a\tm\tbatch=1\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00 ")
-
-let rejects_machine_directly_after_machine () =
-  corrupt ~at:5 ~mentions:"blank line"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: a";
-         "# machine: b";
-       ])
-
-let rejects_rows_without_blank_after_header () =
-  corrupt ~at:7 ~mentions:"blank line before the section's rows"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: o";
-         "a\tm\texact\t1";
-       ])
-
-let rejects_missing_section_headers () =
-  (* The grammar's section header is machine + host + ocaml, all three, with
-     non-empty values (baseline-format.md); a file missing any of them is
-     corrupt, never silently degraded. *)
-  corrupt ~at:2 ~mentions:"# suite:"
-    (file [ "# thumper baseline v1"; ""; "# machine: k" ]);
-  corrupt ~at:5 ~mentions:"missing its '# host:'"
-    (file
-       [
-         "# thumper baseline v1"; "# suite: s"; ""; "# machine: k"; "# ocaml: o";
-       ]);
-  corrupt ~at:5 ~mentions:"missing its '# ocaml:'"
-    (file
-       [
-         "# thumper baseline v1"; "# suite: s"; ""; "# machine: k"; "# host: h";
-       ]);
-  corrupt ~at:5 ~mentions:"empty '# host:'"
-    (file
-       [ "# thumper baseline v1"; "# suite: s"; ""; "# machine: k"; "# host: " ]);
-  corrupt ~at:6 ~mentions:"empty '# ocaml:'"
-    (file
-       [
-         "# thumper baseline v1";
-         "# suite: s";
-         "";
-         "# machine: k";
-         "# host: h";
-         "# ocaml: ";
-       ])
-
-let unknown_section_comments_round_trip () =
-  (* Unknown "# " comments in a section header block are annotations: they
-     are accepted (future sections may carry notes, e.g. the --force record)
-     and re-emit byte-identically. *)
-  let src =
-    file
-      [
-        "# thumper baseline v1";
-        "# suite: s";
-        "";
-        "# machine: key";
-        "# host: h";
-        "# ocaml: o";
-        "# forced: load 7.9/8";
-        "# another note";
-        "";
-        "a\tm\texact\t1";
-      ]
-  in
-  let t = ok_exn (Baseline.of_string src) in
-  equal ~msg:"byte identity" string src (Baseline.to_string t)
-
-(* The stored-median checksum *)
-
-let checksum_even_midpoint () =
-  (* Even n: the median column is the midpoint of the two central stored
-     samples, printed %.3e — anything else is corrupt. *)
-  ignore
-    (ok_exn
-       (Baseline.of_string
-          (with_row
-             "a\tm\tbatch=1\tn=4\t2.500e+00\t1.000e+00 2.000e+00 3.000e+00 \
-              4.000e+00")));
-  corrupt ~at:8 ~mentions:"median"
-    (with_row
-       "a\tm\tbatch=1\tn=4\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00 4.000e+00")
-
-let checksum_odd_central () =
-  ignore
-    (ok_exn
-       (Baseline.of_string
-          (with_row
-             "a\tm\tbatch=1\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00")));
-  corrupt ~at:8 ~mentions:"median"
-    (with_row "a\tm\tbatch=1\tn=3\t2.001e+00\t1.000e+00 2.000e+00 3.000e+00")
-
-let checksum_is_string_equality_not_numeric () =
-  (* "2.000e+0" is numerically the median but string-differs from the %.3e
-     re-derivation "2.000e+00": the checksum is byte equality, so any
-     non-canonical exponent spelling in the median column is corrupt. *)
-  corrupt ~at:8 ~mentions:"median"
-    (with_row "a\tm\tbatch=1\tn=3\t2.000e+0\t1.000e+00 2.000e+00 3.000e+00");
-  corrupt ~at:8 ~mentions:"median"
-    (with_row "a\tm\tbatch=1\tn=3\t2.000E+00\t1.000e+00 2.000e+00 3.000e+00")
-
-let checksum_negative_exponent_boundary () =
-  (* %.3e keeps a two-digit exponent down at 1e-10; both the parser's
-     re-derivation and the constructor print the same texts. *)
-  let src =
-    with_row "a\tm\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10"
-  in
-  let t = ok_exn (Baseline.of_string src) in
-  equal ~msg:"byte identity" string src (Baseline.to_string t);
-  let r =
-    Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-      ~samples:[| 1e-10; 2e-10; 3e-10 |]
-  in
-  let t' =
-    Baseline.set_section
-      (Baseline.empty ~suite:"s")
-      { identity with Baseline.machine = "key" }
-      [ r ]
-  in
-  is_true ~msg:"constructor prints the same row"
-    (contains (Baseline.to_string t')
-       "a\tm\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10\n")
-
-let median_derives_from_stored_not_raw_samples () =
-  (* The quantization trap. Quantization moves 1.00049e-2 to "1.000e-02", so the
-     midpoint of the two central STORED samples is 5.500e-03, while the
-     midpoint of the raw floats is 5.502e-03. The file must carry the stored
-     derivation — and must parse back (its own checksum holds). *)
-  let r =
-    Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-      ~samples:[| 1.0e-3; 1.0e-3; 1.00049e-2; 1.00049e-2 |]
-  in
-  let t =
-    Baseline.set_section
-      (Baseline.empty ~suite:"s")
-      { identity with Baseline.machine = "key" }
-      [ r ]
-  in
-  let s = Baseline.to_string t in
-  is_true ~msg:"median column is the stored-sample midpoint"
-    (contains s
-       "a\tm\tbatch=1\tn=4\t5.500e-03\t1.000e-03 1.000e-03 1.000e-02 1.000e-02\n");
-  is_true ~msg:"raw-float midpoint absent" (not (contains s "5.502e-03"));
-  equal ~msg:"round-trips" string s
-    (Baseline.to_string (ok_exn (Baseline.of_string s)))
-
-let midpoint_of_huge_samples_stays_finite () =
-  (* The naive (a + b) / 2 overflows to infinity near max_float and would
-     print an "inf" median; the derivation must stay finite. *)
-  let r =
-    Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-      ~samples:[| 1.7e308; 1.7e308; 1.7e308; 1.7e308 |]
-  in
-  let t =
-    Baseline.set_section
-      (Baseline.empty ~suite:"s")
-      { identity with Baseline.machine = "key" }
-      [ r ]
-  in
-  let s = Baseline.to_string t in
-  is_true ~msg:"finite median" (contains s "\t1.700e+308\t");
-  is_true ~msg:"no inf median" (not (contains s "\tinf\t"));
-  equal ~msg:"round-trips" string s
-    (Baseline.to_string (ok_exn (Baseline.of_string s)))
-
-let non_canonical_row_text_is_preserved_verbatim () =
-  (* A hand-edited row whose floats are spelled non-canonically still passes
-     the checksum (string equality is on the re-derivation, not the samples)
-     and must re-emit byte-for-byte: rows keep verbatim text. *)
-  let src = with_row "a\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0" in
-  let t = ok_exn (Baseline.of_string src) in
-  equal ~msg:"byte identity" string src (Baseline.to_string t);
-  let t' =
-    Baseline.update_rows t ~machine:"key"
-      ~advance:[ Baseline.exact_row ~id:"b" ~metric:"m" 1 ]
-      ~prune:[]
-  in
-  is_true ~msg:"verbatim through update_rows"
-    (contains (Baseline.to_string t')
-       "a\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0\n")
-
-let checksum_spec_sample_digit_flip () =
-  (* Flip one digit of a stored median in the spec sample: 5.063e-03 →
-     5.064e-03. The re-derivation no longer string-equals the column. *)
-  let munged =
-    List.map
-      (fun line ->
-        match String.split_on_char '\t' line with
-        | [ id; metric; "batch=1"; n; "5.063e-03"; samples ] ->
-            String.concat "\t"
-              [ id; metric; "batch=1"; n; "5.064e-03"; samples ]
-        | _ -> line)
-      (String.split_on_char '\n' (read_file spec_path))
-  in
-  corrupt ~mentions:"median" (String.concat "\n" munged)
-
-(* Absence versus unreadability
-
-   [read] decides absent/unreadable/corrupt where the errno is; a caller can
-   never mistake a failure to read for a missing file. *)
-
-let missing_file_reads_absent () =
-  match Baseline.read "fixtures/definitely-missing.thumper" with
-  | Ok None -> ()
-  | Ok (Some _) -> fail "read a missing file"
-  | Error e ->
-      failf "expected Ok None, got %s"
-        (Format.asprintf "%a" Baseline.pp_error e)
-
-let unreadable_is_io_never_absent () =
-  (* A directory at the baseline path exists but cannot be read: Io, and
-     emphatically not absent. *)
-  match Baseline.read "fixtures" with
-  | Error (Baseline.Io msg) ->
-      equal ~msg:"names the path and the reason" string
-        "cannot read fixtures: Is a directory" msg
-  | Ok (Some _) -> fail "read a directory as a baseline"
-  | Ok None -> fail "an unreadable path was reported absent"
-  | Error (Baseline.Corrupt _) -> fail "expected Io for a directory"
-
-let read_closes_its_descriptor_on_any_exception () =
-  (* An exception that is not [Unix_error] interrupts the drain: a signal
-     handler raises while [read] blocks on an empty FIFO this test holds
-     open for writing. The descriptor [read] opened is closed all the same. *)
-  if Sys.win32 then skip ~reason:"no FIFO" ()
-  else
-    let path = Filename.concat (temp_dir ()) "fifo.thumper" in
-    Unix.mkfifo path 0o600;
-    let writer = Unix.openfile path [ Unix.O_RDWR; Unix.O_CLOEXEC ] 0 in
-    let open_fds () = Array.length (Sys.readdir "/dev/fd") in
-    let before = open_fds () in
-    let previous =
-      Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit))
-    in
-    Fun.protect
-      ~finally:(fun () ->
-        ignore
-          (Unix.setitimer Unix.ITIMER_REAL { it_interval = 0.; it_value = 0. });
-        Sys.set_signal Sys.sigalrm previous;
-        Unix.close writer)
-      (fun () ->
-        ignore
-          (Unix.setitimer Unix.ITIMER_REAL { it_interval = 0.; it_value = 0.1 });
-        raises_match
-          (function Exit -> true | _ -> false)
-          (fun () -> ignore (Baseline.read path));
-        equal ~msg:"no descriptor left open" int before (open_fds ()))
-
-(* Row constructors and the print contract *)
-
-let exact_row_validates () =
-  invalid (fun () -> Baseline.exact_row ~id:"a b" ~metric:"m" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"" ~metric:"m" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"a//b" ~metric:"m" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"a/" ~metric:"m" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"a" ~metric:"w t" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"a" ~metric:"a/b" 1);
-  invalid (fun () -> Baseline.exact_row ~id:"a" ~metric:"m" (-1))
-
-let sampled_row_validates () =
-  let samples = [| 1.0; 2.0; 3.0 |] in
-  invalid (fun () -> Baseline.sampled_row ~id:"a" ~metric:"m" ~k:0 ~samples);
-  invalid (fun () ->
-      Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1 ~samples:[| 1.0; 2.0 |]);
-  invalid (fun () ->
-      Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1 ~samples:[| 2.0; 1.0; 3.0 |]);
-  invalid (fun () ->
-      Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-        ~samples:[| 1.0; Float.nan; 3.0 |]);
-  invalid (fun () ->
-      Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-        ~samples:[| 1.0; 2.0; Float.infinity |])
-
-let sampled_row_quantizes_to_file_precision () =
-  let r =
-    Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1
-      ~samples:[| 1.23456e-3; 2.0e-3; 3.0e-3 |]
-  in
-  match Baseline.row_evidence r with
-  | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"quantized to %.3e" float_exact
-        (float_of_string "1.235e-03")
-        samples.(0)
-  | Baseline.Exact_int _ -> fail "expected sampled"
-
-let row_evidence_returns_fresh_arrays () =
-  let r =
-    Baseline.sampled_row ~id:"a" ~metric:"m" ~k:1 ~samples:[| 1.0; 2.0; 3.0 |]
-  in
-  (match Baseline.row_evidence r with
-  | Baseline.Sampled { samples; _ } -> samples.(0) <- 99.0
-  | Baseline.Exact_int _ -> fail "expected sampled");
-  match Baseline.row_evidence r with
-  | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"row unaffected by mutating a projection" float_exact 1.0
-        samples.(0)
-  | Baseline.Exact_int _ -> fail "expected sampled"
-
-let fresh_section_renders_canonically () =
-  (* Pins the print contract end to end: tabs, %.3e, derived median, rows in
-     (id, metric) order, canonical blank lines. *)
-  let rows =
-    [
-      Baseline.exact_row ~id:"z/case" ~metric:"alloc_words" 54;
-      Baseline.sampled_row ~id:"a/case" ~metric:"wall_time" ~k:2
-        ~samples:[| 1e-3; 2e-3; 3e-3; 4e-3 |];
-    ]
-  in
-  let t = Baseline.set_section (Baseline.empty ~suite:"digest") identity rows in
-  equal string
-    ("# thumper baseline v1\n# suite: digest\n\n# machine: testkey\n"
-   ^ "# host: mbp-test · Apple M1 · arm64 · macos\n"
-   ^ "# ocaml: 5.5.0 · 64-bit · release\n\n"
-   ^ "a/case\twall_time\tbatch=2\tn=4\t2.500e-03\t1.000e-03 2.000e-03 \
-      3.000e-03 4.000e-03\n" ^ "z/case\talloc_words\texact\t54\n")
-    (Baseline.to_string t)
-
-(* set_section *)
-
-let sec_with key rows t =
-  Baseline.set_section t { identity with Baseline.machine = key } rows
-
-let set_section_sorts_and_replaces () =
-  let t =
-    Baseline.empty ~suite:"s"
-    |> sec_with "mm" [ Baseline.exact_row ~id:"a" ~metric:"m" 1 ]
-    |> sec_with "zz" [] |> sec_with "aa" []
-  in
-  equal ~msg:"sections sort on insert" (list string) [ "aa"; "mm"; "zz" ]
-    (Baseline.machines t);
-  let t' = sec_with "mm" [ Baseline.exact_row ~id:"b" ~metric:"m" 2 ] t in
-  equal ~msg:"replacement is wholesale"
-    (list (pair string string))
-    [ ("b", "m") ]
-    (List.map row_key (Baseline.rows (Option.get (Baseline.section t' "mm"))))
-
-let set_section_preserves_other_sections_bytes () =
-  let t =
-    Baseline.empty ~suite:"s"
-    |> sec_with "aa" [ Baseline.exact_row ~id:"a" ~metric:"m" 1 ]
-    |> sec_with "zz" [ Baseline.exact_row ~id:"z" ~metric:"m" 9 ]
-  in
-  let before = section_chunks (Baseline.to_string t) in
-  let t' = sec_with "mm" [ Baseline.exact_row ~id:"n" ~metric:"m" 5 ] t in
-  let after = section_chunks (Baseline.to_string t') in
-  equal ~msg:"preamble" string (List.hd before) (List.hd after);
-  equal ~msg:"aa chunk" string (List.nth before 1) (List.nth after 1);
-  equal ~msg:"zz chunk" string (List.nth before 2) (List.nth after 3)
-
-let set_section_annotations_round_trip () =
-  let t =
-    Baseline.set_section ~annotations:[ "forced: load 7.9/8" ]
-      (Baseline.empty ~suite:"s")
-      identity
-      [ Baseline.exact_row ~id:"a" ~metric:"m" 1 ]
-  in
-  let s = Baseline.to_string t in
-  is_true ~msg:"annotation rendered" (contains s "\n# forced: load 7.9/8\n");
-  equal ~msg:"reparse is byte-identical" string s
-    (Baseline.to_string (ok_exn (Baseline.of_string s)))
-
-let set_section_validates () =
-  let t = Baseline.empty ~suite:"s" in
-  let row = Baseline.exact_row ~id:"a" ~metric:"m" 1 in
-  invalid (fun () ->
-      Baseline.set_section t
-        { identity with Baseline.machine = "no space" }
-        [ row ]);
-  invalid (fun () ->
-      Baseline.set_section t { identity with Baseline.host = "a\nb" } [ row ]);
-  invalid (fun () ->
-      Baseline.set_section ~annotations:[ "machine: fake" ] t identity [ row ]);
-  invalid (fun () ->
-      Baseline.set_section ~annotations:[ "two\nlines" ] t identity [ row ]);
-  invalid (fun () -> Baseline.set_section t identity [ row; row ])
-
-let set_section_refuses_an_empty_identity_field () =
-  (* The parser refuses an empty [# host:] or [# ocaml:] value, so the
-     writer must not emit one. *)
-  let t = Baseline.empty ~suite:"s" in
-  let row = Baseline.exact_row ~id:"a" ~metric:"m" 1 in
-  raises (Invalid_argument "Baseline.set_section: empty host") (fun () ->
-      Baseline.set_section t { identity with Baseline.host = "" } [ row ]);
-  raises (Invalid_argument "Baseline.set_section: empty ocaml") (fun () ->
-      Baseline.set_section t { identity with Baseline.ocaml = "" } [ row ])
-
-let set_section_on_empty_file_baseline () =
-  (* A suite-less sectioned file is unparseable (the grammar requires the
-     header), so the writer refuses to construct one: [set_section] on the
-     empty-file baseline raises, and the sanctioned path — give it a suite
-     first — round-trips. *)
-  let t = ok_exn (Baseline.of_string "") in
-  invalid (fun () ->
-      sec_with "kk" [ Baseline.exact_row ~id:"a" ~metric:"m" 1 ] t);
-  let t =
-    sec_with "kk"
-      [ Baseline.exact_row ~id:"a" ~metric:"m" 1 ]
-      (Baseline.empty ~suite:"s")
-  in
-  let s = Baseline.to_string t in
-  let t' = ok_exn (Baseline.of_string s) in
-  equal ~msg:"byte identity" string s (Baseline.to_string t');
-  equal ~msg:"suite" (option string) (Some "s") (Baseline.suite t')
-
-(* update_rows *)
-
-let base_two_rows () =
-  Baseline.empty ~suite:"s"
-  |> sec_with "key"
-       [
-         Baseline.exact_row ~id:"a" ~metric:"m1" 1;
-         Baseline.exact_row ~id:"b" ~metric:"m1" 2;
-       ]
-
-let update_rows_replaces_and_inserts () =
-  let t =
-    Baseline.update_rows (base_two_rows ()) ~machine:"key"
-      ~advance:
-        [
-          Baseline.exact_row ~id:"b" ~metric:"m1" 3;
-          Baseline.exact_row ~id:"aa" ~metric:"m1" 9;
-        ]
-      ~prune:[]
-  in
-  let sec = Option.get (Baseline.section t "key") in
-  equal ~msg:"canonical order after insert"
-    (list (pair string string))
-    [ ("a", "m1"); ("aa", "m1"); ("b", "m1") ]
-    (List.map row_key (Baseline.rows sec));
-  equal ~msg:"replaced evidence" (option evidence) (Some (Baseline.Exact_int 3))
-    (Option.map Baseline.row_evidence
-       (Baseline.find_row sec ~id:"b" ~metric:"m1"));
-  is_true ~msg:"untouched row keeps its bytes"
-    (contains (Baseline.to_string t) "a\tm1\texact\t1\n")
-
-let update_rows_prunes () =
-  let t =
-    Baseline.update_rows (base_two_rows ()) ~machine:"key" ~advance:[]
-      ~prune:[ ("b", "m1"); ("ghost", "m1") ]
-  in
-  equal ~msg:"pruned; absent key ignored"
-    (list (pair string string))
-    [ ("a", "m1") ]
-    (List.map row_key (Baseline.rows (Option.get (Baseline.section t "key"))))
-
-let update_rows_validates () =
-  let t = base_two_rows () in
-  let row = Baseline.exact_row ~id:"a" ~metric:"m1" 5 in
-  invalid (fun () ->
-      Baseline.update_rows t ~machine:"missing" ~advance:[] ~prune:[]);
-  invalid (fun () ->
-      Baseline.update_rows t ~machine:"key" ~advance:[ row; row ] ~prune:[]);
-  invalid (fun () ->
-      Baseline.update_rows t ~machine:"key" ~advance:[ row ]
-        ~prune:[ ("a", "m1") ]);
-  invalid (fun () ->
-      Baseline.update_rows ~annotations:[ "machine: x" ] t ~machine:"key"
-        ~advance:[] ~prune:[]);
-  invalid (fun () ->
-      Baseline.update_rows ~annotations:[ "two\nlines" ] t ~machine:"key"
-        ~advance:[] ~prune:[])
-
-let update_rows_appends_annotations () =
-  let t =
-    Baseline.set_section ~annotations:[ "first" ]
-      (Baseline.empty ~suite:"s")
-      { Baseline.machine = "key"; host = "h"; ocaml = "o" }
-      [ Baseline.exact_row ~id:"a" ~metric:"m1" 1 ]
-  in
-  let t' =
-    Baseline.update_rows ~annotations:[ "second" ] t ~machine:"key" ~advance:[]
-      ~prune:[]
-  in
-  equal ~msg:"appended below the kept header" string
-    "# thumper baseline v1\n\
-     # suite: s\n\n\
-     # machine: key\n\
-     # host: h\n\
-     # ocaml: o\n\
-     # first\n\
-     # second\n\n\
-     a\tm1\texact\t1\n"
-    (Baseline.to_string t')
-
-(* Atomic write *)
-
-let write_reads_back () =
-  let dir = temp_dir () in
-  let path = Filename.concat dir "suite.thumper" in
-  let t = base_two_rows () in
-  Baseline.write path t;
-  equal ~msg:"bytes on disk" string (Baseline.to_string t) (read_file path);
-  equal ~msg:"reads back" string (Baseline.to_string t)
-    (Baseline.to_string (Option.get (Baseline.read_exn path)))
-
-let write_overwrites_and_leaves_no_temp () =
-  let dir = temp_dir () in
-  let path = Filename.concat dir "suite.thumper" in
-  Baseline.write path (base_two_rows ());
-  let t' = Baseline.empty ~suite:"s2" in
-  Baseline.write path t';
-  equal ~msg:"overwritten atomically" string (Baseline.to_string t')
-    (read_file path);
-  equal ~msg:"no temp litter" (list string) [ "suite.thumper" ]
-    (List.sort String.compare (Array.to_list (Sys.readdir dir)))
-
-(* A leftover temporary file (a killed writer's, same pid) is skipped, never
-   reused or clobbered; a hundred of them exhaust the bound and fail as Io
-   instead of looping. White-box: the name is the writer's own scheme. *)
-let write_skips_leftover_temporary_files () =
-  let dir = temp_dir () in
-  let path = Filename.concat dir "suite.thumper" in
-  let leftover i =
-    Filename.concat dir (Printf.sprintf ".thumper-%d-%d.tmp" (Unix.getpid ()) i)
-  in
-  let plant i =
-    Out_channel.with_open_bin (leftover i) (fun oc ->
-        output_string oc "leftover")
-  in
-  plant 0;
-  Baseline.write path (base_two_rows ());
-  equal ~msg:"written past the leftover" string
-    (Baseline.to_string (base_two_rows ()))
-    (read_file path);
-  equal ~msg:"leftover untouched" string "leftover" (read_file (leftover 0));
-  for i = 1 to 99 do
-    plant i
-  done;
-  raises_match
-    (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
-    (fun () -> Baseline.write path (Baseline.empty ~suite:"s2"))
-
-let write_failure_raises_io () =
-  raises_match
+let empty = Baseline.empty ~suite:"s"
+let with_section key rows t = Baseline.set_section t (identity key) rows
+let exact ?(metric = "m") id n = Baseline.exact_row ~id ~metric n
+
+let sampled ?(metric = "m") ?(k = 1) id samples =
+  Baseline.sampled_row ~id ~metric ~k ~samples
+
+(* Evidence as the file writes it, the samples in hexadecimal, so two print
+   alike only when they are equal. *)
+let evidence =
+  Testable.contramap
     (function
-      | Baseline.Error (Baseline.Io msg) ->
-          String.starts_with
-            ~prefix:"cannot write definitely/missing/dir/suite.thumper: " msg
-      | _ -> false)
-    (fun () ->
-      Baseline.write "definitely/missing/dir/suite.thumper" (base_two_rows ()))
+      | Baseline.Exact_int n -> Printf.sprintf "exact %d" n
+      | Baseline.Sampled { k; samples } ->
+          Printf.sprintf "batch=%d %s" k
+            (String.concat " "
+               (List.map (Printf.sprintf "%h") (Array.to_list samples))))
+    string
 
-let permission_denied_read_is_io_never_absent () =
-  (* [openfile] itself fails here (EACCES), unlike the directory case where
-     the failure comes from [read]: both must be Io, only ENOENT is absent. *)
-  if Unix.geteuid () = 0 then
-    skip ~reason:"file permissions are not enforced for root" ()
-  else
-    let dir = temp_dir () in
-    let path = Filename.concat dir "suite.thumper" in
-    Baseline.write path (base_two_rows ());
-    Unix.chmod path 0o000;
-    match Baseline.read path with
-    | Error (Baseline.Io _) -> ()
-    | Ok (Some _) -> fail "read a permission-denied file"
-    | Ok None -> fail "a permission-denied file was reported absent"
-    | Error (Baseline.Corrupt _) -> fail "expected Io"
+let key r = (Baseline.row_id r, Baseline.row_metric r)
+let keys s = List.map key (Baseline.rows s)
 
-let write_into_readonly_dir_raises_io () =
-  if Unix.geteuid () = 0 then
-    skip ~reason:"directory permissions are not enforced for root" ()
-  else
-    let dir = temp_dir () in
-    let sub = Filename.concat dir "ro" in
-    Unix.mkdir sub 0o500;
-    raises_match
-      (function Baseline.Error (Baseline.Io _) -> true | _ -> false)
-      (fun () ->
-        Baseline.write (Filename.concat sub "suite.thumper") (base_two_rows ()))
+let row =
+  Testable.contramap
+    (fun r -> (key r, Baseline.row_evidence r))
+    (pair (pair string string) evidence)
 
-let write_preserves_target_permissions () =
-  (* An atomic replace goes through a fresh temp file; the rename must not
-     reset a target the user chmod-ed. *)
-  let dir = temp_dir () in
-  let path = Filename.concat dir "suite.thumper" in
-  Baseline.write path (base_two_rows ());
-  Unix.chmod path 0o600;
-  Baseline.write path (Baseline.empty ~suite:"s2");
-  equal ~msg:"mode survives the rewrite" int 0o600 (Unix.stat path).Unix.st_perm
-
-(* Manual-verification note (untestable without fault injection): losing the
-   fsync before the rename, or renaming before the write, is invisible to
-   these tests — the rename publishes the same inode the fd keeps writing,
-   so contents converge by the time we read them back. Durability ordering
-   (write, fsync, close, rename, in [Baseline.write]) is verified by reading
-   the implementation, not by this suite. *)
+(* The text after the last line break of [text]'s body: its last row. *)
+let last_line text =
+  List.nth
+    (String.split_on_char '\n' text)
+    (List.length (String.split_on_char '\n' text) - 2)
 
 (* Generators *)
 
@@ -996,8 +105,6 @@ let gen_segment =
 
 let gen_id =
   Gen.map (String.concat "/") (Gen.list ~size:(Gen.int_range 1 3) gen_segment)
-
-let gen_metric = Gen.of_list [ "wall_time"; "cpu_time"; "alloc_words" ]
 
 let gen_key =
   Gen.string_of ~size:(Gen.int_range 1 16)
@@ -1014,329 +121,1177 @@ let gen_samples =
 let gen_row =
   let open Gen in
   let* id = gen_id in
-  let* metric = gen_metric in
-  let* exact = bool in
-  if exact then
+  let* metric = of_list [ "wall_time"; "cpu_time"; "alloc_words" ] in
+  let* is_exact = bool in
+  if is_exact then
     let+ n = int_range 0 1_000_000 in
-    Baseline.exact_row ~id ~metric n
+    exact ~metric id n
   else
     let* k = int_range 1 10_000 in
     let+ samples = gen_samples in
-    Baseline.sampled_row ~id ~metric ~k ~samples
+    sampled ~metric ~k id samples
 
-let dedup_rows rows =
-  let seen = Hashtbl.create 16 in
-  List.filter
-    (fun r ->
-      let key = row_key r in
-      if Hashtbl.mem seen key then false
-      else (
-        Hashtbl.add seen key ();
-        true))
-    rows
+(* The first row of each (id, metric). *)
+let distinct rows =
+  List.rev
+    (List.fold_left
+       (fun acc r ->
+         if List.exists (fun r' -> key r' = key r) acc then acc else r :: acc)
+       [] rows)
 
-let gen_section_parts =
+let gen_section =
   let open Gen in
   let* host = of_list [ "mbp · Apple M1 · arm64 · macos"; "ci x86_64"; "h" ] in
-  let* ocaml_id = of_list [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
+  let* ocaml = of_list [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
   let* annotations =
     list ~size:(int_range 0 2) (of_list [ "forced"; "note x" ])
   in
   let+ rows = list ~size:(int_range 0 6) gen_row in
-  (host, ocaml_id, annotations, dedup_rows rows)
-
-let build key (host, ocaml, annotations, rows) t =
-  Baseline.set_section ~annotations t
-    { Baseline.machine = key; host; ocaml }
-    rows
+  fun key t ->
+    Baseline.set_section ~annotations t
+      { Baseline.machine = key; host; ocaml }
+      (distinct rows)
 
 let gen_baseline =
   let open Gen in
   let* suite = of_list [ "digest"; "suite-x"; "s" ] in
   let* keys = list ~size:(int_range 0 4) gen_key in
   let keys = List.sort_uniq String.compare keys in
-  let+ parts = list ~size:(constant (List.length keys)) gen_section_parts in
+  let+ sections = list ~size:(constant (List.length keys)) gen_section in
   List.fold_left2
-    (fun t key p -> build key p t)
-    (Baseline.empty ~suite) keys parts
+    (fun t key add -> add key t)
+    (Baseline.empty ~suite) keys sections
 
 let baseline_t =
-  Gen.with_pp
-    (fun ppf t -> Format.fprintf ppf "%S" (Baseline.to_string t))
-    gen_baseline
+  Gen.with_pp (fun ppf t -> Format.fprintf ppf "%S" (printed t)) gen_baseline
 
-(* Three fixed-key sections plus an advance row for the middle one; the row
-   replaces an existing key or inserts a fresh one. *)
-let gen_update_case =
-  let open Gen in
-  let* parts = list ~size:(constant 3) gen_section_parts in
-  let* fresh = gen_row in
-  let+ replace = bool in
-  let keys = [ "aaa1"; "bbb2"; "ccc3" ] in
-  let t =
-    List.fold_left2
-      (fun t key p -> build key p t)
-      (Baseline.empty ~suite:"s")
-      keys parts
-  in
-  let target = "bbb2" in
-  let advance =
-    match Baseline.rows (Option.get (Baseline.section t target)) with
-    | existing :: _ when replace ->
-        Baseline.exact_row ~id:(Baseline.row_id existing)
-          ~metric:(Baseline.row_metric existing)
-          424242
-    | _ -> fresh
-  in
-  (t, target, advance)
+(* Types, errors and quoting *)
 
-let update_case_t =
-  Gen.with_pp
-    (fun ppf (t, target, row) ->
-      Format.fprintf ppf "(%S, %s, %s %s)" (Baseline.to_string t) target
-        (Baseline.row_id row) (Baseline.row_metric row))
-    gen_update_case
+let types =
+  group "Types, errors and quoting"
+    [
+      cases "pp_error prints" ~name:fst
+        [
+          ( "a corrupt file's line and reason",
+            ( Baseline.Corrupt { line = 3; reason = "boom" },
+              "corrupt baseline (line 3): boom" ) );
+          ( "an Io message as it is",
+            (Baseline.Io "cannot read p: boom", "cannot read p: boom") );
+        ]
+        (fun (_, (e, text)) -> equal string text (error_text e));
+      test "an uncaught Error prints its text" (fun () ->
+          equal string "Thumper.Baseline.Error: corrupt baseline (line 3): boom"
+            (Printexc.to_string
+               (Baseline.Error (Baseline.Corrupt { line = 3; reason = "boom" }))));
+      cases "quote" ~name:fst
+        [
+          ("an empty string", ("", "''"));
+          ("a plain string", ("a b/c", "'a b/c'"));
+          ( "control bytes and DEL as \\xNN",
+            ( "\027]0;x\007\r\n\t\031\127",
+              {|'\x1b]0;x\x07\x0d\x0a\x09\x1f\x7f'|} ) );
+          ( "UTF-8 as it is",
+            ("\xc2\xb1 \xe2\x80\x94", "'\xc2\xb1 \xe2\x80\x94'") );
+        ]
+        (fun (_, (s, quoted)) -> equal string quoted (Baseline.quote s));
+    ]
 
-(* Properties *)
+(* Identifiers *)
 
-let row_lines chunk =
-  List.filter
-    (fun l -> String.length l > 0 && l.[0] <> '#')
-    (String.split_on_char '\n' chunk)
+let identifiers =
+  group "Identifiers"
+    [
+      test "is_id_char accepts [A-Za-z0-9._-] and nothing else" (fun () ->
+          equal string
+            "-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
+            (String.of_seq
+               (Seq.filter Baseline.is_id_char
+                  (String.to_seq (String.init 256 Char.chr)))));
+      cases "valid_segment" ~name:fst
+        [
+          ("a run of id characters", ("a.B-9_", true));
+          ("the empty string", ("", false));
+          ("a slash", ("a/b", false));
+          ("a space", ("a b", false));
+        ]
+        (fun (_, (s, valid)) -> equal bool valid (Baseline.valid_segment s));
+      cases "check_suite accepts" ~name:fst
+        [ ("a name", "digest"); ("a tab and a carriage return", "a\tb\r") ]
+        (fun (_, name) -> Baseline.check_suite ~fname:"f" name);
+      cases "check_suite refuses, naming fname" ~name:fst
+        [ ("an empty name", ""); ("a newline", "two\nlines") ]
+        (fun (_, name) ->
+          raises
+            (Invalid_argument
+               "f: suite name must be non-empty and single-line (it heads \
+                fresh baselines)") (fun () ->
+              Baseline.check_suite ~fname:"f" name));
+    ]
 
-let properties =
+(* Reading and printing *)
+
+let the_sample_parses () =
+  let t = parsed sample in
+  equal (option string) (Some "digest") (Baseline.suite t);
+  equal (list string) [ sample_machine ] (Baseline.machines t);
+  equal
+    (list (pair string string))
+    [
+      ("sha256/incremental-1mib", "alloc_words");
+      ("sha256/incremental-1mib", "wall_time");
+      ("sha256/string-64", "alloc_words");
+      ("sha256/string-64", "wall_time");
+    ]
+    (keys (section t sample_machine))
+
+let the_empty_string_has_no_suite_and_no_section () =
+  let t = parsed "" in
+  equal (option string) None (Baseline.suite t);
+  equal (list string) [] (Baseline.machines t)
+
+let accepted =
   [
-    prop "parse of a printed file re-emits it byte-identically" baseline_t
-      (fun t ->
-        let s = Baseline.to_string t in
-        let t' = ok_exn (Baseline.of_string s) in
-        equal string s (Baseline.to_string t'));
-    prop "print then parse preserves the observable structure" baseline_t
-      (fun t ->
-        let t' = ok_exn (Baseline.of_string (Baseline.to_string t)) in
-        equal ~msg:"suite" (option string) (Baseline.suite t)
-          (Baseline.suite t');
-        equal ~msg:"machines" (list string) (Baseline.machines t)
-          (Baseline.machines t');
-        List.iter
-          (fun key ->
-            let s = Option.get (Baseline.section t key) in
-            let s' = Option.get (Baseline.section t' key) in
-            equal ~msg:"ocaml" string (Baseline.ocaml_of s)
-              (Baseline.ocaml_of s');
-            equal ~msg:"rows"
-              (list (triple string string evidence))
-              (List.map
-                 (fun r ->
-                   ( Baseline.row_id r,
-                     Baseline.row_metric r,
-                     Baseline.row_evidence r ))
-                 (Baseline.rows s))
-              (List.map
-                 (fun r ->
-                   ( Baseline.row_id r,
-                     Baseline.row_metric r,
-                     Baseline.row_evidence r ))
-                 (Baseline.rows s')))
-          (Baseline.machines t));
-    prop "a flipped stored-median digit is detected as Corrupt"
-      (Gen.with_pp
-         (fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
-         Gen.(pair gen_id (int_range 1 10_000)))
-      (fun (id, k) ->
-        let samples = [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |] in
-        let row = Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples in
-        let t =
-          Baseline.set_section (Baseline.empty ~suite:"s") identity [ row ]
-        in
-        let munged =
-          List.map
-            (fun line ->
-              match String.split_on_char '\t' line with
-              | [ i; m; b; n; median; s ] ->
-                  (* +1 mod 10 on the first digit always changes the text,
-                     so it can no longer equal the re-derivation. *)
-                  let median = Bytes.of_string median in
-                  let d = Bytes.get median 0 in
-                  Bytes.set median 0
-                    (Char.chr
-                       (((Char.code d - Char.code '0' + 1) mod 10)
-                       + Char.code '0'));
-                  String.concat "\t" [ i; m; b; n; Bytes.to_string median; s ]
-              | _ -> line)
-            (String.split_on_char '\n' (Baseline.to_string t))
-        in
-        corrupt ~mentions:"median" (String.concat "\n" munged));
-    prop "update_rows byte-preserves untouched rows and other sections"
-      update_case_t (fun (t, target, advance) ->
-        let before = Baseline.to_string t in
-        let t' =
-          Baseline.update_rows t ~machine:target ~advance:[ advance ] ~prune:[]
-        in
-        let after = Baseline.to_string t' in
-        let cb = section_chunks before and ca = section_chunks after in
-        equal ~msg:"section count" int (List.length cb) (List.length ca);
-        equal ~msg:"preamble bytes" string (List.hd cb) (List.hd ca);
-        let is_target chunk =
-          String.starts_with ~prefix:(target ^ "\n") chunk
-          || String.equal chunk target
-        in
-        List.iter2
-          (fun b a ->
-            if not (is_target b) then
-              equal ~msg:"untouched section bytes" string b a)
-          (List.tl cb) (List.tl ca);
-        (* Within the target section, every row line other than the advanced
-           key's is byte-identical. *)
-        let target_rows text =
-          match List.filter is_target (List.tl (section_chunks text)) with
-          | [ chunk ] -> row_lines chunk
-          | _ -> fail "target section not found"
-        in
-        let akey = row_key advance in
-        let untouched lines' =
-          List.filter
-            (fun line ->
-              match String.split_on_char '\t' line with
-              | id :: metric :: _ -> (id, metric) <> akey
-              | _ -> true)
-            lines'
-        in
-        equal ~msg:"untouched row bytes" (list string)
-          (untouched (target_rows before))
-          (untouched (target_rows after)));
+    ("the manual's file", sample);
+    ("the empty string", "");
+    ("a section of one row", with_rows [ "a\tm\texact\t1" ]);
+    ( "a section without rows",
+      file (preamble @ [ "# machine: key"; "# host: h"; "# ocaml: o" ]) );
+    ( "a section without rows before another",
+      file
+        (preamble
+        @ [
+            "# machine: a";
+            "# host: h";
+            "# ocaml: o";
+            "";
+            "# machine: b";
+            "# host: h";
+            "# ocaml: o";
+            "";
+            "a\tm\texact\t1";
+          ]) );
+    ( "annotations",
+      file
+        (preamble
+        @ [
+            "# machine: key";
+            "# host: h";
+            "# ocaml: o";
+            "# forced: load 7.9/8";
+            "# another note";
+            "";
+            "a\tm\texact\t1";
+          ]) );
+    ( "an even count's median, the midpoint of the central samples",
+      with_rows
+        [
+          "a\tm\tbatch=1\tn=4\t2.500e+00\t1.000e+00 2.000e+00 3.000e+00 \
+           4.000e+00";
+        ] );
+    ( "an odd count's median, the central sample",
+      with_rows
+        [ "a\tm\tbatch=1\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00" ] );
+    ( "two-digit exponents down at 1e-10",
+      with_rows
+        [ "a\tm\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10" ] );
+    ( "samples spelled other than %.3e",
+      with_rows [ "a\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0" ] );
+    ( "counts with leading zeros",
+      with_rows
+        [
+          "a\tm\texact\t007";
+          "b\tm\tbatch=08\tn=03\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00";
+        ] );
   ]
 
-(* Suite *)
+(* A sampled row of [n] samples at batch size 1. *)
+let samples_row n median samples =
+  Printf.sprintf "a\tm\tbatch=1\tn=%d\t%s\t%s" n median samples
+
+let two_sections a b =
+  file
+    (preamble
+    @ [ "# machine: " ^ a; "# host: h"; "# ocaml: o"; ""; "# machine: " ^ b ])
+
+let header lines = file (preamble @ [ "# machine: k" ] @ lines)
+
+(* The manual's file with its first stored median one digit off. *)
+let sample_flipped =
+  String.concat "\n"
+    (List.map
+       (fun line ->
+         match String.split_on_char '\t' line with
+         | [ id; metric; batch; n; "5.063e-03"; samples ] ->
+             String.concat "\t" [ id; metric; batch; n; "5.064e-03"; samples ]
+         | _ -> line)
+       (String.split_on_char '\n' sample))
+
+let refusals =
+  [
+    ( "a misspelt format line",
+      file [ "# thumper baselin v1"; ""; "# machine: k"; "# host: h" ],
+      __POS_OF__
+        {| corrupt baseline (line 1): expected '# thumper baseline v1' on the first line |}
+    );
+    ( "a text that is no baseline",
+      "not a baseline\n",
+      __POS_OF__
+        {| corrupt baseline (line 1): expected '# thumper baseline v1' on the first line |}
+    );
+    ( "CRLF line endings",
+      "# thumper baseline v1\r\n# suite: s\r\n",
+      __POS_OF__
+        {| corrupt baseline (line 1): expected '# thumper baseline v1' on the first line |}
+    );
+    ( "the format line alone",
+      file [ "# thumper baseline v1" ],
+      __POS_OF__ {| corrupt baseline (line 2): expected a '# suite:' line |} );
+    ( "no final newline",
+      "# thumper baseline v1\n# suite: s",
+      __POS_OF__
+        {| corrupt baseline (line 2): truncated file: missing final newline |}
+    );
+    ( "the manual's file without its final newline",
+      String.sub sample 0 (String.length sample - 1),
+      __POS_OF__
+        {| corrupt baseline (line 11): truncated file: missing final newline |}
+    );
+    ( "an empty suite name",
+      file [ "# thumper baseline v1"; "# suite: " ],
+      __POS_OF__ {| corrupt baseline (line 2): empty suite name |} );
+    ( "a section before the suite line",
+      file [ "# thumper baseline v1"; ""; "# machine: k" ],
+      __POS_OF__ {| corrupt baseline (line 2): expected a '# suite:' line |} );
+    ( "junk for the suite line",
+      file [ "# thumper baseline v1"; "junk" ],
+      __POS_OF__ {| corrupt baseline (line 2): expected a '# suite:' line |} );
+    ( "a row right after the preamble",
+      file [ "# thumper baseline v1"; "# suite: s"; "a\tm\texact\t1" ],
+      __POS_OF__
+        {| corrupt baseline (line 3): expected a blank line before a '# machine:' section |}
+    );
+    ( "a blank line ending the preamble",
+      file preamble,
+      __POS_OF__
+        {| corrupt baseline (line 3): trailing blank line at end of file |} );
+    ( "a blank line ending a section's header",
+      file (preamble @ [ "# machine: k"; "# host: h"; "# ocaml: o"; "" ]),
+      __POS_OF__
+        {| corrupt baseline (line 7): trailing blank line at end of file |} );
+    ( "two blank lines before the rows",
+      file
+        (preamble
+        @ [
+            "# machine: k"; "# host: h"; "# ocaml: o"; ""; ""; "a\tm\texact\t1";
+          ]),
+      __POS_OF__ {| corrupt baseline (line 8): unexpected blank line |} );
+    ( "a blank line between rows",
+      with_rows [ "a\tm\texact\t1"; ""; "b\tm\texact\t2" ],
+      __POS_OF__
+        {| corrupt baseline (line 10): expected a '# machine:' section header |}
+    );
+    ( "a comment among rows",
+      with_rows [ "a\tm\texact\t1"; "# note" ],
+      __POS_OF__ {| corrupt baseline (line 9): unexpected comment among rows |}
+    );
+    ( "rows right after the header",
+      file
+        (preamble
+        @ [ "# machine: k"; "# host: h"; "# ocaml: o"; "a\tm\texact\t1" ]),
+      __POS_OF__
+        {| corrupt baseline (line 7): expected a blank line before the section's rows |}
+    );
+    ( "a machine key with a space",
+      file (preamble @ [ "# machine: has space" ]),
+      __POS_OF__
+        {| corrupt baseline (line 4): invalid machine key 'has space' (must be [A-Za-z0-9._-]+) |}
+    );
+    ( "an empty machine key",
+      file (preamble @ [ "# machine: " ]),
+      __POS_OF__
+        {| corrupt baseline (line 4): invalid machine key '' (must be [A-Za-z0-9._-]+) |}
+    );
+    ( "a machine key holding control bytes",
+      file
+        (preamble
+        @ [
+            "# machine: \027]0;x\007\027[2K\rthumper: 6 cases: 6 \
+             passed.\127\xc2\xb1";
+          ]),
+      __POS_OF__
+        {| corrupt baseline (line 4): invalid machine key '\x1b]0;x\x07\x1b[2K\x0dthumper: 6 cases: 6 passed.\x7f±' (must be [A-Za-z0-9._-]+) |}
+    );
+    ( "a machine line right after another",
+      file (preamble @ [ "# machine: a"; "# machine: b" ]),
+      __POS_OF__
+        {| corrupt baseline (line 5): expected a blank line before the next '# machine:' section |}
+    );
+    ( "two sections for one key",
+      two_sections "k" "k",
+      __POS_OF__
+        {| corrupt baseline (line 8): duplicate section for machine k |} );
+    ( "sections out of key order",
+      two_sections "kb" "ka",
+      __POS_OF__
+        {| corrupt baseline (line 8): sections are not sorted by machine key (ka after kb) |}
+    );
+    ( "two host lines",
+      header [ "# host: a"; "# host: b" ],
+      __POS_OF__ {| corrupt baseline (line 6): duplicate '# host:' line |} );
+    ( "a host line after the ocaml line",
+      header [ "# ocaml: o"; "# host: a" ],
+      __POS_OF__ {| corrupt baseline (line 6): misplaced '# host:' line |} );
+    ( "two ocaml lines",
+      header [ "# ocaml: a"; "# ocaml: b" ],
+      __POS_OF__ {| corrupt baseline (line 6): duplicate '# ocaml:' line |} );
+    ( "an ocaml line after an annotation",
+      header [ "# note"; "# ocaml: o" ],
+      __POS_OF__ {| corrupt baseline (line 6): misplaced '# ocaml:' line |} );
+    ( "a comment without a space",
+      header [ "#bare" ],
+      __POS_OF__ {| corrupt baseline (line 5): malformed comment line '#bare' |}
+    );
+    ( "an annotation spelling a suite line",
+      header [ "# suite: nested" ],
+      __POS_OF__
+        {| corrupt baseline (line 5): malformed section comment '# suite: nested' |}
+    );
+    ( "an annotation spelling a machine line",
+      header [ "# machine:nospace" ],
+      __POS_OF__
+        {| corrupt baseline (line 5): malformed section comment '# machine:nospace' |}
+    );
+    ( "no host line",
+      header [ "# ocaml: o" ],
+      __POS_OF__
+        {| corrupt baseline (line 5): section for machine k is missing its '# host:' line |}
+    );
+    ( "no ocaml line",
+      header [ "# host: h" ],
+      __POS_OF__
+        {| corrupt baseline (line 5): section for machine k is missing its '# ocaml:' line |}
+    );
+    ( "an empty host",
+      header [ "# host: " ],
+      __POS_OF__ {| corrupt baseline (line 5): empty '# host:' value |} );
+    ( "an empty ocaml",
+      header [ "# host: h"; "# ocaml: " ],
+      __POS_OF__ {| corrupt baseline (line 6): empty '# ocaml:' value |} );
+    ( "an exact row without its count",
+      with_rows [ "a\tm\texact" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): malformed row: expected 'id\tmetric\texact\tcount' or 'id\tmetric\tbatch=K\tn=N\tmedian\tsamples' |}
+    );
+    ( "a row with a field too many",
+      with_rows [ "a\tm\texact\t1\textra" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): malformed row: expected 'id\tmetric\texact\tcount' or 'id\tmetric\tbatch=K\tn=N\tmedian\tsamples' |}
+    );
+    ( "a count that is no number",
+      with_rows [ "a\tm\texact\tx12" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): exact count must be a decimal integer, got 'x12' |}
+    );
+    ( "a negative count",
+      with_rows [ "a\tm\texact\t-1" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): exact count must be a decimal integer, got '-1' |}
+    );
+    ( "a count past max_int",
+      with_rows [ "a\tm\texact\t99999999999999999999" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): exact count is out of range: '99999999999999999999' |}
+    );
+    ( "a case id with a space",
+      with_rows [ "a b\tm\texact\t1" ],
+      __POS_OF__ {| corrupt baseline (line 8): invalid case id 'a b' |} );
+    ( "a case id with an empty segment",
+      with_rows [ "a//b\tm\texact\t1" ],
+      __POS_OF__ {| corrupt baseline (line 8): invalid case id 'a//b' |} );
+    ( "a metric id with a space",
+      with_rows [ "a\tw t\texact\t1" ],
+      __POS_OF__ {| corrupt baseline (line 8): invalid metric id 'w t' |} );
+    ( "k= for batch=",
+      with_rows [ "a\tm\tk=2\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): malformed row: expected 'batch=K', got 'k=2' |}
+    );
+    ( "a batch size of 0",
+      with_rows
+        [ "a\tm\tbatch=0\tn=3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__ {| corrupt baseline (line 8): batch size must be at least 1 |}
+    );
+    ( "a sample count without n=",
+      with_rows [ "a\tm\tbatch=1\t3\t2.000e+00\t1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): malformed row: expected 'n=N', got '3' |}
+    );
+    ( "two samples",
+      with_rows [ samples_row 2 "1.500e+00" "1.000e+00 2.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): sample count n=2 is below the minimum of 3 |}
+    );
+    ( "n=3 over two samples",
+      with_rows [ samples_row 3 "1.500e+00" "1.000e+00 2.000e+00" ],
+      __POS_OF__ {| corrupt baseline (line 8): n=3 but 2 samples are stored |}
+    );
+    ( "a NaN sample",
+      with_rows [ samples_row 3 "2.000e+00" "1.000e+00 nan 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): sample is not a finite number: 'nan' |} );
+    ( "samples in descending order",
+      with_rows [ samples_row 3 "2.000e+00" "3.000e+00 2.000e+00 1.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): samples are not sorted ascending |} );
+    ( "two rows for one case and metric",
+      with_rows [ "a\tm\texact\t1"; "a\tm\texact\t2" ],
+      __POS_OF__ {| corrupt baseline (line 9): duplicate row for a m |} );
+    ( "rows out of id order",
+      with_rows [ "b\tm\texact\t1"; "a\tm\texact\t2" ],
+      __POS_OF__
+        {| corrupt baseline (line 9): rows are not sorted by (id, metric) |} );
+    ( "rows out of metric order",
+      with_rows [ "a\tz\texact\t1"; "a\tm\texact\t2" ],
+      __POS_OF__
+        {| corrupt baseline (line 9): rows are not sorted by (id, metric) |} );
+    ( "a space after the format line",
+      file [ "# thumper baseline v1 "; "# suite: s"; ""; "# machine: k" ],
+      __POS_OF__
+        {| corrupt baseline (line 1): expected '# thumper baseline v1' on the first line |}
+    );
+    ( "a space after the machine key",
+      file (preamble @ [ "# machine: k " ]),
+      __POS_OF__
+        {| corrupt baseline (line 4): invalid machine key 'k ' (must be [A-Za-z0-9._-]+) |}
+    );
+    ( "a space after a count",
+      with_rows [ "a\tm\texact\t1 " ],
+      __POS_OF__
+        {| corrupt baseline (line 8): exact count must be a decimal integer, got '1 ' |}
+    );
+    ( "a space after the samples",
+      with_rows [ samples_row 3 "2.000e+00" "1.000e+00 2.000e+00 3.000e+00 " ],
+      __POS_OF__ {| corrupt baseline (line 8): n=3 but 4 samples are stored |}
+    );
+    ( "an even count's median off the midpoint",
+      with_rows
+        [ samples_row 4 "2.000e+00" "1.000e+00 2.000e+00 3.000e+00 4.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): stored median '2.000e+00' does not match its samples (re-derived '2.500e+00') |}
+    );
+    ( "an odd count's median off the central sample",
+      with_rows [ samples_row 3 "2.001e+00" "1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): stored median '2.001e+00' does not match its samples (re-derived '2.000e+00') |}
+    );
+    ( "a median with a one-digit exponent",
+      with_rows [ samples_row 3 "2.000e+0" "1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): stored median '2.000e+0' does not match its samples (re-derived '2.000e+00') |}
+    );
+    ( "a median with a capital E",
+      with_rows [ samples_row 3 "2.000E+00" "1.000e+00 2.000e+00 3.000e+00" ],
+      __POS_OF__
+        {| corrupt baseline (line 8): stored median '2.000E+00' does not match its samples (re-derived '2.000e+00') |}
+    );
+    ( "the manual's file with a median one digit off",
+      sample_flipped,
+      __POS_OF__
+        {| corrupt baseline (line 9): stored median '5.064e-03' does not match its samples (re-derived '5.063e-03') |}
+    );
+  ]
+
+(* The rows of the file [t] prints, each as (id, metric, evidence), per
+   section with its key and its [# ocaml:] line. *)
+let structure =
+  Testable.contramap
+    (fun t ->
+      ( Baseline.suite t,
+        List.map
+          (fun key ->
+            let s = section t key in
+            (key, Baseline.ocaml_of s, Baseline.rows s))
+          (Baseline.machines t) ))
+    (pair (option string) (list (triple string string (list row))))
+
+(* Adding 1 modulo 10 to a digit always changes it. *)
+let flip_first_digit median =
+  let d = Char.code median.[0] - Char.code '0' in
+  String.make 1 (Char.chr (((d + 1) mod 10) + Char.code '0'))
+  ^ String.sub median 1 (String.length median - 1)
+
+let a_median_one_digit_off_is_refused (id, k) =
+  let r =
+    sampled ~metric:"wall_time" ~k id [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |]
+  in
+  let line =
+    String.split_on_char '\t'
+      (last_line (printed (with_section "key" [ r ] empty)))
+    |> List.mapi (fun i field ->
+        if i = 4 then flip_first_digit field else field)
+    |> String.concat "\t"
+  in
+  let line_no, reason =
+    require_match
+      (function
+        | Error (Baseline.Corrupt { line; reason }) -> Some (line, reason)
+        | Ok _ | Error (Baseline.Io _) -> None)
+      (Baseline.of_string (with_rows [ line ]))
+  in
+  equal int 8 line_no;
+  starts_with ~affix:"stored median '" reason
+
+(* What [read] makes of the file at [path]. *)
+let read_outcome path =
+  match Baseline.read path with
+  | Ok None -> "absent"
+  | Ok (Some t) -> "file " ^ printed t
+  | Error e -> "error " ^ error_text e
+
+let written text =
+  let path = Filename.concat (temp_dir ()) "suite.thumper" in
+  Out_channel.with_open_bin path (fun oc -> output_string oc text);
+  path
+
+let a_permission_denied_file_is_io () =
+  if Sys.win32 || Unix.geteuid () = 0 then
+    skip ~reason:"file modes not enforced" ()
+  else
+    let path = written sample in
+    Unix.chmod path 0o000;
+    equal string
+      ("error cannot read " ^ path ^ ": Permission denied")
+      (read_outcome path)
+
+(* A FIFO this test holds open for writing never ends, so [read] blocks until
+   the alarm's handler raises. *)
+let read_closes_its_descriptor_on_any_exception () =
+  if Sys.win32 then skip ~reason:"no FIFO" ()
+  else
+    let path = Filename.concat (temp_dir ()) "fifo.thumper" in
+    Unix.mkfifo path 0o600;
+    let writer = Unix.openfile path [ Unix.O_RDWR; Unix.O_CLOEXEC ] 0 in
+    let open_fds () =
+      List.sort String.compare (Array.to_list (Sys.readdir "/dev/fd"))
+    in
+    let before = open_fds () in
+    let previous =
+      Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Exit))
+    in
+    let timer v = { Unix.it_interval = 0.; it_value = v } in
+    Fun.protect
+      ~finally:(fun () ->
+        ignore (Unix.setitimer Unix.ITIMER_REAL (timer 0.));
+        Sys.set_signal Sys.sigalrm previous;
+        Unix.close writer)
+      (fun () ->
+        ignore (Unix.setitimer Unix.ITIMER_REAL (timer 0.1));
+        raises Exit (fun () -> Baseline.read path);
+        equal (list string) before (open_fds ()))
+
+let reading =
+  group "Reading and printing"
+    [
+      test "the manual's file parses to its suite, machine and rows"
+        the_sample_parses;
+      test "the empty string has no suite and no section"
+        the_empty_string_has_no_suite_and_no_section;
+      cases "an accepted text prints back as itself" ~name:fst accepted
+        (fun (_, text) -> equal string text (reprinted text));
+      prop "of_string reads back what to_string printed"
+        ~examples:[ parsed sample ]
+        baseline_t
+        (fun t -> equal string (printed t) (reprinted (printed t)));
+      prop "a printed file parses to the rows it was built from" baseline_t
+        (fun t -> equal structure t (parsed (printed t)));
+      cases "of_string refuses"
+        ~name:(fun (name, _, _) -> name)
+        refusals
+        (fun (_, text, pos) -> expect (refused text) pos);
+      prop "a stored median one digit off is refused"
+        (Gen.with_pp
+           (fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
+           Gen.(pair gen_id (int_range 1 10_000)))
+        a_median_one_digit_off_is_refused;
+      cases "read" ~name:fst
+        [
+          ( "a file is its parsed text",
+            fun () -> ("file " ^ sample, read_outcome (written sample)) );
+          ( "an empty file is the file with no section",
+            fun () -> ("file ", read_outcome (written "")) );
+          ( "a missing file is absent",
+            fun () ->
+              ("absent", read_outcome (Filename.concat (temp_dir ()) "f")) );
+          ( "a file in a missing directory is absent",
+            fun () ->
+              ( "absent",
+                read_outcome
+                  (Filename.concat (Filename.concat (temp_dir ()) "d") "f") ) );
+          ( "a directory is Io",
+            fun () ->
+              let dir = temp_dir () in
+              ("error cannot read " ^ dir ^ ": Is a directory", read_outcome dir)
+          );
+          ( "a corrupt file is Corrupt",
+            fun () ->
+              ( "error corrupt baseline (line 1): expected '# thumper baseline \
+                 v1' on the first line",
+                read_outcome (written "junk\n") ) );
+        ]
+        (fun (_, outcome) ->
+          let expected, actual = outcome () in
+          equal string expected actual);
+      test "a permission-denied file is Io" a_permission_denied_file_is_io;
+      test "read closes its descriptor on any exception"
+        read_closes_its_descriptor_on_any_exception;
+      test "read_exn is read without its errors" (fun () ->
+          equal (option string) (Some sample)
+            (Option.map printed (Baseline.read_exn (written sample)));
+          equal (option string) None
+            (Option.map printed
+               (Baseline.read_exn (Filename.concat (temp_dir ()) "f")));
+          raises
+            (Baseline.Error
+               (Baseline.Corrupt
+                  {
+                    line = 1;
+                    reason =
+                      "expected '# thumper baseline v1' on the first line";
+                  }))
+            (fun () -> Baseline.read_exn (written "junk\n")));
+    ]
+
+(* Writing *)
+
+let a_read_only_directory dir =
+  if Sys.win32 || Unix.geteuid () = 0 then
+    skip ~reason:"file modes not enforced" ()
+  else
+    let sub = Filename.concat dir "ro" in
+    Unix.mkdir sub 0o500;
+    (sub, "Permission denied")
+
+let writing =
+  group "Writing"
+    [
+      test "write writes to_string t" (fun () ->
+          let path = Filename.concat (temp_dir ()) "suite.thumper" in
+          let t = parsed sample in
+          Baseline.write path t;
+          equal string sample
+            (In_channel.with_open_bin path In_channel.input_all));
+      cases "a failed write is Io, naming the path" ~name:fst
+        [
+          ( "a missing directory",
+            fun dir ->
+              (Filename.concat dir "missing", "No such file or directory") );
+          ("a read-only directory", a_read_only_directory);
+        ]
+        (fun (_, make) ->
+          let dir, problem = make (temp_dir ()) in
+          let path = Filename.concat dir "suite.thumper" in
+          raises
+            (Baseline.Error
+               (Baseline.Io (Printf.sprintf "cannot write %s: %s" path problem)))
+            (fun () -> Baseline.write path empty));
+    ]
+
+(* Files *)
+
+let files =
+  group "Files"
+    [
+      test "empty ~suite is the two-line preamble" (fun () ->
+          let t = Baseline.empty ~suite:"digest" in
+          equal string "# thumper baseline v1\n# suite: digest\n" (printed t);
+          equal (option string) (Some "digest") (Baseline.suite t));
+      cases "empty refuses what check_suite refuses" ~name:fst
+        [ ("an empty name", ""); ("a newline", "two\nlines") ]
+        (fun (_, suite) ->
+          raises
+            (Invalid_argument
+               "Baseline.empty: suite name must be non-empty and single-line \
+                (it heads fresh baselines)") (fun () -> Baseline.empty ~suite));
+      test "section finds a key's section and no other" (fun () ->
+          let t = parsed sample in
+          equal (option string) (Some sample_machine)
+            (Option.map Baseline.machine_of (Baseline.section t sample_machine));
+          equal (option string) None
+            (Option.map Baseline.machine_of (Baseline.section t "other")));
+    ]
+
+(* Section observers *)
+
+let frozen_ks =
+  [
+    ( "the first sampled row decides",
+      [
+        exact ~metric:"alloc_words" "a" 7;
+        sampled ~metric:"cpu_time" ~k:2 "a" [| 1.; 2.; 3. |];
+        sampled ~metric:"wall_time" ~k:8 "a" [| 1.; 2.; 3. |];
+      ],
+      Some 2 );
+    ("exact rows alone give none", [ exact ~metric:"alloc_words" "a" 7 ], None);
+    ( "another case's rows give none",
+      [ sampled ~k:4 "b" [| 1.; 2.; 3. |] ],
+      None );
+    ( "the rows of an earlier case are skipped",
+      [ sampled ~k:4 "0" [| 1.; 2.; 3. |]; sampled ~k:8 "a" [| 1.; 2.; 3. |] ],
+      Some 8 );
+  ]
+
+let section_observers =
+  group "Section observers"
+    [
+      test "machine_of and ocaml_of read the section's header" (fun () ->
+          let s = section (parsed sample) sample_machine in
+          equal string sample_machine (Baseline.machine_of s);
+          equal string "5.5.0 · 64-bit · release" (Baseline.ocaml_of s));
+      test "find_row finds a case and metric's row and no other" (fun () ->
+          let s = section (parsed sample) sample_machine in
+          let found metric =
+            Option.map Baseline.row_evidence
+              (Baseline.find_row s ~id:"sha256/string-64" ~metric)
+          in
+          equal (option evidence) (Some (Baseline.Exact_int 54))
+            (found "alloc_words");
+          equal (option evidence) None (found "cpu_time"));
+      cases "case_frozen_k"
+        ~name:(fun (name, _, _) -> name)
+        frozen_ks
+        (fun (_, rows, k) ->
+          equal (option int) k
+            (Baseline.case_frozen_k
+               (section (with_section "key" rows empty) "key")
+               ~id:"a"));
+    ]
+
+(* Row observers *)
+
+(* The samples of the manual's [line], as the file stores them. *)
+let stored_samples line =
+  List.nth (String.split_on_char '\t' line) 5
+  |> String.split_on_char ' ' |> List.map float_of_string |> Array.of_list
+
+let the_rows_hold_their_evidence () =
+  let s = section (parsed sample) sample_machine in
+  let lines = String.split_on_char '\n' sample in
+  equal (list evidence)
+    [
+      Baseline.Exact_int 399;
+      Baseline.Sampled { k = 1; samples = stored_samples (List.nth lines 8) };
+      Baseline.Exact_int 54;
+      Baseline.Sampled
+        { k = 8192; samples = stored_samples (List.nth lines 10) };
+    ]
+    (List.map Baseline.row_evidence (Baseline.rows s))
+
+let row_observers =
+  group "Row observers"
+    [
+      test "the manual's rows hold their evidence" the_rows_hold_their_evidence;
+      test "row_evidence's samples are a copy" (fun () ->
+          let r = sampled "a" [| 1.0; 2.0; 3.0 |] in
+          let samples =
+            require_match
+              (function
+                | Baseline.Sampled { samples; _ } -> Some samples
+                | Baseline.Exact_int _ -> None)
+              (Baseline.row_evidence r)
+          in
+          samples.(0) <- 99.0;
+          equal evidence
+            (Baseline.Sampled { k = 1; samples = [| 1.0; 2.0; 3.0 |] })
+            (Baseline.row_evidence r));
+    ]
+
+(* Building files *)
+
+let row_refusals =
+  let samples = [| 1.0; 2.0; 3.0 |] in
+  [
+    ( "an id with a space",
+      (fun () -> exact "a b" 1),
+      {|Baseline.exact_row: invalid id "a b" ('/'-separated segments of [A-Za-z0-9._-])|}
+    );
+    ( "an empty id",
+      (fun () -> exact "" 1),
+      {|Baseline.exact_row: invalid id "" ('/'-separated segments of [A-Za-z0-9._-])|}
+    );
+    ( "an id with an empty segment",
+      (fun () -> exact "a//b" 1),
+      {|Baseline.exact_row: invalid id "a//b" ('/'-separated segments of [A-Za-z0-9._-])|}
+    );
+    ( "an id ending in a slash",
+      (fun () -> exact "a/" 1),
+      {|Baseline.exact_row: invalid id "a/" ('/'-separated segments of [A-Za-z0-9._-])|}
+    );
+    ( "a metric with a space",
+      (fun () -> exact ~metric:"w t" "a" 1),
+      {|Baseline.exact_row: invalid metric id "w t" (must be [A-Za-z0-9._-]+)|}
+    );
+    ( "a metric with a slash",
+      (fun () -> exact ~metric:"a/b" "a" 1),
+      {|Baseline.exact_row: invalid metric id "a/b" (must be [A-Za-z0-9._-]+)|}
+    );
+    ( "a negative count",
+      (fun () -> exact "a" (-1)),
+      "Baseline.exact_row: negative count -1" );
+    ( "a sampled row's invalid id",
+      (fun () -> sampled "a b" samples),
+      {|Baseline.sampled_row: invalid id "a b" ('/'-separated segments of [A-Za-z0-9._-])|}
+    );
+    ( "a batch size of 0",
+      (fun () -> sampled ~k:0 "a" samples),
+      "Baseline.sampled_row: batch size 0 < 1" );
+    ( "two samples",
+      (fun () -> sampled "a" [| 1.0; 2.0 |]),
+      "Baseline.sampled_row: 2 samples (at least 3 required)" );
+    ( "samples out of order",
+      (fun () -> sampled "a" [| 2.0; 1.0; 3.0 |]),
+      "Baseline.sampled_row: samples are not sorted ascending" );
+    ( "a NaN sample",
+      (fun () -> sampled "a" [| 1.0; Float.nan; 3.0 |]),
+      "Baseline.sampled_row: non-finite sample nan" );
+    ( "an infinite sample",
+      (fun () -> sampled "a" [| 1.0; 2.0; Float.infinity |]),
+      "Baseline.sampled_row: non-finite sample infinity" );
+  ]
+
+(* The samples' texts are what the row stores, so its median is derived from
+   them and not from the floats it was given. *)
+let sampled_lines =
+  [
+    ( "a sample rounds to its %.3e text",
+      [| 1.23456e-3; 2.0e-3; 3.0e-3 |],
+      "a\tm\tbatch=1\tn=3\t2.000e-03\t1.235e-03 2.000e-03 3.000e-03" );
+    ( "the median of the stored samples, not of the given ones",
+      [| 1.0e-3; 1.0e-3; 1.00049e-2; 1.00049e-2 |],
+      "a\tm\tbatch=1\tn=4\t5.500e-03\t1.000e-03 1.000e-03 1.000e-02 1.000e-02"
+    );
+    ( "an even count's median stays finite near max_float",
+      [| 1.7e308; 1.7e308; 1.7e308; 1.7e308 |],
+      "a\tm\tbatch=1\tn=4\t1.700e+308\t1.700e+308 1.700e+308 1.700e+308 \
+       1.700e+308" );
+    ( "two-digit exponents down at 1e-10",
+      [| 1e-10; 2e-10; 3e-10 |],
+      "a\tm\tbatch=1\tn=3\t2.000e-10\t1.000e-10 2.000e-10 3.000e-10" );
+  ]
+
+let a_built_file_prints_in_the_print_format () =
+  let t =
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
+      (identity "testkey")
+      [
+        exact ~metric:"alloc_words" "z/case" 54;
+        sampled ~metric:"wall_time" ~k:2 "a/case" [| 1e-3; 2e-3; 3e-3; 4e-3 |];
+      ]
+  in
+  equal string
+    (file
+       [
+         "# thumper baseline v1";
+         "# suite: digest";
+         "";
+         "# machine: testkey";
+         "# host: mbp-test · Apple M1 · arm64 · macos";
+         "# ocaml: 5.5.0 · 64-bit · release";
+         "";
+         "a/case\twall_time\tbatch=2\tn=4\t2.500e-03\t1.000e-03 2.000e-03 \
+          3.000e-03 4.000e-03";
+         "z/case\talloc_words\texact\t54";
+       ])
+    (printed t)
+
+(* Canonical files hold "\n\n# machine: " before each section, so splitting
+   on it gives the preamble, then one chunk per section, starting with its
+   key. *)
+let chunks text =
+  let sep = "\n\n# machine: " in
+  let ls = String.length sep in
+  let rec go start acc i =
+    if i + ls > String.length text then
+      List.rev (String.sub text start (String.length text - start) :: acc)
+    else if String.equal (String.sub text i ls) sep then
+      go (i + ls) (String.sub text start (i - start) :: acc) (i + ls)
+    else go start acc (i + 1)
+  in
+  go 0 [] 0
+
+let set_section_keeps_every_other_section () =
+  let t =
+    empty
+    |> with_section "aa" [ exact "a" 1 ]
+    |> with_section "zz" [ exact "z" 9 ]
+  in
+  let t' = with_section "mm" [ exact "n" 5 ] t in
+  equal (list string)
+    (chunks (printed t))
+    (List.filteri (fun i _ -> i <> 2) (chunks (printed t')))
+
+let set_section_refusals =
+  let row = exact "a" 1 in
+  let set ?annotations ?(t = empty) id rows () =
+    Baseline.set_section ?annotations t id rows
+  in
+  let ok = identity "key" in
+  [
+    ( "a file without a suite header",
+      set ~t:(parsed "") ok [ row ],
+      "Baseline.set_section: baseline has no suite header; start from \
+       Baseline.empty ~suite" );
+    ( "a machine key with a space",
+      set (identity "no space") [ row ],
+      {|Baseline.set_section: invalid machine key "no space" (must be [A-Za-z0-9._-]+)|}
+    );
+    ( "an empty host",
+      set { ok with Baseline.host = "" } [ row ],
+      "Baseline.set_section: empty host" );
+    ( "an empty ocaml",
+      set { ok with Baseline.ocaml = "" } [ row ],
+      "Baseline.set_section: empty ocaml" );
+    ( "a host of two lines",
+      set { ok with Baseline.host = "a\nb" } [ row ],
+      {|Baseline.set_section: newline in host "a\nb"|} );
+    ( "an ocaml of two lines",
+      set { ok with Baseline.ocaml = "a\nb" } [ row ],
+      {|Baseline.set_section: newline in ocaml "a\nb"|} );
+    ( "an annotation of two lines",
+      set ~annotations:[ "two\nlines" ] ok [ row ],
+      {|Baseline.set_section: multi-line annotation "two\nlines"|} );
+    ( "an annotation spelling machine:",
+      set ~annotations:[ "machine: fake" ] ok [ row ],
+      {|Baseline.set_section: annotation "machine: fake" starts with a reserved header word|}
+    );
+    ( "an annotation spelling host:",
+      set ~annotations:[ "host:x" ] ok [ row ],
+      {|Baseline.set_section: annotation "host:x" starts with a reserved header word|}
+    );
+    ( "an annotation spelling ocaml:",
+      set ~annotations:[ "ocaml: x" ] ok [ row ],
+      {|Baseline.set_section: annotation "ocaml: x" starts with a reserved header word|}
+    );
+    ( "an annotation spelling suite:",
+      set ~annotations:[ "suite: x" ] ok [ row ],
+      {|Baseline.set_section: annotation "suite: x" starts with a reserved header word|}
+    );
+    ( "two rows for one case and metric",
+      set ok [ row; row ],
+      "Baseline.set_section: duplicate row for a m" );
+  ]
+
+let two_rows = with_section "key" [ exact "a" 1; exact "b" 2 ] empty
+
+let update_rows_refusals =
+  let row = exact "a" 5 in
+  let update ?annotations ?(machine = "key") ?(advance = []) ?(prune = []) () =
+    Baseline.update_rows ?annotations two_rows ~machine ~advance ~prune
+  in
+  [
+    ( "a machine without a section",
+      (fun () -> update ~machine:"missing" ()),
+      {|Baseline.update_rows: no section for machine "missing"|} );
+    ( "two advanced rows for one case and metric",
+      (fun () -> update ~advance:[ row; row ] ()),
+      "Baseline.update_rows: duplicate row for a m" );
+    ( "a row both advanced and pruned",
+      (fun () -> update ~advance:[ row ] ~prune:[ ("a", "m") ] ()),
+      "Baseline.update_rows: a m is both advanced and pruned" );
+    ( "an annotation spelling machine:",
+      (fun () -> update ~annotations:[ "machine: x" ] ()),
+      {|Baseline.update_rows: annotation "machine: x" starts with a reserved header word|}
+    );
+    ( "an annotation of two lines",
+      (fun () -> update ~annotations:[ "two\nlines" ] ()),
+      {|Baseline.update_rows: multi-line annotation "two\nlines"|} );
+  ]
+
+(* Three sections, and a row that replaces one of the middle section's rows
+   or is new to it. *)
+let gen_update =
+  let open Gen in
+  let* sections = list ~size:(constant 3) gen_section in
+  let* fresh = gen_row in
+  let+ replace = bool in
+  let t =
+    List.fold_left2
+      (fun t key add -> add key t)
+      empty [ "aaa1"; "bbb2"; "ccc3" ] sections
+  in
+  let advance =
+    match Baseline.rows (section t "bbb2") with
+    | existing :: _ when replace ->
+        exact
+          ~metric:(Baseline.row_metric existing)
+          (Baseline.row_id existing) 424242
+    | _ -> fresh
+  in
+  (t, advance)
+
+let update_t =
+  Gen.with_pp
+    (fun ppf (t, r) ->
+      Format.fprintf ppf "(%S, %s %s)" (printed t) (Baseline.row_id r)
+        (Baseline.row_metric r))
+    gen_update
+
+(* Every line of the file but the blank ones and the advanced row's, in
+   order: a row inserted into a section without rows brings a blank line. *)
+let other_lines r text =
+  let prefix = Baseline.row_id r ^ "\t" ^ Baseline.row_metric r ^ "\t" in
+  List.filter
+    (fun line -> line <> "" && not (String.starts_with ~prefix line))
+    (String.split_on_char '\n' text)
+
+let update_rows_keeps_every_other_byte (t, advance) =
+  let t' =
+    Baseline.update_rows t ~machine:"bbb2" ~advance:[ advance ] ~prune:[]
+  in
+  equal (list string)
+    (other_lines advance (printed t))
+    (other_lines advance (printed t'))
+
+let building =
+  group "Building files"
+    [
+      cases "a row constructor refuses"
+        ~name:(fun (name, _, _) -> name)
+        row_refusals
+        (fun (_, make, message) -> raises (Invalid_argument message) make);
+      cases "sampled_row prints"
+        ~name:(fun (name, _, _) -> name)
+        sampled_lines
+        (fun (_, samples, line) ->
+          let text =
+            printed (with_section "key" [ sampled "a" samples ] empty)
+          in
+          equal string line (last_line text);
+          equal string text (reprinted text));
+      test "sampled_row stores what its line holds" (fun () ->
+          equal evidence
+            (Baseline.Sampled
+               {
+                 k = 1;
+                 samples = [| float_of_string "1.235e-03"; 2e-3; 3e-3 |];
+               })
+            (Baseline.row_evidence (sampled "a" [| 1.23456e-3; 2e-3; 3e-3 |])));
+      test "a built file prints in the print format"
+        a_built_file_prints_in_the_print_format;
+      test "set_section places sections in key order and replaces one whole"
+        (fun () ->
+          let t =
+            empty
+            |> with_section "mm" [ exact "a" 1 ]
+            |> with_section "zz" [] |> with_section "aa" []
+          in
+          equal (list string) [ "aa"; "mm"; "zz" ] (Baseline.machines t);
+          equal
+            (list (pair string string))
+            [ ("b", "m") ]
+            (keys (section (with_section "mm" [ exact "b" 2 ] t) "mm")));
+      test "set_section sorts the rows" (fun () ->
+          equal
+            (list (pair string string))
+            [ ("a", "m"); ("a", "z"); ("b", "m") ]
+            (keys
+               (section
+                  (with_section "key"
+                     [ exact "b" 1; exact ~metric:"z" "a" 1; exact "a" 1 ]
+                     empty)
+                  "key")));
+      test "set_section keeps every other section's bytes"
+        set_section_keeps_every_other_section;
+      test "set_section writes annotations below the header" (fun () ->
+          let t =
+            Baseline.set_section ~annotations:[ "forced: load 7.9/8" ] empty
+              { Baseline.machine = "key"; host = "h"; ocaml = "o" }
+              [ exact "a" 1 ]
+          in
+          equal string
+            (file
+               (preamble
+               @ [
+                   "# machine: key";
+                   "# host: h";
+                   "# ocaml: o";
+                   "# forced: load 7.9/8";
+                   "";
+                   "a\tm\texact\t1";
+                 ]))
+            (printed t));
+      cases "set_section refuses"
+        ~name:(fun (name, _, _) -> name)
+        set_section_refusals
+        (fun (_, set, message) -> raises (Invalid_argument message) set);
+      test "update_rows replaces and inserts rows in order" (fun () ->
+          let t =
+            Baseline.update_rows two_rows ~machine:"key"
+              ~advance:[ exact "b" 3; exact "aa" 9 ]
+              ~prune:[]
+          in
+          equal (list row)
+            [ exact "a" 1; exact "aa" 9; exact "b" 3 ]
+            (Baseline.rows (section t "key")));
+      test "update_rows prunes a present row and ignores an absent one"
+        (fun () ->
+          let t =
+            Baseline.update_rows two_rows ~machine:"key" ~advance:[]
+              ~prune:[ ("b", "m"); ("ghost", "m") ]
+          in
+          equal
+            (list (pair string string))
+            [ ("a", "m") ]
+            (keys (section t "key")));
+      test "update_rows keeps a row's text, however spelled" (fun () ->
+          let text =
+            with_rows [ "a\tm\tbatch=1\tn=3\t2.000e+00\t1e0 2e0 3e0" ]
+          in
+          let t =
+            Baseline.update_rows (parsed text) ~machine:"key"
+              ~advance:[ exact "b" 1 ]
+              ~prune:[]
+          in
+          equal string (text ^ "b\tm\texact\t1\n") (printed t));
+      test "update_rows appends annotations to the section's" (fun () ->
+          let t =
+            Baseline.set_section ~annotations:[ "first" ] empty
+              { Baseline.machine = "key"; host = "h"; ocaml = "o" }
+              [ exact "a" 1 ]
+          in
+          equal string
+            (file
+               (preamble
+               @ [
+                   "# machine: key";
+                   "# host: h";
+                   "# ocaml: o";
+                   "# first";
+                   "# second";
+                   "";
+                   "a\tm\texact\t1";
+                 ]))
+            (printed
+               (Baseline.update_rows ~annotations:[ "second" ] t ~machine:"key"
+                  ~advance:[] ~prune:[])));
+      cases "update_rows refuses"
+        ~name:(fun (name, _, _) -> name)
+        update_rows_refusals
+        (fun (_, update, message) -> raises (Invalid_argument message) update);
+      prop "update_rows keeps every line but the advanced row's" update_t
+        update_rows_keeps_every_other_byte;
+    ]
 
 let () =
-  run "baseline"
-    [
-      group "spec sample"
-        [
-          test "the spec's verbatim sample parses" spec_sample_parses;
-          test "its evidence projects exactly" spec_sample_evidence;
-          test "it re-emits byte-identically" spec_sample_byte_identity;
-        ];
-      group "empty baseline"
-        [
-          test "the empty file is a valid zero-section baseline"
-            empty_file_is_valid;
-          test "the empty fixture reads" empty_fixture_reads;
-          test "empty ~suite renders the two-line preamble"
-            empty_constructor_round_trips;
-          test "empty ~suite validates its argument" empty_constructor_validates;
-        ];
-      group "grammar"
-        [
-          test "a minimal canonical file parses" minimal_parses;
-          test "quoted file content writes no control byte"
-            quoted_file_content_writes_no_control_byte;
-          test "rejects a bad header" rejects_bad_header;
-          test "rejects a header-only file" rejects_header_only;
-          test "rejects a truncated file (missing final newline)"
-            rejects_truncated;
-          test "rejects an empty suite name" rejects_empty_suite_name;
-          test "rejects junk after the preamble" rejects_junk_after_preamble;
-          test "rejects a trailing blank line" rejects_trailing_blank;
-          test "rejects doubled blank lines" rejects_double_blank;
-          test "rejects a blank line between rows" rejects_blank_between_rows;
-          test "rejects a comment among rows" rejects_comment_among_rows;
-          test "rejects a bad machine key" rejects_bad_machine_key;
-          test "rejects duplicate or unsorted sections" rejects_section_disorder;
-          test "rejects a disordered section header block"
-            rejects_header_block_disorder;
-          test "rejects malformed rows" rejects_malformed_rows;
-          test "rejects duplicate or unsorted rows" rejects_row_disorder;
-          test "rejects CRLF line endings" rejects_crlf_line_endings;
-          test "rejects trailing whitespace" rejects_trailing_whitespace;
-          test "rejects a '# machine:' line directly after another"
-            rejects_machine_directly_after_machine;
-          test "rejects rows not separated from the header by a blank line"
-            rejects_rows_without_blank_after_header;
-          test "rejects missing or empty section header lines"
-            rejects_missing_section_headers;
-          test "unknown '# ' section comments are annotations and round-trip"
-            unknown_section_comments_round_trip;
-        ];
-      group "median checksum"
-        [
-          test "even n: midpoint of the two central stored samples"
-            checksum_even_midpoint;
-          test "odd n: the central stored sample" checksum_odd_central;
-          test "string equality, not numeric: exponent spelling matters"
-            checksum_is_string_equality_not_numeric;
-          test "two-digit exponents hold down at 1e-10"
-            checksum_negative_exponent_boundary;
-          test "the median derives from stored samples, not raw floats"
-            median_derives_from_stored_not_raw_samples;
-          test "the even-n midpoint never overflows to inf"
-            midpoint_of_huge_samples_stays_finite;
-          test "non-canonical row text is preserved verbatim"
-            non_canonical_row_text_is_preserved_verbatim;
-          test "a flipped digit in the spec sample is corrupt"
-            checksum_spec_sample_digit_flip;
-        ];
-      group "reading files"
-        [
-          test "a missing file reads as None" missing_file_reads_absent;
-          test "read closes its descriptor on any exception"
-            read_closes_its_descriptor_on_any_exception;
-          test "an unreadable path is Io, never absent"
-            unreadable_is_io_never_absent;
-          test "a permission-denied file is Io, never absent"
-            permission_denied_read_is_io_never_absent;
-          test "an escaped error prints its text"
-            an_escaped_error_prints_its_text;
-        ];
-      group "row constructors"
-        [
-          test "exact_row validates id, metric, and count" exact_row_validates;
-          test "sampled_row validates k and samples" sampled_row_validates;
-          test "sampled_row stores samples at file precision"
-            sampled_row_quantizes_to_file_precision;
-          test "row_evidence returns fresh arrays"
-            row_evidence_returns_fresh_arrays;
-          test "a fresh section renders the pinned print contract"
-            fresh_section_renders_canonically;
-        ];
-      group "set_section"
-        [
-          test "inserts in key order and replaces wholesale"
-            set_section_sorts_and_replaces;
-          test "byte-preserves every other section"
-            set_section_preserves_other_sections_bytes;
-          test "annotations render as comments and round-trip"
-            set_section_annotations_round_trip;
-          test "validates identity, annotations, and rows" set_section_validates;
-          test "refuses an empty host or ocaml"
-            set_section_refuses_an_empty_identity_field;
-          test "works on the empty-file baseline"
-            set_section_on_empty_file_baseline;
-        ];
-      group "update_rows"
-        [
-          test "replaces and inserts at (id, metric), keeping order"
-            update_rows_replaces_and_inserts;
-          test "prunes present keys and ignores absent ones" update_rows_prunes;
-          test "rejects a missing section, duplicates, and overlap"
-            update_rows_validates;
-          test "update_rows appends annotations" update_rows_appends_annotations;
-        ];
-      group "atomic write"
-        [
-          test "writes and reads back byte-identically" write_reads_back;
-          test "overwrites atomically and leaves no temp file"
-            write_overwrites_and_leaves_no_temp;
-          test "skips leftover temporary files, within a bound"
-            write_skips_leftover_temporary_files;
-          test "raises Error (Io _) when the directory is missing"
-            write_failure_raises_io;
-          test "raises Error (Io _) in a read-only directory"
-            write_into_readonly_dir_raises_io;
-          test "preserves the target's permission bits"
-            write_preserves_target_permissions;
-        ];
-      group "properties" properties;
-    ]
-  |> exit
+  exit
+    (run "baseline"
+       [
+         types;
+         identifiers;
+         reading;
+         writing;
+         files;
+         section_observers;
+         row_observers;
+         building;
+       ])
