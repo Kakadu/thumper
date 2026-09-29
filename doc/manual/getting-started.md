@@ -12,8 +12,10 @@ opam install thumper
 
 ## A first benchmark
 
-A benchmark is an executable that ends in `Thumper.run`. Ours measures an
-MD5 digest of a 64-byte string and an iterative Fibonacci at two sizes.
+A benchmark is an executable that ends in `Thumper.run`. We keep ours in
+our project's `bench/` directory, as `bench/bench_digest.ml` and, in the
+next section, `bench/dune`. It measures an MD5 digest of a 64-byte string
+and an iterative Fibonacci at two sizes.
 
 `examples/02-getting-started/bench_digest.ml`:
 
@@ -47,8 +49,8 @@ let () =
 `bench` declares a case and `group` names a list of them, so the suite's
 case ids are `md5/string-64`, `fib/10` and `fib/20`. `black_box n` is `n`,
 hidden from the compiler. `no_slower_than 0.05` lets a case's time grow by
-at most 5%, and `no_more_alloc_than 0.0` lets its allocation not grow at
-all. `run` measures the suite, prints the report and returns the exit
+at most 5%, and `no_more_alloc_than 0.0` allows its allocation no
+growth. `run` measures the suite, prints the report and returns the exit
 code.
 
 ## Running it from dune
@@ -77,10 +79,11 @@ We attach the executable to its own alias, `bench`, next to its stanza
 
 ## The first run
 
-The transcripts below run the example as the `bench/` directory of a
-project, and their numbers are one run's. With no baseline yet, every row
-reads `proposed`, and dune shows the corrected file as a diff and fails
-the build:
+The transcripts below run the example in that `bench/` directory, their
+numbers are one run's, and [the report](report.md) explains their columns
+and words, such as `±`, `w` and `inconclusive`. With no baseline yet,
+every row reads `proposed`, and dune shows the corrected file as a diff
+and fails the build:
 
 ```
 $ dune build @bench
