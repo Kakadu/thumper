@@ -1003,6 +1003,17 @@ let strict_fails_a_proposal () =
   equal ~msg:"exit code" int 1
     (main ~config:fast_config ~benches:alpha [ "check"; "--strict" ])
 
+(* A wait of 0 s never sleeps, and both subcommands then measure whatever the
+   load is, bless because of [--force]. What they print on stderr depends on
+   the host's load, so only the exit codes are read. *)
+let wait_quiet_zero () =
+  let (_ : string) = state_env () in
+  equal ~msg:"check's exit code" int 0
+    (main ~config:fast_config ~benches:alpha [ "check"; "--wait-quiet"; "0" ]);
+  equal ~msg:"bless's exit code" int 0
+    (main ~config:fast_config ~benches:alpha
+       [ "bless"; "--force"; "--wait-quiet"; "0" ])
+
 (* A case that removes its baseline's directory while it is measured, so the
    corrected file cannot be written after the measurement. *)
 let vanishing dir =
@@ -1192,6 +1203,8 @@ let running =
         without_a_baseline;
       slow ~timeout:60. "--strict fails a run that proposes"
         strict_fails_a_proposal;
+      slow ~timeout:60. "check and bless --force measure after --wait-quiet 0"
+        wait_quiet_zero;
       slow ~timeout:60.
         "a corrected file check cannot write stops after the report"
         a_late_write_failure_under_check;
