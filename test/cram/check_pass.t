@@ -1,82 +1,44 @@
-A committed matching baseline passes: exit 0 and no candidate file — an
-equivalent run is no diff at all.
+A matching baseline passes: exit 0 and no corrected file, since an
+equivalent run changes nothing. The alloc cases are judged on exact counts,
+so the outcome holds under any load.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-Bootstrap the baseline through the ordinary NEW flow, so its identity
-headers (machine, host, ocaml) are this host's own.
-
-  $ $FIX check --quick > /dev/null 2>&1
+  $ $FIX check --quick -f alloc > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
   $ cp fixture.thumper before.thumper
 
-A leftover candidate from an interrupted run is unlinked at startup (
-no failed or non-measuring invocation leaves a stale artifact to be read).
+A corrected file left by an interrupted run is removed at startup, so no
+stale file survives a run that proposes nothing.
 
-  $ echo stale-junk > fixture.thumper.corrected
+  $ echo stale > fixture.thumper.corrected
+  $ $FIX check --quick -f alloc > out.log 2>&1
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
+  $ cmp fixture.thumper before.thumper
 
-A cold runner can genuinely speed up between the bootstrap and this
-check, and a confirmed improvement writes a candidate — that is the
-ratchet working, not a failure. Promote and re-check until the steady
-state (everything equivalent, no candidate); the startup unlink of the
-stale junk is asserted on every attempt.
+Outside a rule action the header names the baseline by its absolute path,
+and the summary counts every case passed.
 
-  $ for i in 1 2 3; do
-  >   $FIX check --quick --wait-quiet 5 > out.log 2>&1
-  >   if grep -q stale-junk fixture.thumper.corrected 2>/dev/null; then
-  >     echo stale-survived
-  >   fi
-  >   if [ ! -e fixture.thumper.corrected ]; then break; fi
-  >   mv fixture.thumper.corrected fixture.thumper
-  > done
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ head -1 out.log
+  thumper: fixture — 2 cases vs $TESTCASE_ROOT/fixture.thumper for machine testkey
+  $ grep -o '2 cases: .*' out.log
+  2 cases: 2 passed.
 
-The report always prints, complete: a pass
-run is header, table, summary — no FAIL, no prompt. Outside a rule action
-the baseline path renders absolute (a candidate can never hide behind an
-unknown cwd), so the header names the full path. Both legs hold whatever
-the gate did: on a quiet host every case passes; on a loaded host the
-verdicts degrade to inconclusive and the summary says so — the shape is
-identical.
-
-  $ grep -c 'fixture — 7 cases vs /.*/fixture.thumper for machine testkey' out.log
-  1
-  $ grep -Ec '7 cases: [0-9]+ passed' out.log
-  1
-  $ grep -Ec ' [0-9.]+ [mun]?s .* busy/spin$' out.log
-  1
-  $ grep -c 'accept:' out.log
-  0
-  [1]
-  $ grep -c 'REGRESSED' out.log
-  0
-  [1]
-
-The status line is stderr-TTY-only narration: a redirected run captures
-zero bytes of it.
+The status line is for a terminal: a redirected run carries none of it.
 
   $ grep -c 'thumper: measuring \|thumper: confirming ' out.log
   0
   [1]
 
-The baseline itself is never written.
+--baseline PATH replaces the default file: the run judges PATH and writes
+PATH.corrected, and an absent PATH is a first run.
 
-  $ cmp -s fixture.thumper before.thumper && echo baseline-untouched
-  baseline-untouched
-
---baseline PATH overrides the default <suite>.thumper: the
-run judges against PATH and owns PATH.corrected; the default path's
-artifacts are untouched. An absent PATH is the ordinary NEW flow.
-
-  $ $FIX check --quick --baseline alt.thumper > alt.log 2>&1
-  $ test -f alt.thumper.corrected && echo alt-candidate
-  alt-candidate
-  $ test ! -e fixture.thumper.corrected && echo default-untouched
-  default-untouched
-  $ grep -c 'no baseline for machine testkey' alt.log
-  1
+  $ $FIX check --quick -f alloc --baseline alt.thumper > alt.log 2>&1
+  $ test -f alt.thumper.corrected && echo alt-corrected-file
+  alt-corrected-file
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
+  $ grep -o 'no baseline for machine testkey' alt.log
+  no baseline for machine testkey
