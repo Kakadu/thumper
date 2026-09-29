@@ -2,10 +2,7 @@ Selection: -f patterns are id substrings, OR'd; --tag is
 exact tag membership, AND'd; the two compose as AND of (OR ids) and tags.
 An empty selection is exit 2 — a broken filter must not silently pass.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
 list prints the selected case ids without measuring.
@@ -40,17 +37,14 @@ carries both the group's "cpu" tag and its own "lab" tag.
   $ $FIX list -f spin -f half --tag lab
   busy/half
 
-An empty selection is exit 2 wherever it lands, with the reason spelled
-out.
+An empty selection exits 2 wherever it lands, with the reason on stderr,
+and leaves no file.
 
-  $ $FIX check --quick --tag nope > out.log 2>&1
+  $ $FIX check --quick --tag nope > /dev/null
+  thumper: no case matches tag 'nope'
   [2]
-  $ grep -q "no case matches tag 'nope'" out.log && echo refused
-  refused
-  $ $FIX list --tag nope > out2.log 2>&1
+  $ $FIX list --tag nope > /dev/null
+  thumper: no case matches tag 'nope'
   [2]
-
-No selection error ever leaves an artifact.
-
-  $ test ! -e fixture.thumper.corrected && echo no-candidate
-  no-candidate
+  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
+  no-corrected-file
