@@ -29,8 +29,8 @@ val now_ns : unit -> int
 
     The timestamp is an immediate [int], so a reading allocates nothing and can
     sit inside an allocation-counter interval. It needs 63-bit ints, which hold
-    146 years of nanoseconds. A 32-bit platform is not supported, and nothing
-    refuses to build on one.
+    146 years of nanoseconds. A 32-bit platform is not supported: the stubs
+    refuse to compile there.
 
     The module reads the clock once when it is initialized, so a clock that
     fails raises when the program starts, before thumper runs any code.

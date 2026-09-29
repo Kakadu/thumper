@@ -35,6 +35,10 @@
 #include <caml/memory.h>
 #include <caml/fail.h>
 
+#if !defined(ARCH_SIXTYFOUR)
+#error "thumper needs a 64-bit OCaml: Thumper_clock.now_ns is an immediate int"
+#endif
+
 #include <stdint.h>
 
 #define Val_none Val_int(0)
