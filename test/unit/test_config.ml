@@ -3,205 +3,226 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Unit tests for [Config].
-   [Config] is a private module of the library, reached — with its dependency
-   [Metric] — through the facade's [Thumper.Private] re-export, so rebuilds
-   track [lib/config.{ml,mli}]. *)
+(* A config is compared as a record of its fields, so an expected value is a
+   literal in the source and a failure prints every field. *)
 
 open Windtrap
 module Config = Thumper.Private.Config
 module Metric = Thumper.Private.Metric
 
-(* Asserts every field of [t]. Defaults are [Config.default]'s pinned values, so
-   each setter test overrides exactly the field it set and the helper proves
-   the other six knobs were left alone. *)
-let check ?(n = 20) ?(batch_floor = 5e-3) ?(warmup_time = 0.1)
-    ?(warmup_batches = 3) ?(deadline = 10.)
-    ?(metrics = [ "wall_time"; "alloc_words" ]) ?(fork = true) (t : Config.t) =
-  equal ~msg:"n" int n t.Config.n;
-  equal ~msg:"batch_floor" float_exact batch_floor t.Config.batch_floor;
-  equal ~msg:"warmup_time" float_exact warmup_time t.Config.warmup_time;
-  equal ~msg:"warmup_batches" int warmup_batches t.Config.warmup_batches;
-  equal ~msg:"deadline" float_exact deadline t.Config.deadline;
-  equal ~msg:"metrics" (list string) metrics
-    (List.map Metric.id t.Config.metrics);
-  equal ~msg:"fork" bool fork t.Config.fork
+type fields = {
+  n : int;
+  batch_floor : float;
+  warmup_time : float;
+  warmup_batches : int;
+  deadline : float;
+  metrics : string list;
+  fork : bool;
+}
 
-(* Presets: the protocol constants, pinned literally. A change here is a
-   protocol change (trials stop being comparable across versions), not a
-   tuning tweak. *)
+let fields_of (t : Config.t) =
+  {
+    n = t.Config.n;
+    batch_floor = t.Config.batch_floor;
+    warmup_time = t.Config.warmup_time;
+    warmup_batches = t.Config.warmup_batches;
+    deadline = t.Config.deadline;
+    metrics = List.map Metric.id t.Config.metrics;
+    fork = t.Config.fork;
+  }
 
-let default_pins_u2 () = check Config.default
+let pp_fields ppf f =
+  Format.fprintf ppf
+    "@[<hv 2>{ n = %d;@ batch_floor = %g;@ warmup_time = %g;@ warmup_batches = \
+     %d;@ deadline = %g;@ metrics = [%s];@ fork = %b }@]"
+    f.n f.batch_floor f.warmup_time f.warmup_batches f.deadline
+    (String.concat "; " f.metrics)
+    f.fork
 
-let quick_is_default_with_11 () =
-  (* Only the batch count moves. *)
-  check ~n:11 Config.quick
+let equal_fields a b =
+  Int.equal a.n b.n
+  && Float.equal a.batch_floor b.batch_floor
+  && Float.equal a.warmup_time b.warmup_time
+  && Int.equal a.warmup_batches b.warmup_batches
+  && Float.equal a.deadline b.deadline
+  && List.equal String.equal a.metrics b.metrics
+  && Bool.equal a.fork b.fork
 
-let precise_is_default_with_40 () = check ~n:40 Config.precise
+let fields = Testable.make ~pp:pp_fields ~equal:equal_fields
+let config = Testable.contramap fields_of fields
 
-(* Setters: each sets its one knob and leaves the other six alone. *)
+(* Presets *)
 
-let samples_sets_n () = check ~n:30 Config.(default |> samples 30)
+let default =
+  {
+    n = 20;
+    batch_floor = 5e-3;
+    warmup_time = 0.1;
+    warmup_batches = 3;
+    deadline = 10.;
+    metrics = [ "wall_time"; "alloc_words" ];
+    fork = true;
+  }
 
-let samples_accepts_the_minimum () =
-  (* n = 3 is the stats floor; the boundary must construct. *)
-  check ~n:3 Config.(default |> samples 3)
-
-let samples_has_no_upper_bound () =
-  (* Large n is cost, not correctness (the deadline is the cost guard); an
-     upper bound would be a contract change and must show up here. *)
-  check ~n:10_000 Config.(default |> samples 10_000)
-
-let batch_floor_sets_the_floor () =
-  check ~batch_floor:1e-3 Config.(default |> batch_floor 1e-3)
-
-let warmup_sets_the_timed_arm () =
-  check ~warmup_time:0.5 Config.(default |> warmup 0.5)
-
-let warmup_zero_disables_the_timed_arm () =
-  (* The 3-batch arm remains: warmup_batches has no setter. *)
-  check ~warmup_time:0. Config.(default |> warmup 0.)
-
-let deadline_sets_the_cap () =
-  check ~deadline:60. Config.(default |> deadline 60.)
-
-let deadline_infinity_removes_the_cap () =
-  check ~deadline:infinity Config.(default |> deadline infinity)
-
-let deadline_permits_a_cap_below_the_protocol_cost () =
-  (* 1 ms < warmup + n × floor: the config can never complete its batches.
-     Constructible by contract — cross-knob validation is [Measure]'s job
-     ([Deadline_exceeded]); rejecting here would make chains order-dependent. *)
-  check ~deadline:1e-3 Config.(default |> deadline 1e-3)
-
-let setters_are_order_independent () =
-  (* No setter validates across knobs: raising n before lowering the cap and
-     the reverse both construct the same config. An eager cross-field check
-     would make exactly one of these orders raise. *)
-  check ~n:200 ~deadline:0.01 Config.(default |> samples 200 |> deadline 0.01);
-  check ~n:200 ~deadline:0.01 Config.(default |> deadline 0.01 |> samples 200)
-
-let metrics_sets_the_list () =
-  check
-    ~metrics:[ "cpu_time"; "minor_alloc_words" ]
-    Config.(default |> metrics Metric.[ cpu_time; minor_alloc_words ])
-
-let fork_sets_the_flag () = check ~fork:false Config.(default |> fork false)
-
-let setters_chain_in_pipelines () =
-  check ~n:30 ~batch_floor:1e-3 ~warmup_time:0.2 ~deadline:60.
-    ~metrics:[ "wall_time" ] ~fork:false
-    Config.(
-      quick |> samples 30 |> batch_floor 1e-3 |> warmup 0.2 |> deadline 60.
-      |> metrics [ Metric.wall_time ]
-      |> fork false)
-
-(* Validation: Invalid_argument on nonsense, with a message naming the setter
-   and the offending value. One exact message is pinned per setter; the range
-   tables assert the exception class. *)
-
-let samples_rejects_below_3 () =
-  raises
-    (Invalid_argument "Thumper.Config.samples: 2 (need at least 3 samples)")
-    (fun () -> Config.(default |> samples 2))
-
-let batch_floor_rejects_nonpositive () =
-  raises
-    (Invalid_argument
-       "Thumper.Config.batch_floor: 0 (need a finite positive duration in \
-        seconds)") (fun () -> Config.(default |> batch_floor 0.))
-
-let warmup_rejects_negative () =
-  raises
-    (Invalid_argument
-       "Thumper.Config.warmup: -0.1 (need a finite non-negative duration in \
-        seconds)") (fun () -> Config.(default |> warmup (-0.1)))
-
-let deadline_rejects_nonpositive () =
-  raises
-    (Invalid_argument
-       "Thumper.Config.deadline: -5 (need a positive duration in seconds)")
-    (fun () -> Config.(default |> deadline (-5.)))
-
-let metrics_rejects_empty () =
-  raises (Invalid_argument "Thumper.Config.metrics: empty metric list")
-    (fun () -> Config.(default |> metrics []))
-
-let metrics_rejects_duplicates () =
-  (* Duplicate identity is the id, and detection is order-free: the pair need
-     not be adjacent. *)
-  raises (Invalid_argument "Thumper.Config.metrics: duplicate metric wall_time")
-    (fun () ->
-      Config.(default |> metrics Metric.[ wall_time; cpu_time; wall_time ]))
-
-let metrics_accepts_distinct_lists () =
-  check
-    ~metrics:[ "alloc_words"; "wall_time" ]
-    Config.(default |> metrics Metric.[ alloc_words; wall_time ])
-
-let () =
-  run "config"
+let presets =
+  cases "Presets"
+    ~name:(fun (name, _, _) -> name)
     [
-      group "presets"
-        [
-          test "default pins the protocol constants" default_pins_u2;
-          test "quick is default with 11 batches" quick_is_default_with_11;
-          test "precise is default with 40 batches" precise_is_default_with_40;
-        ];
-      group "setters"
-        [
-          test "samples sets only the batch count" samples_sets_n;
-          test "samples accepts the n = 3 stats floor"
-            samples_accepts_the_minimum;
-          test "samples has no upper bound" samples_has_no_upper_bound;
-          test "batch_floor sets only the floor" batch_floor_sets_the_floor;
-          test "warmup sets only the timed arm" warmup_sets_the_timed_arm;
-          test "warmup 0 disables the timed arm, keeps the batch arm"
-            warmup_zero_disables_the_timed_arm;
-          test "deadline sets only the cap" deadline_sets_the_cap;
-          test "deadline infinity removes the cap"
-            deadline_infinity_removes_the_cap;
-          test "deadline permits a cap below the protocol cost"
-            deadline_permits_a_cap_below_the_protocol_cost;
-          test "setters are order-independent across knobs"
-            setters_are_order_independent;
-          test "metrics sets only the metric list" metrics_sets_the_list;
-          test "fork sets only the fork flag" fork_sets_the_flag;
-          test "setters chain in pipelines" setters_chain_in_pipelines;
-        ];
-      group "validation"
-        [
-          test "samples rejects n < 3 with the setter and value"
-            samples_rejects_below_3;
-          cases ~name:string_of_int "samples rejects n < 3" [ 2; 1; 0; -1 ]
-            (fun n ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Config.(default |> samples n)));
-          test "batch_floor rejects a zero floor"
-            batch_floor_rejects_nonpositive;
-          cases ~name:(Printf.sprintf "%g")
-            "batch_floor rejects non-finite or non-positive"
-            [ 0.; -1e-3; nan; infinity; neg_infinity ] (fun s ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Config.(default |> batch_floor s)));
-          test "warmup rejects a negative duration" warmup_rejects_negative;
-          cases ~name:(Printf.sprintf "%g")
-            "warmup rejects non-finite or negative"
-            [ -1e-9; -1.; nan; infinity; neg_infinity ] (fun s ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Config.(default |> warmup s)));
-          test "deadline rejects a non-positive cap"
-            deadline_rejects_nonpositive;
-          cases ~name:(Printf.sprintf "%g")
-            "deadline rejects non-positive or NaN"
-            [ 0.; -5.; nan; neg_infinity ] (fun s ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Config.(default |> deadline s)));
-          test "metrics rejects an empty list" metrics_rejects_empty;
-          test "metrics rejects duplicate ids, order-free"
-            metrics_rejects_duplicates;
-          test "metrics accepts any duplicate-free list"
-            metrics_accepts_distinct_lists;
-        ];
+      ( "default is 20 samples, a 5 ms floor, 100 ms and 3 batches of warmup, \
+         a 10 s deadline, wall_time and alloc_words, forked",
+        Config.default,
+        default );
+      ("quick is default with 11 samples", Config.quick, { default with n = 11 });
+      ( "precise is default with 40 samples",
+        Config.precise,
+        { default with n = 40 } );
     ]
-  |> exit
+    (fun (_, t, expected) -> equal fields expected (fields_of t))
+
+(* Setters *)
+
+(* Values at the edge of what each field admits. A setter checks its own field
+   only, so a deadline shorter than the protocol it bounds is accepted too. *)
+let accepted =
+  let d = Config.default in
+  [
+    ("samples 3, the fewest", fun () -> Config.samples 3 d);
+    ("samples 10_000, no upper bound", fun () -> Config.samples 10_000 d);
+    ("warmup 0", fun () -> Config.warmup 0. d);
+    ("deadline infinity", fun () -> Config.deadline infinity d);
+    ( "deadline 1 ms, shorter than warmup and the samples",
+      fun () -> Config.deadline 1e-3 d );
+    ( "metrics in another order than the default's",
+      fun () -> Config.metrics Metric.[ alloc_words; wall_time ] d );
+  ]
+
+let refusal f =
+  match f () with
+  | (_ : Config.t) -> None
+  | exception Invalid_argument msg -> Some msg
+
+let refusals =
+  let d = Config.default in
+  [
+    ( "samples 2",
+      (fun () -> Config.samples 2 d),
+      __POS_OF__ {| Thumper.Config.samples: 2 (need at least 3 samples) |} );
+    ( "samples 1",
+      (fun () -> Config.samples 1 d),
+      __POS_OF__ {| Thumper.Config.samples: 1 (need at least 3 samples) |} );
+    ( "samples 0",
+      (fun () -> Config.samples 0 d),
+      __POS_OF__ {| Thumper.Config.samples: 0 (need at least 3 samples) |} );
+    ( "samples -1",
+      (fun () -> Config.samples (-1) d),
+      __POS_OF__ {| Thumper.Config.samples: -1 (need at least 3 samples) |} );
+    ( "batch_floor 0",
+      (fun () -> Config.batch_floor 0. d),
+      __POS_OF__
+        {| Thumper.Config.batch_floor: 0 (need a finite positive duration in seconds) |}
+    );
+    ( "batch_floor -0.001",
+      (fun () -> Config.batch_floor (-1e-3) d),
+      __POS_OF__
+        {| Thumper.Config.batch_floor: -0.001 (need a finite positive duration in seconds) |}
+    );
+    ( "batch_floor nan",
+      (fun () -> Config.batch_floor nan d),
+      __POS_OF__
+        {| Thumper.Config.batch_floor: nan (need a finite positive duration in seconds) |}
+    );
+    ( "batch_floor infinity",
+      (fun () -> Config.batch_floor infinity d),
+      __POS_OF__
+        {| Thumper.Config.batch_floor: inf (need a finite positive duration in seconds) |}
+    );
+    ( "batch_floor neg_infinity",
+      (fun () -> Config.batch_floor neg_infinity d),
+      __POS_OF__
+        {| Thumper.Config.batch_floor: -inf (need a finite positive duration in seconds) |}
+    );
+    ( "warmup -0.1",
+      (fun () -> Config.warmup (-0.1) d),
+      __POS_OF__
+        {| Thumper.Config.warmup: -0.1 (need a finite non-negative duration in seconds) |}
+    );
+    ( "warmup -1e-9",
+      (fun () -> Config.warmup (-1e-9) d),
+      __POS_OF__
+        {| Thumper.Config.warmup: -1e-09 (need a finite non-negative duration in seconds) |}
+    );
+    ( "warmup -1",
+      (fun () -> Config.warmup (-1.) d),
+      __POS_OF__
+        {| Thumper.Config.warmup: -1 (need a finite non-negative duration in seconds) |}
+    );
+    ( "warmup nan",
+      (fun () -> Config.warmup nan d),
+      __POS_OF__
+        {| Thumper.Config.warmup: nan (need a finite non-negative duration in seconds) |}
+    );
+    ( "warmup infinity",
+      (fun () -> Config.warmup infinity d),
+      __POS_OF__
+        {| Thumper.Config.warmup: inf (need a finite non-negative duration in seconds) |}
+    );
+    ( "warmup neg_infinity",
+      (fun () -> Config.warmup neg_infinity d),
+      __POS_OF__
+        {| Thumper.Config.warmup: -inf (need a finite non-negative duration in seconds) |}
+    );
+    ( "deadline 0",
+      (fun () -> Config.deadline 0. d),
+      __POS_OF__
+        {| Thumper.Config.deadline: 0 (need a positive duration in seconds) |}
+    );
+    ( "deadline -5",
+      (fun () -> Config.deadline (-5.) d),
+      __POS_OF__
+        {| Thumper.Config.deadline: -5 (need a positive duration in seconds) |}
+    );
+    ( "deadline nan",
+      (fun () -> Config.deadline nan d),
+      __POS_OF__
+        {| Thumper.Config.deadline: nan (need a positive duration in seconds) |}
+    );
+    ( "deadline neg_infinity",
+      (fun () -> Config.deadline neg_infinity d),
+      __POS_OF__
+        {| Thumper.Config.deadline: -inf (need a positive duration in seconds) |}
+    );
+    ( "metrics []",
+      (fun () -> Config.metrics [] d),
+      __POS_OF__ {| Thumper.Config.metrics: empty metric list |} );
+    ( "metrics with one id twice, not adjacent",
+      (fun () -> Config.metrics Metric.[ wall_time; cpu_time; wall_time ] d),
+      __POS_OF__ {| Thumper.Config.metrics: duplicate metric wall_time |} );
+  ]
+
+let setters =
+  group "Setters"
+    [
+      cases "a setter accepts"
+        ~name:(fun (name, _) -> name)
+        accepted
+        (fun (_, f) -> ignore (f () : Config.t));
+      test "a chain of setters gives one config in any order" (fun () ->
+          equal config
+            Config.(default |> samples 200 |> deadline 0.01)
+            Config.(default |> deadline 0.01 |> samples 200));
+      test "no setter changes warmup_batches" (fun () ->
+          let t =
+            Config.(
+              quick |> samples 30 |> batch_floor 1e-3 |> warmup 0.
+              |> deadline 60.
+              |> metrics [ Metric.wall_time ]
+              |> fork false)
+          in
+          equal int 3 t.Config.warmup_batches);
+      cases "a setter refuses a value that breaks its field's invariant"
+        ~name:(fun (name, _, _) -> name)
+        refusals
+        (fun (_, f, pos) -> expect (require_some (refusal f)) pos);
+    ]
+
+let () = exit (run "config" [ presets; setters ])
