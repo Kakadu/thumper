@@ -294,7 +294,7 @@ let table_lines ~color rows =
 (* Only REGRESSED is capitalized, and only when the metric fails its case. A
    non-time metric's fragment carries the metric's tag after its word; the
    cell holds the case's notable relations, most severe first, joined by
-   ["; "]. *)
+   ["; "], except that the row opens on the case's outcome ([check_cell]). *)
 
 let metric_tag m =
   match Metric.kind m with
@@ -441,32 +441,59 @@ let check_cell (c : Verdict.case_report) =
   else
     let notable =
       List.filter_map
-        (fun mr -> fragment_of ~primary:(is_primary mr) c mr)
+        (fun (mr : Verdict.metric_report) ->
+          Option.map
+            (fun (rank, f) -> (rank, Option.is_some mr.budget, f))
+            (fragment_of ~primary:(is_primary mr) c mr))
         c.reports
     in
     match notable with
     | [] -> [ frag ~style:`Faint "equivalent" "" ]
     | _ -> (
-        let non_pass = List.exists (fun (rank, _) -> rank <= 2) notable in
+        let non_pass = List.exists (fun (rank, _, _) -> rank <= 2) notable in
         let reassure =
           if non_pass then
             List.filter_map
-              (fun mr -> reassurance_of ~primary:(is_primary mr) c mr)
+              (fun mr ->
+                Option.map
+                  (fun (rank, f) -> (rank, false, f))
+                  (reassurance_of ~primary:(is_primary mr) c mr))
               c.reports
           else []
         in
-        let frags =
+        let ranked =
           List.stable_sort
-            (fun (a, _) (b, _) -> Int.compare a b)
+            (fun (a, _, _) (b, _, _) -> Int.compare a b)
             (notable @ reassure)
-          |> List.map snd
         in
-        (* Only a non-time metric is proposed: the compared metric was
-           equivalent, and the row says so before naming what is proposed. *)
-        match frags with
-        | { word = "proposed"; detail; _ } :: _ when detail <> "" ->
-            frag ~style:`Faint "equivalent" "" :: frags
-        | _ -> frags)
+        (* The row opens on the case's outcome, as the summary counts it: a
+           relation that neither fails nor holds up its case, such as a
+           regression under a cap or an inconclusive metric without a budget,
+           follows on the detail line. *)
+        let opens (rank, budgeted, _) =
+          match Verdict.case_overall c with
+          | `Fail -> rank = 0
+          | `Inconclusive -> rank = 2 && budgeted
+          | `Pass -> rank >= 3 && rank <= 5
+        in
+        let rec split = function
+          | [] -> (None, [])
+          | x :: xs when opens x -> (Some x, xs)
+          | x :: xs ->
+              let o, r = split xs in
+              (o, x :: r)
+        in
+        let opening, rest = split ranked in
+        let rest = List.map (fun (_, _, f) -> f) rest in
+        match opening with
+        (* Only a non-time metric is proposed with a detail. Its case passes
+           and no compared relation opens the row, so the row reads
+           [equivalent] before naming what is proposed. *)
+        | Some (_, _, ({ word = "proposed"; detail; _ } as f)) when detail <> ""
+          ->
+            frag ~style:`Faint "equivalent" "" :: f :: rest
+        | Some (_, _, f) -> f :: rest
+        | None -> frag ~style:`Faint "equivalent" "" :: rest)
 
 (* The report *)
 

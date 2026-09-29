@@ -466,10 +466,13 @@ val run :
     The summary counts each case once, by its outcome: [regressed] when it
     fails, [inconclusive] when a budgeted metric is inconclusive, and among the
     passing cases [proposed] when no metric has a baseline row, [improved] when
-    its row opens on [improved], and [passed] otherwise. A case whose row shows
-    only a [regressed] that fails nothing, or an [inconclusive] without a
-    budget, counts as passed. The summary ends with [; failed under --strict]
-    when [--strict] alone made the run exit 1. *)
+    its row opens on [improved], and [passed] otherwise. A row opens on its
+    case's outcome: [REGRESSED] when the case fails, [inconclusive] when a
+    budgeted metric is inconclusive, and a passing word otherwise. A [regressed]
+    that fails nothing and an [inconclusive] without a budget follow on the
+    row's detail line; a case whose only non-passing relations are these counts
+    as passed. The summary ends with [; failed under --strict] when [--strict]
+    alone made the run exit 1. *)
 
 (** {2:files Files}
 

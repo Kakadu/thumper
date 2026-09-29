@@ -205,6 +205,28 @@ let failing_first () =
         "alpha",
       both () )
 
+(* Relations that do not decide their case: an inconclusive allocation
+   without a budget beside an equivalent time, and an allocation regression
+   without a budget beside a time regression the confirmation did not
+   reproduce. *)
+let undecided () =
+  let file =
+    file_of
+      [
+        wall_row "passes" (ties 5 1e-6);
+        alloc_row "passes" 54;
+        wall_row "waits" (ties 5 1e-6);
+        Baseline.sampled_row ~id:"waits" ~metric:"alloc_words" ~k:8
+          ~samples:(ties 5 100.0);
+      ]
+  in
+  verdict_of_cases ~file
+    ~confirm:(fun _ -> Some (sampled_alloc ~wall:(ties 5 1e-6) 200.0))
+    [
+      (bcase "passes", sampled_alloc 54.);
+      (bcase "waits", sampled_alloc ~wall:(ties 5 2e-6) 200.0);
+    ]
+
 let improvement () =
   let file = file_of [ wall_row "alpha" (ties 5 2e-6); alloc_row "alpha" 54 ] in
   verdict_of ~file
@@ -461,6 +483,9 @@ let check_states =
       "a loaded run that writes the corrected file warns once, under the header"
       loaded_proposed;
     check "failing-first" "the failing metric opens the row" failing_first;
+    check "undecided"
+      "a relation that does not decide its case follows on the detail line"
+      undecided;
     check ~wrote:true "improved" "an improvement prints its interval"
       improvement;
     check "within-budget"
@@ -765,24 +790,6 @@ let recorded_identities =
        release)" );
   ]
 
-(* A row opens on the word of its most severe relation, and the summary counts
-   the case by [Verdict.case_overall], which ignores a metric without a
-   budget. *)
-let an_inconclusive_row_is_not_counted_as_passed () =
-  let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let lines =
-    String.split_on_char '\n'
-      (Report.check (render ())
-         (verdict_of ~file (bcase "alpha", sampled_alloc 54.)))
-  in
-  let opens_inconclusive =
-    List.exists (String.starts_with ~prefix:"  inconclusive") lines
-  in
-  let counted_inconclusive =
-    List.exists (String.ends_with ~suffix:" 1 inconclusive.") lines
-  in
-  equal bool opens_inconclusive counted_inconclusive
-
 let first (name, _, _) = name
 let first4 (name, _, _, _) = name
 let first5 (name, _, _, _, _) = name
@@ -838,12 +845,6 @@ let check_report =
           summary_colours (fun (_, verdict, strict, summary) ->
             contains ~sub:summary
               (Report.check (render ~color:true ~strict ()) (verdict ())));
-        xfail
-          ~reason:
-            "a case that passes over an inconclusive metric without a budget \
-             opens its row on inconclusive, and the summary counts it passed"
-          (test "a row that opens on inconclusive is not counted as passed"
-             an_inconclusive_row_is_not_counted_as_passed);
         cases "a recorded identity is quoted when it holds a control byte"
           ~name:first recorded_identities (fun (_, recorded, header) ->
             equal string header (header_of_stale recorded));

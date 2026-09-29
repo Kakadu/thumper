@@ -83,8 +83,12 @@ val check : render -> Verdict.t -> string
     The report and {!Verdict.exit_code} share one predicate,
     {!Verdict.report_fails}. A metric reads [REGRESSED] iff it fails its case,
     and then has an [::error::] line when [r.github]. A case counts as regressed
-    in the summary iff one of its metrics fails it. The [rerun:] line prints iff
-    [r.exe] is [Some _] and some case fails. The summary, which only a run
+    in the summary iff one of its metrics fails it. A row opens on its case's
+    {!Verdict.case_overall}, the outcome the summary counts it by: [REGRESSED]
+    for [`Fail], [inconclusive] for [`Inconclusive], and for [`Pass] a passing
+    word ([improved], [within budget], [proposed] or [equivalent]). A relation
+    that decides nothing follows on the detail line. The [rerun:] line prints
+    iff [r.exe] is [Some _] and some case fails. The summary, which only a run
     against a current section prints, is red iff
     [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
 
