@@ -803,8 +803,10 @@ module Check : sig
       [inconclusive: environment]. Exact comparisons ignore the load.
 
       {[
-      let v = Check.run ?baseline:(Baseline.read_exn "nx.thumper") "nx" suite in
-      Option.iter (Baseline.write "nx.thumper.corrected") (Verdict.corrected v);
+      let baseline = Baseline.read_exn file in
+      let v = Check.run ?baseline "programmatic" suite in
+      print_endline (Verdict.to_json v);
+      Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
       exit (Verdict.exit_code v)
       ]}
 
