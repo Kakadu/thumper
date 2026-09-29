@@ -163,9 +163,9 @@ metric's rows, one per case that collects it, by relation
 | `n_inconclusive` | integer | the rows whose `relation` is `"inconclusive"` or `null` |
 | `geomean_delta` | number or `null` | the geometric mean of `1 + delta` over the rows whose `delta` is a number above `-1`, less 1 |
 
-The four counts add up to the number of cases that collect the metric. A
-proposed row counts in `n_inconclusive`, and so does an inconclusive row
-without a budget, whose case passes.
+The four counts add up to the number of cases that collect the metric.
+`n_inconclusive` counts every proposed row and every inconclusive row,
+budgeted or not.
 
 `geomean_delta` covers every row with a number in `delta`, an inconclusive
 row that reports an estimate included. It leaves out an exact count that
