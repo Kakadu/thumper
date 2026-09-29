@@ -53,6 +53,11 @@
  (libraries thumper unix windtrap))
 
 (test
+ (name test_os)
+ (modules test_os)
+ (libraries thumper thumper_clock unix windtrap))
+
+(test
  (name test_baseline)
  ; The format fixtures (the spec's verbatim sample, the empty file) are runtime
  ; dependencies.

@@ -16,7 +16,7 @@ a duration.
 
 ## Layout
 
-One windtrap suite per module under `test/unit/`: `test_stats`,
+One windtrap suite per module under `test/unit/`: `test_os`, `test_stats`,
 `test_metric`, `test_budget`, `test_config`, `test_run`, `test_bench`,
 `test_env`, `test_baseline`, `test_measure`, `test_verdict`,
 `test_check`, `test_cli`, plus `test_thumper` (facade smoke through
