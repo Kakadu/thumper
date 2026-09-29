@@ -3,274 +3,214 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Unit tests for [Run].
-   [Run] is a private module of the library, reached — with [Metric], its one
-   dependency — through the facade's [Thumper.Private] re-export, so rebuilds
-   track [lib/run.{ml,mli}]. *)
-
 open Windtrap
 module Metric = Thumper.Private.Metric
 module Run = Thumper.Private.Run
 
-let invalid fn =
-  raises_match (function Invalid_argument _ -> true | _ -> false) fn
+let sampled sorted = Run.sampled ~sorted ~drifted:false
 
-let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
+let measurement =
+  Testable.contramap
+    (function
+      | Run.Samples s -> Either.Left (s.Run.sorted, s.Run.drifted)
+      | Run.Exact n -> Either.Right n)
+    (either (pair (array float_exact) bool) int)
 
-let pp_measurement ppf = function
-  | Run.Samples s ->
-      let pp_sep ppf () = Format.fprintf ppf ";@ " in
-      Format.fprintf ppf "Samples %a"
-        (Format.pp_print_list ~pp_sep Format.pp_print_float)
-        (Array.to_list s.sorted)
-  | Run.Exact n -> Format.fprintf ppf "Exact %d" n
+let refusal f =
+  match f () with _ -> None | exception Invalid_argument m -> Some m
 
-(* Valid evidence never holds NaN, so structural equality is sound here. *)
-let measurement = Testable.make ~pp:pp_measurement ~equal:( = )
+(* Sampled evidence *)
 
-(* The sampled constructor *)
+let refused_vectors =
+  [
+    ("no value", [||], __POS_OF__ {| Run.sampled: 0 samples, need at least 3 |});
+    ( "one value",
+      [| 1. |],
+      __POS_OF__ {| Run.sampled: 1 samples, need at least 3 |} );
+    ( "two values",
+      [| 1.; 2. |],
+      __POS_OF__ {| Run.sampled: 2 samples, need at least 3 |} );
+    ( "a descent at the start",
+      [| 2.; 1.; 3. |],
+      __POS_OF__ {| Run.sampled: vector not sorted ascending |} );
+    ( "a descending vector",
+      [| 3.; 2.; 1. |],
+      __POS_OF__ {| Run.sampled: vector not sorted ascending |} );
+    ( "a descent at the end",
+      [| 1.; 2.; 3.; 2.5 |],
+      __POS_OF__ {| Run.sampled: vector not sorted ascending |} );
+    ( "nan first",
+      [| Float.nan; 1.; 2. |],
+      __POS_OF__ {| Run.sampled: non-finite sample |} );
+    ( "nan inside",
+      [| 1.; Float.nan; 2. |],
+      __POS_OF__ {| Run.sampled: non-finite sample |} );
+    ( "nan last",
+      [| 1.; 2.; Float.nan |],
+      __POS_OF__ {| Run.sampled: non-finite sample |} );
+    ( "neg_infinity first",
+      [| Float.neg_infinity; 1.; 2. |],
+      __POS_OF__ {| Run.sampled: non-finite sample |} );
+    ( "infinity last",
+      [| 1.; 2.; Float.infinity |],
+      __POS_OF__ {| Run.sampled: non-finite sample |} );
+  ]
 
-let sampled_accepts_sorted () =
-  let s = sam ~drifted:true [| 1.; 2.; 3. |] in
-  equal ~msg:"sorted" (array float_exact) [| 1.; 2.; 3. |] s.Run.sorted;
-  is_true ~msg:"drifted" s.Run.drifted
-
-let sampled_accepts_ties () =
-  let s = sam [| 1.; 1.; 1. |] in
-  equal (array float_exact) [| 1.; 1.; 1. |] s.Run.sorted
-
-let sampled_rejects_short () =
-  invalid (fun () -> sam [||]);
-  invalid (fun () -> sam [| 1. |]);
-  invalid (fun () -> sam [| 1.; 2. |])
-
-let sampled_rejects_unsorted () =
-  invalid (fun () -> sam [| 2.; 1.; 3. |]);
-  invalid (fun () -> sam [| 3.; 2.; 1. |]);
-  invalid (fun () -> sam [| 1.; 2.; 3.; 2.5 |])
-
-let sampled_rejects_nan () =
-  (* NaN satisfies pairwise ascending checks vacuously, so each position must
-     be caught by the finiteness check, not sortedness. *)
-  invalid (fun () -> sam [| Float.nan; 1.; 2. |]);
-  invalid (fun () -> sam [| 1.; Float.nan; 2. |]);
-  invalid (fun () -> sam [| 1.; 2.; Float.nan |])
-
-let sampled_rejects_infinite () =
-  invalid (fun () -> sam [| Float.neg_infinity; 1.; 2. |]);
-  invalid (fun () -> sam [| 1.; 2.; Float.infinity |])
-
-(* Array ownership *)
-
-let constructor_copies_input () =
-  let input = [| 1.; 2.; 3. |] in
-  let s = sam input in
-  input.(0) <- 99.;
-  equal ~msg:"evidence unaffected by caller mutation" (array float_exact)
-    [| 1.; 2.; 3. |] s.Run.sorted
-
-let projection_returns_fresh_array () =
-  let trial =
-    Run.Trial.make ~k:1 [ (Metric.wall_time, Samples (sam [| 1.; 2.; 3. |])) ]
-  in
-  let run = Run.create [ ("a", trial) ] in
-  let first = Option.get (Run.samples run ~case:"a" Metric.wall_time) in
-  first.(0) <- 99.;
-  equal ~msg:"run unaffected by mutating a projected array"
-    (option (array float_exact))
-    (Some [| 1.; 2.; 3. |])
-    (Run.samples run ~case:"a" Metric.wall_time)
+let sampled_evidence =
+  group "Sampled evidence"
+    [
+      cases "sampled keeps a copy of"
+        ~name:(fun (name, _) -> name)
+        [
+          ("an ascending vector", [| 1.; 2.; 3. |]); ("ties", [| 1.; 1.; 1. |]);
+        ]
+        (fun (_, values) ->
+          let input = Array.copy values in
+          let s = sampled input in
+          input.(0) <- 99.;
+          equal (array float_exact) values s.Run.sorted);
+      cases "sampled refuses"
+        ~name:(fun (name, _, _) -> name)
+        refused_vectors
+        (fun (_, values, pos) ->
+          expect (require_some (refusal (fun () -> sampled values))) pos);
+    ]
 
 (* Trials *)
 
-let trial_accessors () =
-  let ms =
+let one_two_three = Run.Samples (sampled [| 1.; 2.; 3. |])
+
+let both () =
+  Run.Trial.make ~k:1
+    [ (Metric.wall_time, one_two_three); (Metric.alloc_words, Run.Exact 54) ]
+
+let refused_trials =
+  [
+    ( "k 0",
+      (fun () -> Run.Trial.make ~k:0 []),
+      __POS_OF__ {| Run.Trial.make: k 0 < 1 |} );
+    ( "k -3",
+      (fun () -> Run.Trial.make ~k:(-3) []),
+      __POS_OF__ {| Run.Trial.make: k -3 < 1 |} );
+    ( "one metric twice",
+      (fun () ->
+        Run.Trial.make ~k:1
+          [
+            (Metric.wall_time, one_two_three);
+            (Metric.wall_time, Run.Samples (sampled [| 4.; 5.; 6. |]));
+          ]),
+      __POS_OF__ {| Run.Trial.make: duplicate metric wall_time |} );
+    ( "exact wall_time",
+      (fun () -> Run.Trial.make ~k:1 [ (Metric.wall_time, Run.Exact 5) ]),
+      __POS_OF__
+        {| Run.Trial.make: exact evidence for wall_time, which no probe can prove exact |}
+    );
+    ( "exact cpu_time",
+      (fun () -> Run.Trial.make ~k:1 [ (Metric.cpu_time, Run.Exact 5) ]),
+      __POS_OF__
+        {| Run.Trial.make: exact evidence for cpu_time, which no probe can prove exact |}
+    );
+  ]
+
+let trials =
+  group "Trials"
     [
-      (Metric.wall_time, Run.Samples (sam [| 1.; 2.; 3. |]));
-      (Metric.alloc_words, Run.Exact 54);
-    ]
-  in
-  let t = Run.Trial.make ~k:128 ~warnings:[ "w1"; "w2" ] ms in
-  equal ~msg:"k" int 128 (Run.Trial.k t);
-  equal ~msg:"measurement order preserved" (list string)
-    [ "wall_time"; "alloc_words" ]
-    (List.map (fun (m, _) -> Metric.id m) (Run.Trial.measurements t));
-  equal ~msg:"warnings in order" (list string) [ "w1"; "w2" ]
-    (Run.Trial.warnings t)
-
-let trial_warnings_default_empty () =
-  let t = Run.Trial.make ~k:1 [] in
-  equal (list string) [] (Run.Trial.warnings t)
-
-let trial_rejects_bad_k () =
-  invalid (fun () -> Run.Trial.make ~k:0 []);
-  invalid (fun () -> Run.Trial.make ~k:(-3) [])
-
-let trial_rejects_duplicate_metric () =
-  invalid (fun () ->
-      Run.Trial.make ~k:1
+      test "make's warnings default to none" (fun () ->
+          equal (list string) [] (Run.Trial.warnings (Run.Trial.make ~k:1 [])));
+      test "make takes sampled evidence for a counter metric" (fun () ->
+          let t = Run.Trial.make ~k:1 [ (Metric.alloc_words, one_two_three) ] in
+          equal (option measurement) (Some one_two_three)
+            (Run.Trial.measurement t Metric.alloc_words));
+      cases "make refuses"
+        ~name:(fun (name, _, _) -> name)
+        refused_trials
+        (fun (_, f, pos) -> expect (require_some (refusal f)) pos);
+      cases "measurement finds a metric's evidence"
+        ~name:(fun (m, _) -> Metric.id m)
         [
-          (Metric.wall_time, Run.Samples (sam [| 1.; 2.; 3. |]));
-          (Metric.wall_time, Run.Samples (sam [| 4.; 5.; 6. |]));
-        ])
-
-let trial_rejects_exact_for_unexactable_metric () =
-  (* Exactness is proven by the k/2k counter probe: only counter metrics
-     are capable. Exact evidence for a clock metric is a corrupted parse,
-     caught at the evidence boundary before it can wedge a baseline row. *)
-  invalid (fun () -> Run.Trial.make ~k:1 [ (Metric.wall_time, Run.Exact 5) ]);
-  invalid (fun () -> Run.Trial.make ~k:1 [ (Metric.cpu_time, Run.Exact 5) ])
-
-let trial_accepts_downgraded_counter () =
-  (* The probe's downgrade path: a failed probe demotes an exact-capable
-     metric to sampled treatment for the run. Form need not match
-     capability in this direction. *)
-  let t =
-    Run.Trial.make ~k:1
-      [ (Metric.alloc_words, Run.Samples (sam [| 1.; 2.; 3. |])) ]
-  in
-  equal (option measurement)
-    (Some (Run.Samples (sam [| 1.; 2.; 3. |])))
-    (Run.Trial.measurement t Metric.alloc_words)
-
-let trial_measurement_by_identity () =
-  let t =
-    Run.Trial.make ~k:1
-      [
-        (Metric.wall_time, Run.Samples (sam [| 1.; 2.; 3. |]));
-        (Metric.alloc_words, Run.Exact 54);
-      ]
-  in
-  equal ~msg:"present sampled" (option measurement)
-    (Some (Run.Samples (sam [| 1.; 2.; 3. |])))
-    (Run.Trial.measurement t Metric.wall_time);
-  equal ~msg:"present exact" (option measurement) (Some (Run.Exact 54))
-    (Run.Trial.measurement t Metric.alloc_words);
-  equal ~msg:"absent metric" (option measurement) None
-    (Run.Trial.measurement t Metric.cpu_time)
+          (Metric.wall_time, Some one_two_three);
+          (Metric.alloc_words, Some (Run.Exact 54));
+          (Metric.cpu_time, None);
+        ]
+        (fun (m, expected) ->
+          equal (option measurement) expected
+            (Run.Trial.measurement (both ()) m));
+    ]
 
 (* Runs *)
 
-let exact_trial n = Run.Trial.make ~k:1 [ (Metric.alloc_words, Run.Exact n) ]
+(* Case "a" holds sampled wall time and 54 exact words; "b" only warnings. *)
+let two_cases () =
+  Run.create
+    [ ("a", both ()); ("b", Run.Trial.make ~k:1 ~warnings:[ "w1"; "w2" ] []) ]
 
-let run_order_is_stable () =
-  (* Deliberately non-alphabetical: run order is measurement order, never a
-     sort. *)
+let a_run_keeps_the_given_order () =
   let ids = [ "z"; "a"; "m" ] in
-  let run = Run.create (List.mapi (fun i id -> (id, exact_trial i)) ids) in
-  equal ~msg:"case_ids" (list string) ids (Run.case_ids run);
-  equal ~msg:"trials payloads follow their case"
-    (list (pair string int))
-    [ ("z", 0); ("a", 1); ("m", 2) ]
-    (List.map
-       (fun (id, t) ->
-         match Run.Trial.measurement t Metric.alloc_words with
-         | Some (Run.Exact n) -> (id, n)
-         | _ -> (id, -1))
-       (Run.trials run))
-
-let run_rejects_duplicate_case () =
-  invalid (fun () ->
-      Run.create
-        [ ("a", exact_trial 0); ("b", exact_trial 1); ("a", exact_trial 2) ])
-
-let run_trial_lookup () =
-  let run = Run.create [ ("a", exact_trial 7) ] in
-  is_true ~msg:"present" (Option.is_some (Run.trial run "a"));
-  is_true ~msg:"absent" (Option.is_none (Run.trial run "b"))
-
-let projections () =
-  let t =
-    Run.Trial.make ~k:1
-      [
-        (Metric.wall_time, Run.Samples (sam [| 1.; 2.; 3. |]));
-        (Metric.alloc_words, Run.Exact 54);
-      ]
+  let r =
+    Run.create (List.mapi (fun i id -> (id, Run.Trial.make ~k:(i + 1) [])) ids)
   in
-  let run = Run.create [ ("a", t) ] in
-  equal ~msg:"samples of a sampled metric"
+  equal (list string) ids (Run.case_ids r);
+  equal
+    (list (pair string int))
+    [ ("z", 1); ("a", 2); ("m", 3) ]
+    (List.map (fun (id, t) -> (id, Run.Trial.k t)) (Run.trials r))
+
+let samples_is_a_copy () =
+  let r = two_cases () in
+  let first = require_some (Run.samples r ~case:"a" Metric.wall_time) in
+  first.(0) <- 99.;
+  equal
     (option (array float_exact))
     (Some [| 1.; 2.; 3. |])
-    (Run.samples run ~case:"a" Metric.wall_time);
-  equal ~msg:"exact of an exact metric" (option int) (Some 54)
-    (Run.exact run ~case:"a" Metric.alloc_words)
+    (Run.samples r ~case:"a" Metric.wall_time)
 
-let projections_absent () =
-  let t =
-    Run.Trial.make ~k:1
-      [
-        (Metric.wall_time, Run.Samples (sam [| 1.; 2.; 3. |]));
-        (Metric.alloc_words, Run.Exact 54);
-      ]
-  in
-  let run = Run.create [ ("a", t) ] in
-  equal ~msg:"samples: absent case"
-    (option (array float_exact))
-    None
-    (Run.samples run ~case:"nope" Metric.wall_time);
-  equal ~msg:"samples: absent metric"
-    (option (array float_exact))
-    None
-    (Run.samples run ~case:"a" Metric.cpu_time);
-  equal ~msg:"samples: exact-form metric"
-    (option (array float_exact))
-    None
-    (Run.samples run ~case:"a" Metric.alloc_words);
-  equal ~msg:"exact: absent case" (option int) None
-    (Run.exact run ~case:"nope" Metric.alloc_words);
-  equal ~msg:"exact: absent metric" (option int) None
-    (Run.exact run ~case:"a" Metric.cpu_time);
-  equal ~msg:"exact: sampled-form metric" (option int) None
-    (Run.exact run ~case:"a" Metric.wall_time)
-
-let empty_run () =
-  (* Representable: rejecting an empty selection is [Check]'s policy, not the
-     evidence model's. *)
-  let run = Run.create [] in
-  equal (list string) [] (Run.case_ids run);
-  equal (option int) None (Run.exact run ~case:"a" Metric.alloc_words)
-
-let () =
-  run "run"
+let runs =
+  group "Runs"
     [
-      group "sampled constructor"
+      test "a run keeps its trials in the given order"
+        a_run_keeps_the_given_order;
+      test "create refuses two trials of one case" (fun () ->
+          raises (Invalid_argument "Run.create: duplicate case a") (fun () ->
+              Run.create [ ("a", both ()); ("b", both ()); ("a", both ()) ]));
+      test "the empty run has no case" (fun () ->
+          let r = Run.create [] in
+          equal (list string) [] (Run.case_ids r);
+          equal (option int) None (Run.exact r ~case:"a" Metric.alloc_words));
+      cases "trial finds a case's trial"
+        ~name:(fun (id, _) -> id)
+        [ ("a", Some 1); ("c", None) ]
+        (fun (id, k) ->
+          equal (option int) k
+            (Option.map Run.Trial.k (Run.trial (two_cases ()) id)));
+      cases "samples"
+        ~name:(fun (name, _, _, _) -> name)
         [
-          test "accepts a sorted vector and stores the flags"
-            sampled_accepts_sorted;
-          test "accepts ties" sampled_accepts_ties;
-          test "rejects fewer than 3 samples" sampled_rejects_short;
-          test "rejects an unsorted vector" sampled_rejects_unsorted;
-          test "rejects NaN at any position" sampled_rejects_nan;
-          test "rejects infinities" sampled_rejects_infinite;
-        ];
-      group "ownership"
+          ("a sampled metric", "a", Metric.wall_time, Some [| 1.; 2.; 3. |]);
+          ("an absent case", "c", Metric.wall_time, None);
+          ("an absent metric", "a", Metric.cpu_time, None);
+          ("an exact metric", "a", Metric.alloc_words, None);
+        ]
+        (fun (_, case, m, expected) ->
+          equal
+            (option (array float_exact))
+            expected
+            (Run.samples (two_cases ()) ~case m));
+      test "samples returns a copy" samples_is_a_copy;
+      cases "exact"
+        ~name:(fun (name, _, _, _) -> name)
         [
-          test "constructor copies its input" constructor_copies_input;
-          test "samples projection returns a fresh array"
-            projection_returns_fresh_array;
-        ];
-      group "trial"
-        [
-          test "accessors return what make was given" trial_accessors;
-          test "warnings default to empty" trial_warnings_default_empty;
-          test "rejects k < 1" trial_rejects_bad_k;
-          test "rejects duplicate metrics" trial_rejects_duplicate_metric;
-          test "rejects exact evidence for a metric no probe can prove"
-            trial_rejects_exact_for_unexactable_metric;
-          test "accepts sampled evidence for an exact-capable metric"
-            trial_accepts_downgraded_counter;
-          test "measurement finds by metric identity"
-            trial_measurement_by_identity;
-        ];
-      group "run"
-        [
-          test "iteration order is the given order" run_order_is_stable;
-          test "rejects duplicate case ids" run_rejects_duplicate_case;
-          test "trial lookup by case id" run_trial_lookup;
-          test "projections find present evidence" projections;
-          test "projections are None for absent or other-form evidence"
-            projections_absent;
-          test "the empty run is representable" empty_run;
-        ];
+          ("an exact metric", "a", Metric.alloc_words, Some 54);
+          ("an absent case", "c", Metric.alloc_words, None);
+          ("an absent metric", "a", Metric.cpu_time, None);
+          ("a sampled metric", "a", Metric.wall_time, None);
+        ]
+        (fun (_, case, m, expected) ->
+          equal (option int) expected (Run.exact (two_cases ()) ~case m));
+      cases "warnings"
+        ~name:(fun (name, _, _) -> name)
+        [ ("a case's trial", "b", [ "w1"; "w2" ]); ("an absent case", "c", []) ]
+        (fun (_, case, expected) ->
+          equal (list string) expected (Run.warnings (two_cases ()) ~case));
     ]
-  |> exit
+
+let () = exit (run "run" [ sampled_evidence; trials; runs ])
