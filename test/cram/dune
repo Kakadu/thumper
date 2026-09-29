@@ -3,9 +3,9 @@
 ; fixture executable in the environment prelude.sh states.
 ;
 ; (locks measurement) serializes the scenarios: each one runs real (if tiny)
-; measurements, and a dozen concurrent spinning workers would push the load
-; average over the environment gate's threshold on any host — the suite would
-; flake itself into inconclusive. A session here judges exact counts only,
+; measurements, and the spinning workers of concurrent sessions would raise
+; the load average they sample, so that on a loaded host every sampled
+; comparison would read inconclusive. A session here judges exact counts only,
 ; which no load moves, with no retry and no --wait-quiet; the timing
 ; verdicts, which only a quiet host earns, are in quiet/, outside @runtest.
 ; A session that hangs (a deadline the fixture's hang mode fails to meet, a

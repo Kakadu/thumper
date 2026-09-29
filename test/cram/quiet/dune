@@ -1,4 +1,4 @@
-; Timing verdicts, which only a quiet host earns: on a loaded one the gate
+; Timing verdicts, which only a quiet host earns: on a loaded one the check
 ; reads them inconclusive, exit 0, by contract. These sessions are outside
 ; @runtest and run with `dune build @quiet` on a quiet host, before a
 ; release. Each run, the recording of the baseline too, first waits up to
