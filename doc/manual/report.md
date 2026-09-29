@@ -73,7 +73,9 @@ thumper: bless refused: load 83.1 on 10 cores; rerun with --wait-quiet SECS, or 
 When `check` compared the cases on a loaded host, the line under the header
 is `warning: load <load> on <n> cores; timing verdicts degraded`. Each
 timing row then reads `inconclusive: environment`, followed by the change
-the run measured, when it measured one; exact counts are still judged:
+the run measured, when it measured one; a row with a zero or negative
+sample reads `inconclusive: non-positive sample` instead, and exact counts
+are still judged:
 
 ```
 $ dune exec bench/bench_digest.exe
