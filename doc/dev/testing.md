@@ -35,8 +35,10 @@ monotone ratchet (random verdicts × files: a candidate never moves a
 non-confirmed-improved row), relation totality for every (L ≤ U, r, e)
 including r = 0, an unconfirmed direction never advancing a row, staleness
 short-circuit, codec round-trips (`parse ∘ print = id` byte-for-byte),
-and JSON goldens. The operational laws (lease, single write path,
-honest exits) are cram scenarios.
+and JSON goldens. The measurement lock is held and released against a
+second process that `test_env` forks, since exclusion shows only from
+another process; the other operational laws (the lock seen through the
+command line, single write path, honest exits) are cram scenarios.
 
 ## The golden stats corpus
 

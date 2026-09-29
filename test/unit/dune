@@ -50,7 +50,7 @@
 (test
  (name test_env)
  (modules test_env)
- (libraries thumper unix windtrap))
+ (libraries thumper thumper_clock unix windtrap))
 
 (test
  (name test_os)
