@@ -68,13 +68,13 @@ its working directory, whatever that directory is called.
 
   $ dune build --root . @bench > build.log 2>&1
   [1]
-  $ grep '^File' build.log
-  File "fixture.thumper", line 1, characters 0-0:
+  $ grep -c '^  proposed ' build.log
+  2
   $ wc -l < ran.log | tr -d ' '
   1
   $ test ! -e fixture.thumper && echo no-baseline
   no-baseline
-  $ dune promote --root .
+  $ dune promotion apply --root .
   Promoting _build_sys/default/fixture.thumper.corrected to fixture.thumper.
   $ grep -c '^# machine: testkey$' fixture.thumper
   1

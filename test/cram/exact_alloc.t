@@ -35,12 +35,9 @@ An exact improvement passes, and the corrected file advances that one row.
   $ THUMPER_FIXTURE_MODE=alloc_less $FIX check --quick -f alloc > out.log 2>&1
   $ grep -o '2 cases: .*' out.log
   2 cases: 1 passed, 1 improved.
-  $ diff fixture.thumper fixture.thumper.corrected
-  8c8
-  < alloc/array	alloc_words	exact	101
-  ---
-  > alloc/array	alloc_words	exact	100
-  [1]
+  $ diff -u fixture.thumper fixture.thumper.corrected | grep '^[-+][^-+]'
+  -alloc/array	alloc_words	exact	101
+  +alloc/array	alloc_words	exact	100
   $ cmp fixture.thumper before.thumper
   $ rm fixture.thumper.corrected
 
@@ -50,12 +47,9 @@ rerun line names the failing case; the accept line names the corrected file.
 
   $ THUMPER_FIXTURE_MODE=alloc_more,alloc_less $FIX check --quick -f alloc > out.log 2>&1
   [1]
-  $ diff fixture.thumper fixture.thumper.corrected
-  8c8
-  < alloc/array	alloc_words	exact	101
-  ---
-  > alloc/array	alloc_words	exact	100
-  [1]
+  $ diff -u fixture.thumper fixture.thumper.corrected | grep '^[-+][^-+]'
+  -alloc/array	alloc_words	exact	101
+  +alloc/array	alloc_words	exact	100
   $ grep -e 'rerun:' -e 'accept:' out.log
     rerun:   ./fixture/bench_fixture.exe --quick -f alloc/list
     accept:  mv $TESTCASE_ROOT/fixture.thumper.corrected $TESTCASE_ROOT/fixture.thumper
