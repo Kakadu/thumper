@@ -74,8 +74,8 @@ md5/256-KiB
 ```
 
 `--tag T` selects the cases tagged `T`, and with several tags a case needs
-every one. Patterns and tags combine the same way: a case is selected when
-it matches some pattern and carries every tag. In the example, the `md5`
+every one. Given both patterns and tags, a case is selected when it
+matches some pattern and carries every tag. In the example, the `md5`
 group's tag `digest` reaches both its cases:
 
 ```
