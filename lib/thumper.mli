@@ -541,10 +541,10 @@ val run :
     - [THUMPER_LOCK_DIR], the measurement lock's directory
       ({{!measuring}measuring}).
     - [NO_COLOR] and [TERM], as above.
-    - [GITHUB_ACTIONS], which, set to any value, ends the report with one
-      [::error::] line for each metric that fails its case.
+    - [GITHUB_ACTIONS], which, set to any value, adds one [::error::] line for
+      each metric that fails its case, above the hints.
     - [INSIDE_DUNE], which marks a dune rule action when the working directory
-      lies inside dune's build directory: [auto] colours, and the actions paste
+      lies inside dune's build directory: [auto] colours, and the hints paste
       from the workspace root, [DUNE_SOURCEROOT], or name absolute paths when it
       is unset. Under [dune exec], which sets [INSIDE_DUNE] but keeps the
       shell's working directory, the run is not a rule action.
