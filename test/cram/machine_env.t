@@ -1,41 +1,32 @@
-Machine sections: THUMPER_MACHINE names the section key
-verbatim. A run on a "new machine" proposes its own section without
-touching anyone else's — the first machine's section is byte-preserved in
-the candidate.
+THUMPER_MACHINE names the baseline's section, as given. A run under a new
+key proposes a section of its own and leaves every other section as it
+was, byte for byte.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
   $ $FIX check --quick -f busy/spin > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
 
-The second machine's run is the ordinary NEW flow for its own key.
-
   $ THUMPER_MACHINE=otherkey $FIX check --quick -f busy/spin > out.log 2>&1
-  $ grep -q 'no baseline for machine otherkey' out.log && echo new-section
-  new-section
-  $ test -f fixture.thumper.corrected && echo candidate
-  candidate
+  $ grep -o 'no baseline for machine otherkey' out.log
+  no baseline for machine otherkey
 
-The candidate holds both sections, sorted by key, and the first machine's
-section — extracted from its header to end of file, since "otherkey" sorts
-before "testkey" — is byte-identical to the committed baseline's.
+The corrected file holds both sections, sorted by key, and the first
+machine's section ("testkey" sorts after "otherkey", so it runs to the end
+of the file) is the committed one's.
 
-  $ grep -c '^# machine: ' fixture.thumper.corrected
-  2
+  $ grep '^# machine: ' fixture.thumper.corrected
+  # machine: otherkey
+  # machine: testkey
   $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
   4
   $ sed -n '/^# machine: testkey$/,$p' fixture.thumper > committed.section
-  $ sed -n '/^# machine: testkey$/,$p' fixture.thumper.corrected > candidate.section
-  $ cmp -s committed.section candidate.section && echo byte-preserved
-  byte-preserved
+  $ sed -n '/^# machine: testkey$/,$p' fixture.thumper.corrected > corrected.section
+  $ cmp committed.section corrected.section
 
-An invalid THUMPER_MACHINE is refused loudly (the charset keeps the header
-grammar escape-free), not measured under a garbage key: one line, exit 2,
-never an uncaught exception.
+An invalid key is refused in one line, exit 2, never measured under: the
+key's characters keep the header's grammar free of escapes.
 
   $ THUMPER_MACHINE='bad key!' $FIX check --quick
   thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
@@ -44,11 +35,10 @@ never an uncaught exception.
   thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
   [2]
 
-The refusal comes before the lease: with the lease file unusable, the key
-is still the error named.
+The key is refused before the lock is taken: with the lock file unusable,
+the key is still the error named.
 
   $ chmod 0666 "locks/thumper-$(id -u).lock"
   $ THUMPER_MACHINE='bad key!' $FIX check --quick
   thumper: THUMPER_MACHINE: 'bad key!' (need a non-empty key over [A-Za-z0-9._-])
   [2]
-  $ chmod 0600 "locks/thumper-$(id -u).lock"

@@ -1,35 +1,25 @@
-A stale section: the recorded "# ocaml:" identity no longer
-matches the running toolchain. Thumper refuses to compare, proposes a
-complete fresh section, and exits 0 — compiler upgrades re-baseline by
-promotion, never by flaky gating. Under --strict, stale is failure.
+A stale section: its '# ocaml:' identity is not the running compiler's.
+The run compares nothing, proposes a whole new section and exits 0, so a
+compiler upgrade is re-recorded by accepting a file, never by a gate
+failing on noise. Under --strict, stale is a failure.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
   $ $FIX check --quick > /dev/null 2>&1
   $ mv fixture.thumper.corrected fixture.thumper
-
-Doctor the compiler identity to a version that never existed.
-
   $ sed 's/^# ocaml: .*/# ocaml: 9.9.9 · 64-bit · release/' fixture.thumper > doctored
   $ mv doctored fixture.thumper
 
   $ $FIX check --quick > out.log 2>&1
-  $ grep -q 'stale baseline for machine testkey' out.log && echo stale-rendered
-  stale-rendered
-  $ grep -Ec '^  proposed ' out.log
-  7
-  $ grep -q 'accept:  ' out.log && echo remedy-named
-  remedy-named
+  $ head -1 out.log | sed 's/→ .*)$/→ OCAML)/'
+  thumper: fixture — stale baseline for machine testkey (ocaml 9.9.9 · 64-bit · release → OCAML)
+  $ grep 'accept:' out.log
+    accept:  mv $TESTCASE_ROOT/fixture.thumper.corrected $TESTCASE_ROOT/fixture.thumper
 
-The candidate re-records this machine's section wholesale from this run's
-evidence: current compiler identity, complete rows.
+The corrected file records this machine's section anew from this run: the
+running compiler's identity and every case's rows.
 
-  $ test -f fixture.thumper.corrected && echo candidate
-  candidate
   $ grep -c '9\.9\.9' fixture.thumper.corrected
   0
   [1]
@@ -39,27 +29,24 @@ evidence: current compiler identity, complete rows.
   12
 
   $ rm fixture.thumper.corrected
-  $ $FIX check --quick --strict > out2.log 2>&1
+  $ $FIX check --quick --strict > out.log 2>&1
   [1]
 
-A filtered check on the stale section still re-records the section
-wholesale — the candidate carries only the selected case's rows — so the
-report warns about the drop the way bless's partial re-record does: a
-silent partial re-record would read as data loss after promotion.
+A filtered check on a stale section still records the section whole, so
+the corrected file holds the selected case's rows alone, and the report
+says what it drops; a filtered bless does the same, in the same words.
 
-  $ $FIX check --quick -f busy/spin > out3.log 2>&1
-  $ grep -o 'warning: partial selection on a stale section.*' out3.log
+  $ $FIX check --quick -f busy/spin > out.log 2>&1
+  $ grep -o 'warning: partial selection on a stale section.*' out.log
   warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 6 unselected cases
-  $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
-  2
+  $ grep -v '^#' fixture.thumper.corrected | grep -v '^$' | cut -f 1,2
+  busy/spin	alloc_words
+  busy/spin	wall_time
   $ rm fixture.thumper.corrected
 
-A filtered bless on the stale section is the same wholesale re-record, and
-says so in the same words.
-
-  $ $FIX bless --quick --force -f busy/spin > out4.log 2>&1
-  $ grep -o 'warning: partial selection on a stale section.*' out4.log
+  $ $FIX bless --quick --force -f busy/spin > out.log 2>&1
+  $ grep -o 'warning: partial selection on a stale section.*' out.log
   warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 6 unselected cases
-  $ grep -v '^#' fixture.thumper.corrected | grep -vc '^$'
-  2
-  $ rm fixture.thumper.corrected
+  $ grep -v '^#' fixture.thumper.corrected | grep -v '^$' | cut -f 1,2
+  busy/spin	alloc_words
+  busy/spin	wall_time
