@@ -1,7 +1,7 @@
 A stale section: its '# ocaml:' identity is not the running compiler's.
-The run compares nothing, proposes a whole new section and exits 0, so a
-compiler upgrade is re-recorded by accepting a file, never by a gate
-failing on noise. Under --strict, stale is a failure.
+The run compares nothing, proposes every row of the section and exits 0,
+so a compiler upgrade is re-recorded by accepting a file, never by a check
+that fails on noise. Under --strict, stale is a failure.
 
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe

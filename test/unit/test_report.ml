@@ -185,8 +185,9 @@ let loaded_proposed () =
   verdict_of ~load:loaded ~decide_load:loaded ~file:(time_row_only ())
     (bcase "alpha", trial (ties 5 2e-6))
 
-(* A time regression that fails its budget beside an allocation regression a
-   cap does not gate. *)
+(* A time regression that fails its budget beside a sampled allocation
+   regression, which passes its cap because a cap fails a case on exact counts
+   only. *)
 let failing_first () =
   let file =
     file_of
@@ -358,7 +359,7 @@ let case_warning () =
   verdict_of ~file (bcase "alpha", warned)
 
 (* A confirmed sampled allocation regression (100 w to 200 w) whose only
-   allocation budget is a cap, which gates exact counts only. *)
+   allocation budget is a cap, which fails a case on exact counts only. *)
 let over_cap_sampled () =
   let file =
     file_of

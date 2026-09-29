@@ -1,4 +1,4 @@
-The exact allocation gate. The alloc cases collect alloc_words alone, and
+Checks judged on exact allocation counts. The alloc cases collect alloc_words alone, and
 the fixture's modes change their counts by whole words: alloc_more adds a
 cons cell to each call of alloc/list, alloc_less takes a word from each call
 of alloc/array. Every verdict below compares integers, so no load can move
