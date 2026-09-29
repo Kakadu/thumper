@@ -93,9 +93,12 @@ Three kinds of failure reach a program, each in its own form.
   Uncaught, it prints `Thumper.Check.Error: no case matches the selection`,
   the text of `Check.pp_error`.
 - A mistake in the program raises `Invalid_argument`, before anything is
-  measured: `bench "" f`, `Config.samples 2`, two budgets for one metric in
-  one list, and, in `Check.run`, a baseline whose header names another suite
-  or a `THUMPER_MACHINE` holding a space all raise it.
+  measured. Each of these raises it:
+  - `bench "" f`;
+  - `Config.samples 2`;
+  - two budgets for one metric in one list;
+  - in `Check.run`, a baseline whose header names another suite;
+  - in `Check.run`, a `THUMPER_MACHINE` holding a space.
 - A baseline file that cannot be used is a `Baseline.error`. `Baseline.read`
   returns it as `Error`, and `Baseline.read_exn`, as in the example, raises
   it as `Baseline.Error`. Uncaught, it prints as
@@ -118,6 +121,6 @@ The library has no counterpart for these parts of `Thumper.run`:
 - the GitHub annotations.
 
 `measure` and `Check.run` print nothing, and a program renders the verdict
-itself. `Check.run` samples the load once it holds the measurement lock, and
-never waits for a quiet host. A program names its baseline, and a relative
+itself. `Check.run` samples the load once it holds the measurement lock,
+and again before any second trials, and never waits for a quiet host. A program names its baseline, and a relative
 name resolves in its working directory.
