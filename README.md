@@ -1,196 +1,135 @@
-<div align="center">
+# Thumper — benchmark regression tests for OCaml
 
-# thumper
-
-**Benchmarks as regression tests for OCaml**
-
-</div>
-
-Thumper makes performance something your project can test.
-
-You write a benchmark the way you write a test, run it once, and commit
-the baseline it records. From then on, `dune build @bench` checks the
-code against that baseline: a case that regressed fails the check, a case
-that improved updates the baseline through a diff you review, and a case
-that didn't change is silent. Run it locally while you work on
-performance, or in CI to keep regressions out of main.
-
-Benchmarks are noisy, so thumper is careful about what it claims. A
-regression fails the check only after a second measurement confirms it. A
-machine too busy to measure honestly makes the run inconclusive, never a
-false failure.
+Thumper measures OCaml benchmarks and checks them against a committed
+baseline, so a dune rule fails the build on a confirmed regression. A
+benchmark is an executable that a project keeps beside its code and runs
+under dune, on a developer's machine or in CI. Thumper requires OCaml 5.2
+or later, depends on the `unix` library alone, measures on Unix, and is
+distributed under the [ISC license](LICENSE).
 
 ## Quick start
+
+A benchmark is a program that ends in `Thumper.run`. The two files of
+`examples/01-first-benchmark`, in a project's `bench/` directory, make one
+with a single case.
+
+`examples/01-first-benchmark/bench_hello.ml`:
+
+```ocaml
+let input = List.init 1_000 Fun.id
+
+let () =
+  exit
+    (Thumper.run "hello"
+       [ Thumper.bench "list-rev" (fun () -> List.rev input) ])
+```
+
+`examples/01-first-benchmark/dune`:
+
+```dune
+(executable
+ (name bench_hello)
+ (libraries thumper))
+```
+
+With no baseline yet, the first run measures the case, proposes it and
+names the command that records it (the numbers are one run's):
+
+```
+$ dune exec bench/bench_hello.exe
+hello: no baseline for machine 5c1e0a7f3b9d2486 (Apple M1 Max)
+
+  proposed  1.56 us  ±1.4%  3,000 w  list-rev
+
+accept: ./_build/default/bench/bench_hello.exe bless
+1 proposed in 0.4s.
+```
+
+Running the `accept:` line writes `bench/hello.thumper`, which the project
+commits, and every later run checks against it.
+[Getting started](doc/manual/getting-started.md) runs a suite from a dune
+rule, records its baseline, and makes the check fail.
+
+## Features
+
+- Benchmarks declared with `bench`, `bench_with_setup` and `group`, and a
+  command line from `Thumper.run`: `check` (the default), `bless` and
+  `list`.
+- A baseline file per suite, committed beside the benchmark's source, that
+  stores what was measured (sorted samples and exact counts) in one section
+  per machine.
+- `check` judges and writes no baseline; `bless` alone records one, and
+  the report's `accept:` line names the `bless` command for its proposed
+  and improved cases.
+- A dune rule per suite on the `@bench` alias, which depends on its
+  baseline through `(deps (glob_files *.thumper))` and fails the build
+  when a case fails.
+- Budgets per metric: a bound on the change from the baseline
+  (`no_slower_than`, `no_more_alloc_than`) or on the measured value
+  (`at_most`). Every collected metric has one, 5% by default.
+- Rank statistics with an in-run confirmation: a timing regression or
+  improvement counts only when a second trial of the case reproduces it,
+  and a change whose interval ends within its budget passes.
+- Exact allocation counts: when a probe proves that a case allocates the
+  same number of words on every call, the count compares as an integer.
+  The count is the same on every CPU and under any load, so a suite that
+  collects it alone can be checked on hosted CI runners.
+- Each case measured in its own forked process, within a deadline, at the
+  batch size its baseline recorded while one batch still takes 0.2 to 5
+  times the batch floor.
+- Timing comparisons on a loaded host reported as `inconclusive:
+  environment` instead of failing, `--wait-quiet` to wait for a quiet
+  host, and a `bless` that refuses a loaded host.
+- A per-user lock that serializes measurement between processes on a
+  host.
+- `--json` for a JSON document of the verdict, `--strict` to fail a metric
+  with no baseline row, and GitHub annotations under `GITHUB_ACTIONS`.
+- The same machinery as a library: `measure` collects measurements without
+  files, and `Check.run`, `Baseline.record` and `Verdict.to_json` build a
+  check in OCaml.
+
+## Installation
 
 ```
 opam install thumper
 ```
 
-A benchmark is an executable:
-
-```ocaml
-(* bench/bench_digest.ml *)
-let input64 = String.make 64 '\xa5'
-
-let rec fib n = if n < 2 then n else fib (n - 1) + fib (n - 2)
-
-let () =
-  exit
-    (Thumper.run "digest"
-       ~budgets:[ Thumper.Budget.no_slower_than 0.05;
-                  Thumper.Budget.no_more_alloc_than 0.0 ]
-       [
-         Thumper.group "sha256"
-           [
-             Thumper.bench "string-64" (fun () -> Digest.string input64);
-           ];
-         Thumper.group "fib"
-           (List.map
-              (fun n -> Thumper.bench (Int.to_string n) (fun () -> fib n))
-              [ 10; 20; 30 ]);
-       ])
-```
-
-The budgets say how much change you accept: here, time may regress by at
-most 5%, and allocation not at all.
-
-One dune rule next to the executable stanza gives you the `@bench` alias:
-
-```dune
-(executable
- (name bench_digest)
- (libraries thumper))
-
-(rule
- (alias bench)
- (locks bench)
- (action
-  (progn
-   (run %{exe:bench_digest.exe})
-   (diff? digest.thumper digest.thumper.corrected))))
-```
-
-The first run has no baseline to compare against, so it measures every
-case and proposes one. Accepting it is one command:
-
-```
-$ dune build @bench
-thumper: digest — no baseline for machine 9f3a1c2e8b4d6a07 (Apple M1 Max)
-
-  proposed    1.40 us  ±0.9%  54 w  sha256/string-64
-  proposed    1.10 us  ±0.7%   0 w  fib/10
-  proposed  135.50 us  ±1.0%   0 w  fib/20
-  proposed    1.62 ms  ±0.8%   0 w  fib/30
-
-  accept:  dune promote
-$ dune promote && git add bench/digest.thumper
-```
-
-From then on, three outcomes:
-
-**A regression.** Thumper measures the suspect case a second time, after
-the rest of the suite. Only if both measurements agree does the check
-fail:
-
-```
-$ dune build @bench
-thumper: digest — 4 cases vs digest.thumper for machine 9f3a1c2e8b4d6a07
-
-  REGRESSED   1.84 us  ±1.1%  54 w  sha256/string-64
-      +31.4% [+30.0, +32.9]  budget +5%; equivalent (alloc exact)
-  equivalent  1.10 us  ±0.7%   0 w  fib/10
-  ...
-
-  4 cases: 3 passed, 1 regressed.
-```
-
-(exit code 1 — the check is red. Run by hand with `dune exec`, the
-report adds a `rerun:` line, the command that re-measures just the
-failing case.)
-
-**An improvement.** Thumper proposes a baseline update for exactly the
-cases that improved. `dune promote` accepts it, and the diff in your
-commit is the record of the improvement. Promoting is always safe, after
-any run: an update never contains a regressed, inconclusive, or
-unconfirmed case.
-
-**No change.** No diff, nothing to review — and if neither the code nor
-the baseline changed, dune doesn't even re-run the benchmark.
-
-One more thing worth knowing early: allocation is counted, not estimated.
-When a case's allocation is deterministic — most are — thumper records
-the exact word count, and one extra word is a real regression. No
-statistics involved.
-
-## The command line
-
-```
-bench.exe [check] [-f PAT]... [--tag T]... [--quick|--precise]
-          [--baseline PATH] [--json PATH] [--strict]
-          [--wait-quiet SECS] [--color MODE]
-bench.exe bless   [-f PAT]... [--tag T]... [--quick|--precise]
-          [--baseline PATH] [--wait-quiet SECS] [--color MODE] [--force]
-bench.exe list    [-f PAT]... [--tag T]... [--color MODE]
-```
-
-Every run prints one report: a header, a table with one row per case, the
-command to run next when there is one, and a summary. While you're
-iterating on a single case, run the executable directly — `-f` selects
-cases by name, `--quick` trades some precision for speed:
-
-```
-$ dune exec bench/bench_digest.exe -- --quick -f string-64
-```
-
-Exit codes: **0** when nothing failed (new and inconclusive cases
-included), **1** for a confirmed regression, **2** when the run itself
-went wrong — a bad flag, an empty selection, an unreadable baseline.
-`--json` writes a machine-readable verdict for automation, and `--strict`
-turns inconclusive and new cases into failures for dedicated CI runners.
-
-## More than one machine
-
-Timings from two machines are not comparable, so the baseline file keeps
-one section per machine and each machine checks against its own. Your
-laptop and your CI runner both live in the same file; each proposes its
-section the first time it runs, through the same promote flow.
-
-Two consequences worth knowing:
-
-- Upgrading the compiler makes a machine's section stale. Thumper refuses
-  to compare against it and proposes a fresh one — you re-baseline by
-  promoting, not by fighting a flaky red check.
-- On a busy machine, timing verdicts degrade to inconclusive rather than
-  failing — exact allocation is still checked, since counting doesn't
-  care about load. `--wait-quiet 60` waits up to a minute for the machine
-  to calm down first.
-
-## Using the library directly
-
-The command line is one client of an ordinary library. `measure` collects
-timings with no baseline and no files; `Check.run` and `Verdict.corrected`
-are the whole check-and-update pipeline as three function calls:
-
-```ocaml
-open Thumper
-
-let run = measure ~config:Config.quick [ bench "rev" (fun () -> List.rev input) ]
-let samples = Run.samples run ~case:"rev" Metric.wall_time
-let alloc = Run.exact run ~case:"rev" Metric.alloc_words
-```
-
-See the `Thumper` module documentation for the full API.
-
 ## Documentation
 
-- [`examples/`](examples/) — seven small benchmark suites, from a first
-  benchmark to the library without the command line. Start here.
-- [`doc/manual/`](doc/manual/) — the manual: getting started, how checks
-  decide, running on more than one machine, the baseline file format, and
-  using the library directly.
-- [`doc/dev/`](doc/dev/) — for maintainers: the architecture, the
-  statistics, and how thumper tests itself.
+The manual, [`doc/manual/`](doc/manual/), has one page per need:
 
-## License
+- Tutorial: [Getting started](doc/manual/getting-started.md), a benchmark
+  from its first run to a failing check.
+- How-to:
+  - [Writing benchmarks](doc/manual/writing-benchmarks.md): budgets,
+    fixtures, families of cases, tags, metrics and the protocol.
+  - [Running checks](doc/manual/running-checks.md): one case while
+    iterating, recording a baseline, several machines, CI and loaded
+    hosts.
+  - [Programmatic use](doc/manual/programmatic.md): measuring and checking
+    from an OCaml program.
+- Reference:
+  - [Command line](doc/manual/command-line.md): the help, the subcommands
+    and case selection.
+  - [The report](doc/manual/report.md): every line `check` and `bless`
+    print, and what to do about an inconclusive row.
+  - [The JSON document](doc/manual/json.md): every field `--json` writes.
+  - [The baseline format](doc/manual/baseline-format.md): the grammar of a
+    `.thumper` file.
+  - The API: [`lib/thumper.mli`](lib/thumper.mli), also read with
+    `odig doc thumper`.
+- Explanation: [How checks decide](doc/manual/how-checks-decide.md), why a
+  check reads each row as it does.
 
-ISC. See [LICENSE](LICENSE).
+Questions are welcome on the [OCaml forum](https://discuss.ocaml.org/).
+
+## Examples
+
+[`examples/`](examples/) holds seven suites, from a first benchmark to the
+library without the command line; [its README](examples/README.md) lists
+them.
+
+## Contributing
+
+[`doc/dev/`](doc/dev/) records thumper's architecture, its statistics and
+how it tests itself.
