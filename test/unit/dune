@@ -75,8 +75,25 @@
 
 (test
  (name test_verdict)
+ ; Its baselines: the JSON documents under json/ and the warning texts in
+ ; the source.
  (modules test_verdict)
- (libraries thumper windtrap))
+ (libraries thumper windtrap)
+ (deps
+  (glob_files json/*.json))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_verdict.ml test_verdict.ml.corrected)
+   (diff?
+    json/confirmed-regression.json
+    json/confirmed-regression.json.corrected)
+   (diff? json/environment.json json/environment.json.corrected)
+   (diff? json/exact-changes.json json/exact-changes.json.corrected)
+   (diff? json/exact.json json/exact.json.corrected)
+   (diff? json/no-comparison.json json/no-comparison.json.corrected)
+   (diff? json/passing.json json/passing.json.corrected)
+   (diff? json/unconfirmed.json json/unconfirmed.json.corrected))))
 
 (test
  (name test_check)

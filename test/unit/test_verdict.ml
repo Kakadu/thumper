@@ -3,12 +3,12 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Tests for [Verdict]:
-   the relation table including the r = 0 chain, confirmation in
-   both directions, staleness and gate degradation, exact edges, the JSON
-   document, exit codes, and the ratchet.
-   [Verdict] is a private module of the library, reached — with its
-   dependencies — through the facade's [Thumper.Private] re-export. *)
+(* Every verdict here is judged from hand-built trials against hand-built
+   rows, so no test measures. Tied samples pin a shift's interval to a
+   point, and two-valued ones pin it to their two values: against a row of
+   1s, a trial of [v]s has [L = U = v - 1] up to an ulp. The values 0.5, 1,
+   2 and 4 make every such bound exact, which the JSON documents need to
+   print the same digits on any libm. *)
 
 open Windtrap
 module Baseline = Thumper.Private.Baseline
@@ -20,14 +20,9 @@ module Run = Thumper.Private.Run
 module Stats = Thumper.Private.Stats
 module Verdict = Thumper.Private.Verdict
 
-let invalid fn =
-  raises_match (function Invalid_argument _ -> true | _ -> false) fn
+let strf = Printf.sprintf
 
-(* Fixtures *)
-
-let m_wall = Metric.wall_time
-let m_alloc = Metric.alloc_words
-let m_cpu = Metric.cpu_time
+(* Evidence *)
 
 let ident =
   {
@@ -43,43 +38,62 @@ let other_ident =
     ocaml = "5.5.0 64-bit release";
   }
 
+let stale_ident = { ident with Baseline.ocaml = "5.4.0 64-bit release" }
+let wall_time = Metric.wall_time
+let alloc_words = Metric.alloc_words
+let cpu_time = Metric.cpu_time
 let ties n v = Array.make n v
-let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
 
-let wall_trial ?(k = 8) ?(drifted = false) samples =
-  Run.Trial.make ~k [ (m_wall, Run.Samples (sam ~drifted samples)) ]
+let sampled ?(drifted = false) sorted =
+  Run.Samples (Run.sampled ~sorted ~drifted)
 
-(* Unstable evidence at [v] per call: nineteen samples at [v] and one at
-   [100 v]. Judgment reads the instability from the sorted vector itself;
-   the rank shift against tied rows at [x] stays exactly [log v -. log x]. *)
-let spiked v = Array.append (Array.make 19 v) [| 100. *. v |]
-let trial ?(k = 8) ms = Run.Trial.make ~k ms
+let trial ?(k = 8) ?warnings ms = Run.Trial.make ~k ?warnings ms
+let wall ?k ?drifted sorted = trial ?k [ (wall_time, sampled ?drifted sorted) ]
+let alloc ?k n = trial ?k [ (alloc_words, Run.Exact n) ]
 
-let bcase ?budgets id =
-  match Bench.resolve [ Bench.bench ?budgets id (fun () -> ()) ] with
-  | Ok [ c ] -> c
-  | _ -> assert false
+(* Nineteen samples at [v] and one at [100 v]: severely outlier-inflated,
+   while the rank shift against tied samples at [x] stays [log v - log x]. *)
+let spiked v = Array.append (ties 19 v) [| 100. *. v |]
+
+(* Against tied 1s: the estimate and [L] are -50%, [U] is +100%. *)
+let spread = [| 0.5; 0.5; 0.5; 2.0; 2.0 |]
+
+(* The shifts of tied [1.5]s and [4]s against tied [1]s, so that a budget
+   can sit exactly on one. *)
+let d15 = expm1 (log 1.5)
+let d4 = expm1 (log 4.0)
+
+(* The case named [name], whose id is its slug. *)
+let case ?budgets name =
+  require_match
+    (function Ok [ c ] -> Some c | Ok _ | Error _ -> None)
+    (Bench.resolve [ Bench.bench ?budgets name ignore ])
 
 let wall_row ?(k = 8) id samples =
   Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples
 
 let alloc_row id n = Baseline.exact_row ~id ~metric:"alloc_words" n
 
-let file_of ?(identity = ident) rows =
-  Baseline.set_section (Baseline.empty ~suite:"digest") identity rows
+let file_of ?(identity = ident) ?annotations rows =
+  Baseline.set_section ?annotations
+    (Baseline.empty ~suite:"digest")
+    identity rows
 
-let section_of ?(machine = "testmachine") file =
-  Option.get (Baseline.section file machine)
+let empty_file () = require_ok (Baseline.of_string "")
 
-let empty_file = Result.get_ok (Baseline.of_string "")
+let relative ?(metric = wall_time) (e, r) =
+  Budget.relative ~metric ~equivalent_within:e ~max_regression:r ()
 
-let judge ?(load = Env.Quiet) ?(selection = `Full) ?(budgets = [])
-    ?(file = empty_file) cases =
+(* Verdicts *)
+
+let judge ?(load = Env.Quiet) ?(selection = `Full) ?(budgets = []) ?file cases =
+  let file = match file with Some f -> f | None -> empty_file () in
   Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets ~file
     ~cases
 
-(* Judge, confirm via [confirm : id -> Trial.t option], decide. *)
-let run_check ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
+(* The first pass, then [confirm id] as the confirmation of each case it
+   asks for. *)
+let decided ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
     ?(confirm = fun _ -> None) cases =
   let p = judge ?load ?selection ?budgets ?file cases in
   let confirmations =
@@ -89,121 +103,226 @@ let run_check ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
   in
   Verdict.decide ~load:decide_load ~confirmations p
 
-let report t ~case ~metric =
-  let c =
-    List.find (fun c -> String.equal c.Verdict.id case) (Verdict.cases t)
-  in
-  List.find (fun r -> Metric.equal r.Verdict.metric metric) c.Verdict.reports
-
-let verdict_of t ~case ~metric = (report t ~case ~metric).Verdict.verdict
+(* Case "a" against [rows], by default a row of tied 1s. Its confirmation is
+   [confirm], by default the first trial again, so a strong relation
+   stands. *)
+let one ?load ?budgets ?(rows = [ wall_row "a" (ties 5 1.) ]) ?decide_load
+    ?confirm first =
+  let confirm = Option.value confirm ~default:(Some first) in
+  decided ?load ?budgets ~file:(file_of rows) ?decide_load
+    ~confirm:(fun _ -> confirm)
+    [ (case "a", first) ]
 
 let reason_name = function
-  | Verdict.Wide_interval -> "wide_interval"
-  | Non_positive -> "non_positive"
-  | Baseline_unstable -> "baseline_unstable"
+  | Verdict.Wide_interval -> "wide interval"
+  | Non_positive -> "non-positive"
+  | Baseline_unstable -> "baseline unstable"
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
-  | Exactness_lost -> "exactness_lost"
-  | Batch_drifted -> "batch_drifted"
-  | Candidate_unstable -> "candidate_unstable"
-  | Candidate_drifted -> "candidate_drifted"
+  | Exactness_lost -> "exactness lost"
+  | Batch_drifted -> "batch drifted"
+  | Candidate_unstable -> "candidate unstable"
+  | Candidate_drifted -> "candidate drifted"
 
-let rel_name = function
+(* A verdict's name, so that a mismatch prints both. *)
+let describe = function
   | Verdict.Proposed -> "proposed"
-  | Judged (Improved (Confirmed _)) -> "improved-confirmed"
-  | Judged (Improved (Exact_change _)) -> "improved-exact"
-  | Judged (Regressed (Confirmed _)) -> "regressed-confirmed"
-  | Judged (Regressed (Exact_change _)) -> "regressed-exact"
-  | Judged (Equivalent None) -> "equivalent-exact"
+  | Judged (Improved (Confirmed _)) -> "improved, confirmed"
+  | Judged (Improved (Exact_change { baseline; candidate })) ->
+      strf "improved, exact %d to %d" baseline candidate
+  | Judged (Regressed (Confirmed _)) -> "regressed, confirmed"
+  | Judged (Regressed (Exact_change { baseline; candidate })) ->
+      strf "regressed, exact %d to %d" baseline candidate
+  | Judged (Equivalent None) -> "equivalent, exact"
   | Judged (Equivalent (Some _)) -> "equivalent"
-  | Judged (Changed_within_budget _) -> "changed_within_budget"
-  | Judged (Within_budget _) -> "within_budget"
-  | Judged (Inconclusive { reason; _ }) -> "inconclusive:" ^ reason_name reason
+  | Judged (Changed_within_budget _) -> "changed within budget"
+  | Judged (Within_budget _) -> "within budget"
+  | Judged (Inconclusive { reason; _ }) -> "inconclusive, " ^ reason_name reason
 
-let overall_name = function
+let case_report ?(case = "a") t =
+  require_match
+    (List.find_opt (fun c -> String.equal c.Verdict.id case))
+    (Verdict.cases t)
+
+let report ?case ?(metric = wall_time) t =
+  require_match
+    (List.find_opt (fun r -> Metric.equal r.Verdict.metric metric))
+    (case_report ?case t).Verdict.reports
+
+let relation ?case ?metric t = describe (report ?case ?metric t).Verdict.verdict
+let shift_triple (sh : Verdict.shift) = (sh.estimate, sh.lower, sh.upper)
+let shift = triple (float 1e-9) (float 1e-9) (float 1e-9)
+
+let outcome_name = function
   | `Pass -> "pass"
   | `Fail -> "fail"
   | `Inconclusive -> "inconclusive"
 
-let check_rel ?msg t ~case ~metric expected =
-  equal ?msg string expected (rel_name (verdict_of t ~case ~metric))
+(* The file's lines, and a diff of two files as the lines each lacks. *)
+let lines f = String.split_on_char '\n' (Baseline.to_string f)
 
-let check_overall ?msg t expected =
-  equal ?msg string (overall_name expected) (overall_name (Verdict.overall t))
+let diff before after =
+  let without l l' = List.filter (fun x -> not (List.mem x l')) l in
+  (without (lines before) (lines after), without (lines after) (lines before))
 
-let contains ~sub s =
-  let n = String.length s and m = String.length sub in
-  let rec go i = i + m <= n && (String.sub s i m = sub || go (i + 1)) in
-  m = 0 || go 0
+let text_diff = pair (list string) (list string)
 
-let file_lines f = String.split_on_char '\n' (Baseline.to_string f)
+(* The line of row [id] in [f]. *)
+let row_line f id =
+  List.find_opt (String.starts_with ~prefix:(id ^ "\t")) (lines f)
 
-let row_line file id =
-  List.find_opt
-    (fun l -> String.length l > 0 && String.starts_with ~prefix:(id ^ "\t") l)
-    (file_lines file)
+let row_text row = Option.get (row_line (file_of [ row ]) (Baseline.row_id row))
 
-(* The relation table, through judge/decide with tied vectors
+(* Relations *)
 
-   Tied vectors pin the shift interval to a point: baseline all 1.0 and
-   candidate all c give L = U = estimate = c - 1 (up to an ulp), so each grid
-   cell of the table is reachable exactly. Confirmation re-measures with the
-   same vector, so provisional strongs stand. *)
-
-let point_verdict ?budgets ~r cand_value =
-  let budgets =
-    match budgets with Some b -> b | None -> [ Budget.no_slower_than r ]
-  in
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~budgets ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 cand_value)))
-      [ (bcase "a", wall_trial (ties 5 cand_value)) ]
-  in
-  rel_name (verdict_of t ~case:"a" ~metric:m_wall)
-
-let table_grid =
-  (* (candidate value, budget r, expected relation); baseline is 1.0, so the
-     shift is value - 1. Bands: r = 0.05 and 0.2 derive e = 0.025; r = 0
-     degenerates to e = 0 and uses the total chain. *)
+let at_a_point =
   [
-    (0.5, 0.05, "improved-confirmed");
-    (0.5, 0.2, "improved-confirmed");
-    (0.5, 0.0, "improved-confirmed");
-    (0.97, 0.05, "improved-confirmed");
-    (0.97, 0.2, "improved-confirmed");
-    (0.97, 0.0, "improved-confirmed");
+    (0.5, 0.05, "improved, confirmed");
+    (0.5, 0.2, "improved, confirmed");
+    (0.5, 0.0, "improved, confirmed");
+    (0.97, 0.05, "improved, confirmed");
+    (0.97, 0.2, "improved, confirmed");
+    (0.97, 0.0, "improved, confirmed");
     (0.99, 0.05, "equivalent");
     (0.99, 0.2, "equivalent");
-    (0.99, 0.0, "improved-confirmed");
+    (0.99, 0.0, "improved, confirmed");
     (1.0, 0.05, "equivalent");
     (1.0, 0.2, "equivalent");
-    (1.0, 0.0, "within_budget");
+    (1.0, 0.0, "within budget");
     (1.01, 0.05, "equivalent");
     (1.01, 0.2, "equivalent");
-    (1.01, 0.0, "regressed-confirmed");
-    (1.03, 0.05, "changed_within_budget");
-    (1.03, 0.2, "changed_within_budget");
-    (1.03, 0.0, "regressed-confirmed");
-    (1.06, 0.05, "regressed-confirmed");
-    (1.06, 0.2, "changed_within_budget");
-    (1.06, 0.0, "regressed-confirmed");
-    (1.5, 0.05, "regressed-confirmed");
-    (1.5, 0.2, "regressed-confirmed");
-    (1.5, 0.0, "regressed-confirmed");
+    (1.01, 0.0, "regressed, confirmed");
+    (1.03, 0.05, "changed within budget");
+    (1.03, 0.2, "changed within budget");
+    (1.03, 0.0, "regressed, confirmed");
+    (1.06, 0.05, "regressed, confirmed");
+    (1.06, 0.2, "changed within budget");
+    (1.06, 0.0, "regressed, confirmed");
+    (1.5, 0.05, "regressed, confirmed");
+    (1.5, 0.2, "regressed, confirmed");
+    (1.5, 0.0, "regressed, confirmed");
   ]
 
-let relation_grid =
-  cases
-    ~name:(fun (cand, r, _) -> Printf.sprintf "candidate %g, r = %g" cand r)
-    "relation table cell" table_grid
-    (fun (cand, r, expected) -> equal string expected (point_verdict ~r cand))
+(* Each row sits a bound of the interval on [-e], [e] or [r], or places it
+   against the band, with the budget's [(e, r)]. *)
+let edges =
+  [
+    ( "an interval ending at -e is equivalent",
+      (0.5, 1.),
+      ties 5 0.5,
+      "equivalent" );
+    ("an interval ending at e is equivalent", (1., 1.), ties 5 2., "equivalent");
+    ( "an interval starting at e is within budget",
+      (1., 4.),
+      [| 2.; 2.; 4.; 4.; 4. |],
+      "within budget" );
+    ( "an interval above the band ending at r is changed within budget",
+      (0.5, d4),
+      [| 2.; 2.; 4.; 4.; 4. |],
+      "changed within budget" );
+    ( "an interval ending at r is within budget",
+      (0.01, d15),
+      [| 0.5; 0.5; 1.5; 1.5; 1.5 |],
+      "within budget" );
+    ( "an interval straddling the band from below is within budget",
+      (0.025, 0.2),
+      [| 1.; 1.; 1.05; 1.05; 1.05 |],
+      "within budget" );
+    ( "an interval reaching below the band is within budget",
+      (0.025, 0.2),
+      [| 0.5; 0.5; 1.05; 1.05; 1.05 |],
+      "within budget" );
+    ( "an interval past r and below the band is inconclusive",
+      (0.025, 0.05),
+      spread,
+      "inconclusive, wide interval" );
+    ( "at r = 0 an interval across 0 is inconclusive",
+      (0., 0.),
+      spread,
+      "inconclusive, wide interval" );
+  ]
+
+(* The instability veto, with the budget's [(e, r)], the row's samples, this
+   run's and the confirmation's. *)
+let vetoes =
+  let default = (0.025, 0.05) and tight = (0.025, 0.03) in
+  let row = ties 5 1. and spiked_row = spiked 1. in
+  [
+    ( "an improvement within 2e falls back to within budget",
+      default,
+      row,
+      spiked 0.96,
+      None,
+      "within budget" );
+    ( "a change within budget within 2e falls back to within budget",
+      default,
+      row,
+      spiked 1.03,
+      None,
+      "within budget" );
+    ( "a regression within 2e is candidate unstable",
+      tight,
+      row,
+      spiked 1.04,
+      None,
+      "inconclusive, candidate unstable" );
+    ( "an equivalent shift is not vetoed",
+      default,
+      row,
+      spiked 1.,
+      None,
+      "equivalent" );
+    ( "an unstable row within 2e is baseline unstable",
+      tight,
+      spiked_row,
+      ties 20 1.04,
+      None,
+      "inconclusive, baseline unstable" );
+    ( "an unstable row takes precedence over an unstable trial",
+      tight,
+      spiked_row,
+      spiked 1.04,
+      None,
+      "inconclusive, baseline unstable" );
+    ( "a vetoed change ending at r is within budget",
+      (d15 /. 2., d15),
+      row,
+      spiked 1.5,
+      None,
+      "within budget" );
+    ( "a shift of exactly 2e is vetoed",
+      (d15 /. 2., 0.3),
+      row,
+      spiked 1.5,
+      None,
+      "inconclusive, candidate unstable" );
+    ( "an unstable row beyond 2e is judged",
+      default,
+      spiked_row,
+      ties 20 5.,
+      None,
+      "regressed, confirmed" );
+    ( "an unstable trial beyond 2e is judged",
+      default,
+      row,
+      spiked 2.,
+      Some (ties 5 2.),
+      "regressed, confirmed" );
+  ]
+
+let vetoed (_, budget, row, first, confirmation, expected) =
+  let confirm = Option.map (fun c -> Some (wall c)) confirmation in
+  let t =
+    one
+      ~budgets:[ relative budget ]
+      ~rows:[ wall_row "a" row ]
+      ?confirm (wall first)
+  in
+  equal string expected (relation t)
 
 (* The decision model's rule as its oracle: [decision-model/port.py]'s
    [judge] with [s2], ported line for line for a quiet host, one batch size
-   and derived bands. A row passes within budget when its interval's upper
-   end is within the budget and nothing stronger holds; a direction the
-   instability test vetoes, and an unconfirmed one, falls back to it. *)
+   and derived bands. *)
 let port_relation ~r ~baseline ~cand ~conf =
   let e = Float.min 0.025 (r /. 2.) in
   let logs a = Array.map log a in
@@ -219,25 +338,25 @@ let port_relation ~r ~baseline ~cand ~conf =
   let unstable v = v.(0) >= 0. && Stats.severe_outlier_inflation_sorted v in
   let est, l, u = frac 0.005 cand in
   let fallback reason =
-    if u <= r then "within_budget" else "inconclusive:" ^ reason
+    if u <= r then "within budget" else "inconclusive, " ^ reason
   in
   let near = Float.abs est <= 2. *. e in
   if u < -.e || l > r || (l > e && u <= r) then
-    if near && unstable baseline then fallback "baseline_unstable"
-    else if near && unstable cand then fallback "candidate_unstable"
+    if near && unstable baseline then fallback "baseline unstable"
+    else if near && unstable cand then fallback "candidate unstable"
     else if l > e && u <= r && not (u < -.e || l > r) then
-      "changed_within_budget"
+      "changed within budget"
     else
       let improved = u < -.e in
       let ce, cl, cu = frac 0.05 conf in
       let reproduced = if improved then cu < -.e else cl > r in
       if (not reproduced) || (unstable conf && Float.abs ce <= 2. *. e) then
         fallback "unconfirmed"
-      else if improved then "improved-confirmed"
-      else "regressed-confirmed"
+      else if improved then "improved, confirmed"
+      else "regressed, confirmed"
   else if -.e <= l && u <= e then "equivalent"
-  else if u <= r then "within_budget"
-  else "inconclusive:wide_interval"
+  else if u <= r then "within budget"
+  else "inconclusive, wide interval"
 
 let pp_port ppf (r, (b, c, f)) =
   let arr a =
@@ -273,1142 +392,1427 @@ let port_case =
 
 let judgment_follows_the_port (r, (baseline, cand, conf)) =
   let row = wall_row "a" baseline in
-  let file = file_of [ row ] in
   (* The row stores each sample as its [%.3e] text. *)
   let baseline =
-    match Baseline.row_evidence row with
-    | Baseline.Sampled { samples; _ } -> samples
-    | Baseline.Exact_int _ -> failf "expected a sampled row"
+    require_match
+      (function
+        | Baseline.Sampled { samples; _ } -> Some samples
+        | Baseline.Exact_int _ -> None)
+      (Baseline.row_evidence row)
   in
   let t =
-    run_check ~file
+    one
       ~budgets:[ Budget.no_slower_than r ]
-      ~confirm:(fun _ -> Some (wall_trial conf))
-      [ (bcase "a", wall_trial cand) ]
+      ~rows:[ row ]
+      ~confirm:(Some (wall conf))
+      (wall cand)
   in
+  equal string (port_relation ~r ~baseline ~cand ~conf) (relation t)
+
+(* The relation of an interval [L; U] with estimate [est], read from
+   [relation]'s documentation clause by clause; [unstable] is whether this
+   run's samples are, the row's being tied. *)
+let documented_relation ~e ~r ~l ~u ~est ~unstable =
+  let direction =
+    if r = 0. then
+      if u < 0. then Some "improved, confirmed"
+      else if l > 0. then Some "regressed, confirmed"
+      else None
+    else if u < -.e then Some "improved, confirmed"
+    else if l > r then Some "regressed, confirmed"
+    else if -.e <= l && u <= e then None
+    else if l > e && u <= r then Some "changed within budget"
+    else None
+  in
+  match direction with
+  | Some _ when unstable && Float.abs est <= 2. *. e ->
+      if u <= r then "within budget" else "inconclusive, candidate unstable"
+  | Some relation -> relation
+  | None ->
+      if r > 0. && -.e <= l && u <= e then "equivalent"
+      else if u <= r then "within budget"
+      else "inconclusive, wide interval"
+
+let pp_interval ppf (r, (i, j)) =
+  Format.fprintf ppf "r=%g [%g; %g]" r
+    (float_of_int i /. 64.)
+    (float_of_int j /. 64.)
+
+(* A trial of two 1 + i/64 and three 1 + j/64 against tied 1s has
+   [L = i/64], [U = j/64] and estimate [j/64] at both levels, and its
+   confirmation, the same trial, reproduces any direction. No bound falls
+   within an ulp of 0, e, 2e or r but on 0 itself, which [log 1] gives
+   exactly. *)
+let interval =
+  let open Gen in
+  with_pp pp_interval
+    (let+ r = of_list [ 0.; 0.02; 0.05; 0.1; 0.2 ]
+     and+ i = int_range (-40) 40
+     and+ w = int_range 0 20 in
+     (r, (i, min 40 (i + w))))
+
+let every_interval_has_its_documented_relation (r, (i, j)) =
+  let a = 1. +. (float_of_int i /. 64.) and b = 1. +. (float_of_int j /. 64.) in
+  let samples = [| a; a; b; b; b |] in
+  let t = one ~budgets:[ Budget.no_slower_than r ] (wall samples) in
   equal string
-    (port_relation ~r ~baseline ~cand ~conf)
-    (rel_name (verdict_of t ~case:"a" ~metric:m_wall))
+    (documented_relation
+       ~e:(Float.min 0.025 (r /. 2.))
+       ~r ~l:(a -. 1.) ~u:(b -. 1.) ~est:(b -. 1.)
+       ~unstable:(Stats.severe_outlier_inflation_sorted samples))
+    (relation t)
 
-let spread = [| 0.5; 0.5; 0.5; 2.0; 2.0 |]
+type budget = Rel of float | Cap of float
 
-let wide_interval_is_inconclusive () =
-  let wide_under r =
-    let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-    let t =
-      run_check
-        ~budgets:[ Budget.no_slower_than r ]
-        ~file
-        [ (bcase "a", wall_trial spread) ]
-    in
-    rel_name (verdict_of t ~case:"a" ~metric:m_wall)
-  in
-  equal ~msg:"r=0.05" string "inconclusive:wide_interval" (wide_under 0.05);
-  equal ~msg:"r=0 chain residual" string "inconclusive:wide_interval"
-    (wide_under 0.0)
+let alloc_budget = function
+  | Rel r -> Budget.no_more_alloc_than r
+  | Cap v -> Budget.at_most ~metric:alloc_words v
 
-let within_budget_edges () =
-  (* The bound is inclusive: an interval whose upper end is exactly [r] is
-     within budget. Tied samples make the bounds [expm1 (log 1.5)] exactly,
-     the budget's own value, on any libm. *)
-  let d = expm1 (log 1.5) in
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
+let exact_counts =
+  [
+    ("an equal count is equivalent", Rel 0., 54, 54, "equivalent, exact");
+    ("a smaller count is improved", Rel 0., 54, 53, "improved, exact 54 to 53");
+    ("growth beyond r is regressed", Rel 0., 54, 55, "regressed, exact 54 to 55");
+    ( "growth within r is changed within budget",
+      Rel 0.1,
+      100,
+      105,
+      "changed within budget" );
+    ( "growth of exactly r is changed within budget",
+      Rel 0.1,
+      100,
+      110,
+      "changed within budget" );
+    ( "growth past r is regressed",
+      Rel 0.1,
+      100,
+      111,
+      "regressed, exact 100 to 111" );
+    ( "growth from 0 is regressed under any r",
+      Rel 0.1,
+      0,
+      1,
+      "regressed, exact 0 to 1" );
+    ( "a count over the cap is regressed",
+      Cap 100.,
+      100,
+      120,
+      "regressed, exact 100 to 120" );
+    ( "a count over the cap and under the row is regressed",
+      Cap 100.,
+      200,
+      150,
+      "regressed, exact 200 to 150" );
+    ( "a count under the cap and the row is improved",
+      Cap 100.,
+      100,
+      80,
+      "improved, exact 100 to 80" );
+    ( "growth under the cap is changed within budget",
+      Cap 100.,
+      90,
+      95,
+      "changed within budget" );
+    ( "growth to the cap is changed within budget",
+      Cap 100.,
+      90,
+      100,
+      "changed within budget" );
+    ( "growth from 0 under the cap is changed within budget",
+      Cap 10.,
+      0,
+      3,
+      "changed within budget" );
+    ( "an unchanged count under the cap is equivalent",
+      Cap 100.,
+      100,
+      100,
+      "equivalent, exact" );
+  ]
+
+(* The case's frozen batch size is its sampled row's, 32; the count is
+   probed at 32 while that is at most 16 times the trial's. *)
+let probed_counts =
+  [
+    ( "a count probed at the frozen size is compared",
+      Rel 0.,
+      32,
+      55,
+      "regressed, exact 54 to 55" );
+    ( "a trial at 1/16 of the frozen size compares its count",
+      Rel 0.,
+      2,
+      55,
+      "regressed, exact 54 to 55" );
+    ( "a changed count probed at another size is batch drifted",
+      Rel 0.,
+      1,
+      55,
+      "inconclusive, batch drifted" );
+    ( "an unchanged count probed at another size is equivalent",
+      Rel 0.,
+      1,
+      54,
+      "equivalent, exact" );
+    ( "a count over the cap probed at another size is regressed",
+      Cap 100.,
+      1,
+      120,
+      "regressed, exact 54 to 120" );
+  ]
+
+let probed_count (_, budget, k, count, expected) =
   let t =
-    run_check
-      ~budgets:
-        [
-          Budget.relative ~metric:m_wall ~equivalent_within:0.01
-            ~max_regression:d ();
-        ]
-      ~file
-      [ (bcase "a", wall_trial [| 0.5; 0.5; 1.5; 1.5; 1.5 |]) ]
+    one
+      ~budgets:[ alloc_budget budget ]
+      ~rows:[ wall_row ~k:32 "a" (ties 5 1.); alloc_row "a" 54 ]
+      (trial ~k
+         [ (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact count) ])
   in
-  check_rel ~msg:"U = r" t ~case:"a" ~metric:m_wall "within_budget";
-  (* A change within budget that instability vetoes, at U = r = 2e. *)
+  equal string expected (relation ~metric:alloc_words t)
+
+(* A sampled row at batch size 8 against a trial at another size. *)
+let moved_batch_sizes =
+  [
+    ( "a shift within 2e is batch drifted",
+      32,
+      ties 5 1.,
+      "inconclusive, batch drifted" );
+    ("a shift beyond 2e is judged", 16, ties 5 0.5, "improved, confirmed");
+  ]
+
+let sampled_alloc_row samples =
+  Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8 ~samples
+
+let exactness =
+  [
+    ( "an exact row against a sampled count",
+      Rel 0.,
+      (fun () -> alloc_row "a" 54),
+      (fun () -> sampled (ties 5 54.)),
+      "inconclusive, exactness lost" );
+    ( "a sampled row against an exact count",
+      Rel 0.,
+      (fun () -> sampled_alloc_row (ties 5 54.)),
+      (fun () -> Run.Exact 54),
+      "inconclusive, exactness lost" );
+    ( "a sampled row against a sampled count under r = 0",
+      Rel 0.,
+      (fun () -> sampled_alloc_row (ties 5 54.)),
+      (fun () -> sampled (ties 5 54.)),
+      "inconclusive, exactness lost" );
+    ( "a sampled row against a sampled count under r > 0",
+      Rel 0.05,
+      (fun () -> sampled_alloc_row (ties 5 54.)),
+      (fun () -> sampled (ties 5 54.)),
+      "equivalent" );
+    ( "sampled counts under a cap read the default budget",
+      Cap 150.,
+      (fun () -> sampled_alloc_row (ties 5 100.)),
+      (fun () -> sampled (ties 5 200.)),
+      "regressed, confirmed" );
+  ]
+
+let relations =
+  group "Relations"
+    [
+      cases "a point shift"
+        ~name:(fun (v, r, _) -> strf "%g at r = %g" v r)
+        at_a_point
+        (fun (v, r, expected) ->
+          equal string expected
+            (relation
+               (one ~budgets:[ Budget.no_slower_than r ] (wall (ties 5 v)))));
+      cases "an interval"
+        ~name:(fun (name, _, _, _) -> name)
+        edges
+        (fun (_, budget, samples, expected) ->
+          equal string expected
+            (relation (one ~budgets:[ relative budget ] (wall samples))));
+      prop "every interval has its documented relation" interval
+        every_interval_has_its_documented_relation;
+      prop "judgment follows the decision model's port" port_case
+        judgment_follows_the_port;
+      cases "the instability veto"
+        ~name:(fun (name, _, _, _, _, _) -> name)
+        vetoes vetoed;
+      cases "exact counts"
+        ~name:(fun (name, _, _, _, _) -> name)
+        exact_counts
+        (fun (_, budget, row, count, expected) ->
+          equal string expected
+            (relation ~metric:alloc_words
+               (one
+                  ~budgets:[ alloc_budget budget ]
+                  ~rows:[ alloc_row "a" row ]
+                  (alloc count))));
+      cases "an exact count at a moved batch size"
+        ~name:(fun (name, _, _, _, _) -> name)
+        probed_counts probed_count;
+      cases "a sampled row at a moved batch size"
+        ~name:(fun (name, _, _, _) -> name)
+        moved_batch_sizes
+        (fun (_, k, samples, expected) ->
+          equal string expected
+            (relation
+               (one ~rows:[ wall_row ~k "a" (ties 5 1.) ] (wall ~k:8 samples))));
+      cases "exactness"
+        ~name:(fun (name, _, _, _, _) -> name)
+        exactness
+        (fun (_, budget, row, measurement, expected) ->
+          equal string expected
+            (relation ~metric:alloc_words
+               (one
+                  ~budgets:[ alloc_budget budget ]
+                  ~rows:[ row () ]
+                  (trial [ (alloc_words, measurement ()) ]))));
+    ]
+
+(* Reports *)
+
+let budget_name = function
+  | None -> "none"
+  | Some b -> (
+      match Budget.contract b with
+      | Budget.Relative { max_regression; band } ->
+          strf "r = %g, e = %g" max_regression band
+      | Budget.Absolute_max v -> strf "at most %g" v)
+
+let resolutions =
+  [
+    ( "a case's own budget wins over the run's",
+      (fun () -> [ Budget.no_slower_than 0. ]),
+      (fun () -> Some [ Budget.no_slower_than 0.5 ]),
+      [ wall_time ],
+      [ ("wall_time", "r = 0.5, e = 0.025") ] );
+    ( "a budget on a metric the trial did not measure is dropped",
+      (fun () -> [ Budget.no_slower_than 0.1; Budget.no_more_alloc_than 0. ]),
+      (fun () -> None),
+      [ wall_time ],
+      [ ("wall_time", "r = 0.1, e = 0.025") ] );
+    ( "a case left with none gets the default on wall_time",
+      (fun () -> [ Budget.no_more_alloc_than 0. ]),
+      (fun () -> None),
+      [ wall_time ],
+      [ ("wall_time", "r = 0.05, e = 0.025") ] );
+    ( "the default binds no other metric",
+      (fun () -> []),
+      (fun () -> None),
+      [ cpu_time ],
+      [ ("cpu_time", "none") ] );
+    ( "a metric without a budget has none, in the trial's order",
+      (fun () -> [ Budget.no_slower_than 0.1 ]),
+      (fun () -> None),
+      [ cpu_time; wall_time ],
+      [ ("cpu_time", "none"); ("wall_time", "r = 0.1, e = 0.025") ] );
+    ( "a second budget for one metric is ignored",
+      (fun () -> [ Budget.no_slower_than 0.1; Budget.no_slower_than 0.5 ]),
+      (fun () -> None),
+      [ wall_time ],
+      [ ("wall_time", "r = 0.1, e = 0.025") ] );
+  ]
+
+let budgets_resolve (_, run_budgets, case_budgets, metrics, expected) =
   let t =
-    run_check
-      ~budgets:
-        [
-          Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
-            ~max_regression:d ();
-        ]
-      ~file
-      [ (bcase "a", wall_trial (spiked 1.5)) ]
+    decided ~budgets:(run_budgets ())
+      [
+        ( case ?budgets:(case_budgets ()) "a",
+          trial (List.map (fun m -> (m, sampled (ties 5 1.))) metrics) );
+      ]
   in
-  check_rel ~msg:"a vetoed change at U = r" t ~case:"a" ~metric:m_wall
-    "within_budget";
-  (* At r = 0 an unchanged row, [L = U = 0], is within budget with no
-     direction to confirm. *)
+  equal
+    (list (pair string string))
+    expected
+    (List.map
+       (fun r -> (Metric.id r.Verdict.metric, budget_name r.Verdict.budget))
+       (case_report t).Verdict.reports)
+
+(* The confirmation's samples are judged and pooled, so a warning about them
+   is the case's; one the first trial raised already is not repeated. *)
+let a_confirmation_s_warnings_follow_the_first_trial_s () =
+  let with_warnings warnings =
+    trial ~warnings [ (wall_time, sampled (ties 5 2.)) ]
+  in
+  let t =
+    one
+      ~confirm:(Some (with_warnings [ "gc"; "folded" ]))
+      (with_warnings [ "gc" ])
+  in
+  equal (list string) [ "gc"; "folded" ] (case_report t).Verdict.warnings
+
+let reports =
+  group "Reports"
+    [
+      cases "a case's budgets"
+        ~name:(fun (name, _, _, _, _) -> name)
+        resolutions budgets_resolve;
+      test "a confirmation's warnings follow the first trial's, each once"
+        a_confirmation_s_warnings_follow_the_first_trial_s;
+    ]
+
+(* Comparison states *)
+
+let comparison_name = function
+  | Verdict.No_baseline -> "no baseline"
+  | Stale (Ocaml_mismatch { section; current }) ->
+      strf "stale: %s, running %s" section current
+  | Compared -> "compared"
+
+let files =
+  [
+    ("an empty file", (fun () -> empty_file ()), "no baseline", None);
+    ( "a file with another machine's section alone",
+      (fun () -> file_of ~identity:other_ident [ wall_row "a" (ties 5 1.) ]),
+      "no baseline",
+      None );
+    ( "a section of another compiler",
+      (fun () -> file_of ~identity:stale_ident [ wall_row "a" (ties 5 1.) ]),
+      "stale: 5.4.0 64-bit release, running 5.5.0 64-bit release",
+      None );
+    ( "a section of this compiler",
+      (fun () -> file_of [ wall_row "a" (ties 5 1.) ]),
+      "compared",
+      Some "5.5.0 64-bit release" );
+    ( "a section of this compiler in another suite's file",
+      (fun () ->
+        Baseline.set_section
+          (Baseline.empty ~suite:"other")
+          ident
+          [ wall_row "a" (ties 5 1.) ]),
+      "compared",
+      Some "5.5.0 64-bit release" );
+  ]
+
+let a_file_is_compared_or_not (_, file, expected, section) =
+  let file = file () in
+  let t = decided ~file [ (case "a", wall (ties 5 1.)) ] in
+  equal
+    (pair string (option string))
+    (expected, section)
+    ( comparison_name (Verdict.comparison t),
+      Option.map Baseline.ocaml_of
+        (Verdict.compared_section ~identity:ident file) )
+
+let every_metric_is_proposed_on a_file () =
+  let t =
+    decided
+      ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0. ]
+      ~file:(a_file ())
+      [
+        ( case "a",
+          trial
+            [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 100) ]
+        );
+      ]
+  in
+  equal (list string) [ "proposed"; "proposed" ]
+    (List.map
+       (fun r -> describe r.Verdict.verdict)
+       (case_report t).Verdict.reports)
+
+let comparison_states =
+  group "Comparison states"
+    [
+      cases "comparison and compared_section"
+        ~name:(fun (name, _, _, _) -> name)
+        files a_file_is_compared_or_not;
+      test "on a stale section every metric is proposed"
+        (every_metric_is_proposed_on (fun () ->
+             file_of ~identity:stale_ident
+               [ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]));
+      test "without a section every metric is proposed"
+        (every_metric_is_proposed_on empty_file);
+    ]
+
+(* Judging *)
+
+let loaded = Env.Loaded { load = 8.; cores = 8 }
+
+(* The drift veto, with the budget's [(e, r)]. *)
+let drifted_trials =
+  [
+    ( "an equivalent shift is candidate drifted",
+      (0.025, 0.05),
+      1.,
+      "inconclusive, candidate drifted" );
+    ( "a shift within 2e never falls back to within budget",
+      (0.025, 0.05),
+      1.04,
+      "inconclusive, candidate drifted" );
+    ( "a shift of exactly 2e is candidate drifted",
+      (d15 /. 2., 0.3),
+      1.5,
+      "inconclusive, candidate drifted" );
+    ("a shift beyond 2e is judged", (0.025, 0.05), 2., "regressed, confirmed");
+  ]
+
+(* Each row's reason is the first of judge's tests that the evidence meets. *)
+let orders =
+  [
+    ( "a zero sample in the row is non-positive",
+      Env.Quiet,
+      [| 0.; 1.; 2. |],
+      (fun () -> wall (ties 5 1.)),
+      "inconclusive, non-positive" );
+    ( "a zero sample in the trial is non-positive",
+      Env.Quiet,
+      ties 5 1.,
+      (fun () -> wall (ties 5 0.)),
+      "inconclusive, non-positive" );
+    ( "a zero sample is non-positive on a loaded host",
+      loaded,
+      ties 5 1.,
+      (fun () -> wall (ties 5 0.)),
+      "inconclusive, non-positive" );
+    ( "a loaded host is environment",
+      loaded,
+      ties 5 1.,
+      (fun () -> wall (ties 5 2.)),
+      "inconclusive, environment" );
+    ( "a drifted trial on a loaded host is environment",
+      loaded,
+      ties 5 1.,
+      (fun () -> wall ~drifted:true (ties 5 2.)),
+      "inconclusive, environment" );
+    ( "a three-sample row is compared",
+      Env.Quiet,
+      ties 3 1.,
+      (fun () -> wall (ties 5 1.)),
+      "equivalent" );
+  ]
+
+let an_exact_comparison_settles_on_a_loaded_host () =
+  let t =
+    one ~load:loaded
+      ~budgets:[ Budget.no_more_alloc_than 0. ]
+      ~rows:[ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]
+      (trial [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 100) ])
+  in
+  equal (pair string string)
+    ("inconclusive, environment", "regressed, exact 54 to 100")
+    (relation t, relation ~metric:alloc_words t)
+
+let exactness_lost_holds_on_a_loaded_host () =
+  let t =
+    one ~load:loaded
+      ~budgets:[ Budget.no_more_alloc_than 0. ]
+      ~rows:[ alloc_row "a" 54 ]
+      (trial [ (alloc_words, sampled (ties 5 54.)) ])
+  in
+  equal string "inconclusive, exactness lost" (relation ~metric:alloc_words t)
+
+let confirmations_list_the_pending_cases_in_order () =
   let p =
     judge
-      ~budgets:[ Budget.no_slower_than 0. ]
-      ~file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
-  equal ~msg:"r = 0: nothing to confirm" (list string) []
-    (Verdict.confirmations p)
-
-let a_change_needs_the_whole_interval_above_the_band () =
-  (* The changed_within_budget clause is L > e, not just U <= r: an interval
-     straddling the band from below ([L;U] = [0%;+5%] against e = 2.5%,
-     r = 20%) demonstrates no direction. It is within budget, and so is an
-     interval reaching below the band ([-50%;+5%]). *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let under_20 samples =
-    run_check
-      ~budgets:[ Budget.no_slower_than 0.2 ]
-      ~file
-      [ (bcase "a", wall_trial samples) ]
-  in
-  check_rel ~msg:"straddling the band"
-    (under_20 [| 1.0; 1.0; 1.05; 1.05; 1.05 |])
-    ~case:"a" ~metric:m_wall "within_budget";
-  check_rel ~msg:"reaching below the band"
-    (under_20 [| 0.5; 0.5; 1.05; 1.05; 1.05 |])
-    ~case:"a" ~metric:m_wall "within_budget"
-
-(* Confirmation *)
-
-let regression_scenario ~confirm () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  run_check ~file ~confirm [ (bcase "a", wall_trial (ties 5 2.0)) ]
-
-let confirmed_regression_carries_evidence () =
-  let t =
-    regression_scenario ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0))) ()
-  in
-  (match verdict_of t ~case:"a" ~metric:m_wall with
-  | Judged (Regressed (Confirmed { first; confirmation; pooled; k } as strong))
-    ->
-      is_true ~msg:"first delta ~ +1.0"
-        (Float.abs (first.Verdict.estimate -. 1.0) < 1e-9);
-      equal ~msg:"its estimate is the first pass's" (option float_exact)
-        (Some first.Verdict.estimate)
-        (Verdict.strong_estimate strong);
-      is_true ~msg:"confirmation delta ~ +1.0"
-        (Float.abs (confirmation.Verdict.estimate -. 1.0) < 1e-9);
-      equal ~msg:"pooled has both passes" (array float_exact) (ties 10 2.0)
-        pooled;
-      equal ~msg:"k is the confirmation's" int 8 k
-  | v -> failf "expected a confirmed regression, got %s" (rel_name v));
-  check_overall ~msg:"confirmed regression fails" t `Fail;
-  equal ~msg:"exit 1" int 1 (Verdict.exit_code t)
-
-let unconfirmed_regression_is_inconclusive () =
-  let t =
-    regression_scenario ~confirm:(fun _ -> Some (wall_trial (ties 5 1.0))) ()
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed";
-  check_overall ~msg:"unconfirmed cannot fail" t `Inconclusive;
-  equal ~msg:"exit 0" int 0 (Verdict.exit_code t)
-
-let missing_confirmation_is_inconclusive () =
-  let t = regression_scenario ~confirm:(fun _ -> None) () in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
-
-let drifted_confirmation_is_inconclusive () =
-  let t =
-    regression_scenario
-      ~confirm:(fun _ -> Some (wall_trial ~drifted:true (ties 5 2.0)))
-      ()
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
-
-let unstable_confirmation_counts_beyond_2e () =
-  (* As on the first pass: an unstable confirmation of a 5x regression
-     reproduces it, while one within 2e (here 2e = 20%, the band widened to
-     e = r = 10%) does not, though its interval clears r. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (spiked 5.0)))
-      [ (bcase "a", wall_trial (ties 5 5.0)) ]
-  in
-  check_rel ~msg:"5x" t ~case:"a" ~metric:m_wall "regressed-confirmed";
-  let budgets =
-    [
-      Budget.relative ~metric:m_wall ~equivalent_within:0.1 ~max_regression:0.1
-        ();
-    ]
-  in
-  let confirm unstable _ =
-    Some (wall_trial (if unstable then spiked 1.15 else ties 5 1.15))
-  in
-  let within ~unstable =
-    run_check ~file ~budgets ~confirm:(confirm unstable)
-      [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
-  check_rel ~msg:"stable +15% reproduces" (within ~unstable:false) ~case:"a"
-    ~metric:m_wall "regressed-confirmed";
-  check_rel ~msg:"unstable +15% is within 2e" (within ~unstable:true) ~case:"a"
-    ~metric:m_wall "inconclusive:unconfirmed";
-  (* The bound is inclusive: an unstable confirmation of exactly 2e does not
-     count. Tied samples make its estimate [expm1 (log 1.5)] and the band is
-     half of that same value, so the boundary is exact on any libm. *)
-  let d = expm1 (log 1.5) in
-  let budgets =
-    [
-      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
-        ~max_regression:0.3 ();
-    ]
-  in
-  let t =
-    run_check ~file ~budgets
-      ~confirm:(fun _ -> Some (wall_trial (spiked 1.5)))
-      [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
-  check_rel ~msg:"exactly 2e" t ~case:"a" ~metric:m_wall
-    "inconclusive:unconfirmed"
-
-let opposite_confirmation_is_inconclusive () =
-  let t =
-    regression_scenario ~confirm:(fun _ -> Some (wall_trial (ties 5 0.5))) ()
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
-
-let exact_confirmation_evidence_is_inconclusive () =
-  let t =
-    regression_scenario
-      ~confirm:(fun _ -> Some (trial [ (m_alloc, Run.Exact 3) ]))
-      ()
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:unconfirmed"
-
-let confirmation_is_judged_at_the_wider_alpha () =
-  (* The confirmation stands alone at α = 0.05 per side, not the
-     initial 0.005. Discriminating vectors: against baseline
-     [0.9;0.95;1.0;1.05;1.1], the confirmation [1.14;1.2;1.2;1.2;1.2] has
-     exactly one of the 25 pairwise log differences below log 1.05, so the
-     Moses lower bound is ~+3.6% at α = 0.005 (k = 1: the full range) but
-     ~+9.1% at α = 0.05 (k = 5). Only the wider level reproduces
-     L > r = 0.05 — judged at the initial α this would decide
-     inconclusive (unconfirmed). *)
-  let file =
-    (fun f -> f) (file_of [ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ])
-  in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial [| 1.14; 1.2; 1.2; 1.2; 1.2 |]))
-      [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed"
-
-let unconfirmed_improvement_is_within_budget_and_never_ratchets () =
-  (* An unconfirmed improvement still showed its first interval below the
-     budget: it passes within budget, keeps that interval, and never
-     advances the baseline. Without a confirmation trial it is the same. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.0)))
-      [ (bcase "a", wall_trial (ties 5 0.5)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "within_budget";
-  check_overall t `Pass;
-  (match verdict_of t ~case:"a" ~metric:m_wall with
-  | Judged (Within_budget sh) ->
-      is_true ~msg:"the first interval"
-        (Float.abs (sh.Verdict.upper +. 0.5) < 1e-9)
-  | v -> failf "expected within budget, got %s" (rel_name v));
-  is_none ~msg:"no candidate" (Verdict.corrected t);
-  let missing =
-    run_check ~file
-      ~confirm:(fun _ -> None)
-      [ (bcase "a", wall_trial (ties 5 0.5)) ]
-  in
-  check_rel ~msg:"no confirmation trial" missing ~case:"a" ~metric:m_wall
-    "within_budget";
-  (* A loaded host at the confirmation sweep is still no pass. *)
-  let loaded =
-    run_check ~file
-      ~decide_load:(Env.Loaded { load = 8.; cores = 8 })
-      [ (bcase "a", wall_trial (ties 5 0.5)) ]
-  in
-  check_rel ~msg:"environment at confirmation" loaded ~case:"a" ~metric:m_wall
-    "inconclusive:environment"
-
-let confirmation_warnings_reach_the_report () =
-  (* The confirmation's samples are judged and pooled, so a warning about
-     them reaches the case; one the first trial already raised is not
-     repeated. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let with_warnings ws =
-    Run.Trial.make ~k:8 ~warnings:ws
-      [ (m_wall, Run.Samples (sam (ties 5 2.0))) ]
-  in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (with_warnings [ "gc"; "folded" ]))
-      [ (bcase "a", with_warnings [ "gc" ]) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
-  equal (list string) [ "gc"; "folded" ]
-    (List.hd (Verdict.cases t)).Verdict.warnings
-
-let queue_lists_only_sampled_strongs_in_case_order () =
-  let file =
-    (fun f -> f)
-      (file_of
-         [
-           wall_row "c1" (ties 5 1.0);
-           wall_row "c2" (ties 5 1.0);
-           wall_row "c3" (ties 5 1.0);
-           alloc_row "c4" 54;
-         ])
-  in
-  let p =
-    judge ~file
-      [
-        (bcase "c1", wall_trial (ties 5 2.0));
-        (bcase "c2", wall_trial (ties 5 1.0));
-        (bcase "c3", wall_trial (ties 5 0.5));
-        ( bcase ~budgets:[ Budget.no_more_alloc_than 0.0 ] "c4",
-          trial [ (m_alloc, Run.Exact 100) ] );
-      ]
-  in
-  equal ~msg:"exact strongs need no confirmation" (list string) [ "c1"; "c3" ]
-    (Verdict.confirmations p)
-
-let decide_rejects_unrequested_or_duplicate_ids () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let p = judge ~file [ (bcase "a", wall_trial (ties 5 2.0)) ] in
-  invalid (fun () ->
-      Verdict.decide ~load:Env.Quiet
-        ~confirmations:[ ("nope", wall_trial (ties 5 2.0)) ]
-        p);
-  invalid (fun () ->
-      Verdict.decide ~load:Env.Quiet
-        ~confirmations:
-          [ ("a", wall_trial (ties 5 2.0)); ("a", wall_trial (ties 5 2.0)) ]
-        p)
-
-(* Quality degradations *)
-
-let unstable_baseline = spiked 1.0
-
-let drifted_candidate_is_vetoed_within_2e () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let equiv =
-    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
-  in
-  check_rel ~msg:"even an equivalent shift" equiv ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_drifted";
-  let within =
-    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ]
-  in
-  check_rel ~msg:"a shift within 2e never falls back to within budget" within
-    ~case:"a" ~metric:m_wall "inconclusive:candidate_drifted";
-  (* Beyond 2e drift is no veto, as instability is none: a 2x drifted trial
-     queues, confirms, and fails the case. *)
-  let strong =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
-      [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
-  in
-  check_rel ~msg:"a strong shift is judged" strong ~case:"a" ~metric:m_wall
-    "regressed-confirmed";
-  check_overall strong `Fail;
-  (* The bound is inclusive, as the instability veto's. *)
-  let d = expm1 (log 1.5) in
-  let budgets =
-    [
-      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
-        ~max_regression:0.3 ();
-    ]
-  in
-  let edge =
-    run_check ~file ~budgets
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
-      [ (bcase "a", wall_trial ~drifted:true (ties 5 1.5)) ]
-  in
-  check_rel ~msg:"exactly 2e" edge ~case:"a" ~metric:m_wall
-    "inconclusive:candidate_drifted"
-
-let unstable_candidate_blocks_demonstrated_directions () =
-  (* Within 2e (5% at the default budget) only; beyond, see
-     [large_shift_on_unstable_evidence_is_judged]. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let strong = run_check ~file [ (bcase "a", wall_trial (spiked 0.96)) ] in
-  check_rel ~msg:"an improvement within 2e falls back to within budget" strong
-    ~case:"a" ~metric:m_wall "within_budget";
-  let within = run_check ~file [ (bcase "a", wall_trial (spiked 1.03)) ] in
-  check_rel ~msg:"so does a change within budget" within ~case:"a"
-    ~metric:m_wall "within_budget";
-  (* At the derived band a regression is beyond 2e; a wider band puts one
-     within it. *)
-  let over =
-    run_check
-      ~budgets:
-        [
-          Budget.relative ~metric:m_wall ~equivalent_within:0.025
-            ~max_regression:0.03 ();
-        ]
-      ~file
-      [ (bcase "a", wall_trial (spiked 1.04)) ]
-  in
-  check_rel ~msg:"a regression within 2e stays vetoed" over ~case:"a"
-    ~metric:m_wall "inconclusive:candidate_unstable";
-  let equiv = run_check ~file [ (bcase "a", wall_trial (spiked 1.0)) ] in
-  check_rel ~msg:"equivalent survives" equiv ~case:"a" ~metric:m_wall
-    "equivalent"
-
-let non_positive_samples_get_their_own_reason () =
-  (* A zero sample breaks the log-space comparison, and re-measuring cannot
-     price it — wide_interval's remedy (--precise) would only collect more
-     zeros, so the reason is its own. Structural for coarse metrics at a
-     batch they do not tick in (cpu_time's ~10 ms clock against the 5 ms
-     batch floor) and for metrics that are genuinely zero per call. *)
-  let zero_file =
-    file_of
-      [
-        Baseline.sampled_row ~id:"a" ~metric:"wall_time" ~k:8
-          ~samples:[| 0.0; 1.0; 2.0 |];
-      ]
-  in
-  let t = run_check ~file:zero_file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
-  check_rel ~msg:"stored zeros" t ~case:"a" ~metric:m_wall
-    "inconclusive:non_positive";
-  is_true ~msg:"wire spelling"
-    (contains ~sub:{|"reason":"non_positive"|} (Verdict.to_json t));
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 0.0)) ] in
-  check_rel ~msg:"measured zeros" t ~case:"a" ~metric:m_wall
-    "inconclusive:non_positive"
-
-let baseline_instability_is_recomputed_from_stored_samples () =
-  (* Deviation 6: the flag's collection-order input died at measurement time;
-     outlier inflation is re-derived from the stored sorted vector. *)
-  is_true ~msg:"premise: the stored vector is severely outlier-inflated"
-    (Stats.severe_outlier_inflation_sorted unstable_baseline);
-  let file = file_of [ wall_row "a" unstable_baseline ] in
-  let t =
-    run_check
-      ~budgets:
-        [
-          Budget.relative ~metric:m_wall ~equivalent_within:0.025
-            ~max_regression:0.03 ();
-        ]
-      ~file
-      [ (bcase "a", wall_trial (ties 20 1.04)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:baseline_unstable"
-
-let large_shift_on_unstable_evidence_is_judged () =
-  (* A 5x regression on a row that fails the instability test is judged as
-     on a stable row: it queues, confirms, and fails the case. *)
-  let file = file_of [ wall_row "a" unstable_baseline ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 20 5.0)))
-      [ (bcase "a", wall_trial (ties 20 5.0)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
-  check_overall t `Fail;
-  (* The candidate side too: an unstable 2x candidate queues for
-     confirmation instead of being vetoed. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
-      [ (bcase "a", wall_trial (spiked 2.0)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
-  (* The bound is inclusive, as batch_drifted's: a shift of exactly 2e stays
-     vetoed. Tied samples make the estimate [expm1 (log 1.5)]; the band is
-     half of that same value, so the boundary is exact on any libm. *)
-  let d = expm1 (log 1.5) in
-  let budgets =
-    [
-      Budget.relative ~metric:m_wall ~equivalent_within:(d /. 2.)
-        ~max_regression:0.3 ();
-    ]
-  in
-  let t =
-    run_check ~file ~budgets
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
-      [ (bcase "a", wall_trial (spiked 1.5)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:candidate_unstable"
-
-(* The environment gate *)
-
-let loaded = Env.Loaded { load = 7.9; cores = 8 }
-
-let loaded_gate_degrades_sampled_but_not_exact () =
-  let file =
-    (fun f -> f) (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
-  in
-  let t =
-    run_check ~load:loaded
-      ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
-      ~file
-      [
-        ( bcase "a",
-          trial
-            [
-              (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 100);
-            ] );
-      ]
-  in
-  check_rel ~msg:"sampled degrades" t ~case:"a" ~metric:m_wall
-    "inconclusive:environment";
-  check_rel ~msg:"exact still compares" t ~case:"a" ~metric:m_alloc
-    "regressed-exact";
-  check_overall ~msg:"exact metrics still fail the build" t `Fail;
-  equal ~msg:"exit 1 under load" int 1 (Verdict.exit_code t)
-
-let loaded_gate_queues_no_confirmations () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let p = judge ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ] in
-  equal (list string) [] (Verdict.confirmations p)
-
-let loaded_gate_at_decide_degrades_pendings () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file ~decide_load:loaded
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0)))
-      [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "inconclusive:environment"
-
-let evidence_shape_reasons_survive_a_loaded_gate () =
-  (* Only cells that would need a rank test degrade to environment; a mixed
-     exact/sampled comparison names the evidence defect — its remedy (fix
-     the nondeterministic allocation) does not involve waiting for quiet. *)
-  let file = file_of [ alloc_row "a" 54 ] in
-  let t =
-    run_check ~load:loaded ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 54.0))) ]) ]
-  in
-  check_rel t ~case:"a" ~metric:m_alloc "inconclusive:exactness_lost"
-
-let non_positive_survives_a_loaded_gate_and_drift_does_not () =
-  (* A quiet host cannot fix a zero sample, so load never hides it; load
-     does explain drift, so a drifted trial under load reads environment. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~load:loaded ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]
-  in
-  check_rel ~msg:"zeros under load" t ~case:"a" ~metric:m_wall
-    "inconclusive:non_positive";
-  let t =
-    run_check ~load:loaded ~file
-      [ (bcase "a", wall_trial ~drifted:true (ties 5 2.0)) ]
-  in
-  check_rel ~msg:"drift under load" t ~case:"a" ~metric:m_wall
-    "inconclusive:environment";
-  (* The smallest stored row, three positive samples, is compared. *)
-  let file = file_of [ wall_row "a" (ties 3 1.0) ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
-  check_rel ~msg:"a three-sample row" t ~case:"a" ~metric:m_wall "equivalent"
-
-(* Staleness *)
-
-let stale_ident = { ident with Baseline.ocaml = "5.4.0 64-bit release" }
-
-let stale_file () =
-  let f =
-    Baseline.set_section
-      (Baseline.empty ~suite:"digest")
-      stale_ident
-      [
-        wall_row "a" (ties 5 1.0); alloc_row "a" 54; wall_row "old" (ties 5 1.0);
-      ]
-  in
-  Baseline.set_section f other_ident [ wall_row "z" (ties 5 1.0) ]
-
-let stale_trial () =
-  trial [ (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 100) ]
-
-let stale_section_makes_every_row_new () =
-  let file = stale_file () in
-  let t =
-    run_check
-      ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
-      ~file
-      [ (bcase "a", stale_trial ()) ]
-  in
-  (match Verdict.comparison t with
-  | Stale (Ocaml_mismatch { section; current }) ->
-      equal ~msg:"recorded" string "5.4.0 64-bit release" section;
-      equal ~msg:"current" string "5.5.0 64-bit release" current
-  | _ -> failf "expected a stale comparison");
-  check_rel ~msg:"sampled is proposed" t ~case:"a" ~metric:m_wall "proposed";
-  check_rel ~msg:"exact is proposed too" t ~case:"a" ~metric:m_alloc "proposed";
-  check_overall ~msg:"new rows are not a verdict" t `Pass;
-  equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
-  equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t)
-
-let stale_candidate_proposes_a_fresh_section () =
-  let file = stale_file () in
-  let t = run_check ~file [ (bcase "a", stale_trial ()) ] in
-  match Verdict.corrected t with
-  | None -> failf "expected a fresh-section candidate"
-  | Some result ->
-      let s = section_of result in
-      equal ~msg:"identity is current" string ident.Baseline.ocaml
-        (Baseline.ocaml_of s);
-      equal ~msg:"rows are this run's evidence"
-        (list (pair string string))
-        [ ("a", "alloc_words"); ("a", "wall_time") ]
-        (List.map
-           (fun r -> (Baseline.row_id r, Baseline.row_metric r))
-           (Baseline.rows s));
-      equal ~msg:"other machine untouched" (option string) (row_line file "z")
-        (row_line result "z")
-
-(* Exact metrics and their edges *)
-
-let exact_verdict ?(budgets = [ Budget.no_more_alloc_than 0.0 ]) ~row ~cand () =
-  let file = file_of [ alloc_row "a" row ] in
-  let t =
-    run_check ~budgets ~file
-      [ (bcase "a", trial [ (m_alloc, Run.Exact cand) ]) ]
-  in
-  (t, rel_name (verdict_of t ~case:"a" ~metric:m_alloc))
-
-let exact_integer_comparison () =
-  let t, r = exact_verdict ~row:54 ~cand:55 () in
-  equal ~msg:"over a zero budget" string "regressed-exact" r;
-  check_overall ~msg:"gates without confirmation" t `Fail;
-  let _, r = exact_verdict ~row:54 ~cand:53 () in
-  equal ~msg:"less is improved" string "improved-exact" r;
-  let _, r = exact_verdict ~row:54 ~cand:54 () in
-  equal ~msg:"equal is equivalent" string "equivalent-exact" r;
-  let _, r =
-    exact_verdict
-      ~budgets:[ Budget.no_more_alloc_than 0.10 ]
-      ~row:100 ~cand:105 ()
-  in
-  equal ~msg:"a budgeted increase" string "changed_within_budget" r;
-  let t, r =
-    exact_verdict
-      ~budgets:[ Budget.no_more_alloc_than 0.10 ]
-      ~row:100 ~cand:111 ()
-  in
-  equal ~msg:"over a relative budget" string "regressed-exact" r;
-  check_overall t `Fail
-
-let exact_zero_baseline_regresses_any_relative_budget () =
-  let _, r =
-    exact_verdict ~budgets:[ Budget.no_more_alloc_than 0.10 ] ~row:0 ~cand:1 ()
-  in
-  equal string "regressed-exact" r
-
-let exact_rows_and_the_probe_k () =
-  (* The exact count is probed at the frozen k 32 while it is at most 16
-     times this trial's k, so an exact row compares as integers after a
-     recalibration down to k = 2; at k = 1 the probe ran at the trial's k,
-     and differing counts drift. The sampled row reads its moved k. *)
-  let file =
-    (fun f -> f) (file_of [ wall_row ~k:32 "a" (ties 5 1.0); alloc_row "a" 54 ])
-  in
-  let run_at ~k cand =
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      [
-        ( bcase "a",
-          trial ~k
-            [
-              (m_wall, Run.Samples (sam (ties 5 1.0))); (m_alloc, Run.Exact cand);
-            ] );
-      ]
-  in
-  let moved = run_at ~k:2 55 in
-  check_rel ~msg:"k moved to 1/16, values differ" moved ~case:"a"
-    ~metric:m_alloc "regressed-exact";
-  check_rel ~msg:"the sampled row at zero shift drifts" moved ~case:"a"
-    ~metric:m_wall "inconclusive:batch_drifted";
-  let past = run_at ~k:1 55 in
-  check_rel ~msg:"k moved past 1/16, values differ" past ~case:"a"
-    ~metric:m_alloc "inconclusive:batch_drifted";
-  let past_same = run_at ~k:1 54 in
-  check_rel ~msg:"k moved past 1/16, values agree" past_same ~case:"a"
-    ~metric:m_alloc "equivalent-exact";
-  let same_k = run_at ~k:32 55 in
-  check_rel ~msg:"same k compares normally" same_k ~case:"a" ~metric:m_alloc
-    "regressed-exact"
-
-let recalibrated_improvement_stands_and_records_new_k () =
-  (* A shift beyond 2e is a verdict, not a calibration event; the
-     advanced row records the confirmation's k. *)
-  let file = file_of [ wall_row ~k:8 "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial ~k:16 (ties 5 0.5)))
-      [ (bcase "a", wall_trial ~k:16 (ties 5 0.5)) ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "improved-confirmed";
-  match Verdict.corrected t with
-  | None -> failf "expected an advanced candidate"
-  | Some result -> (
-      match
-        Baseline.row_evidence
-          (Option.get
-             (Baseline.find_row (section_of result) ~id:"a" ~metric:"wall_time"))
-      with
-      | Baseline.Sampled { k; samples } ->
-          equal ~msg:"new frozen k" int 16 k;
-          equal ~msg:"pooled 2n samples" (array float_exact) (ties 10 0.5)
-            samples
-      | Baseline.Exact_int _ -> failf "expected a sampled row")
-
-let exactness_lost_edges () =
-  let exact_base_sampled_cand =
-    let file = file_of [ alloc_row "a" 54 ] in
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 54.0))) ]) ]
-  in
-  check_rel ~msg:"exact row, sampled candidate" exact_base_sampled_cand
-    ~case:"a" ~metric:m_alloc "inconclusive:exactness_lost";
-  let sampled_base_exact_cand =
-    let file =
-      file_of
-        [
-          Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8
-            ~samples:(ties 5 54.0);
-        ]
-    in
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      [ (bcase "a", trial [ (m_alloc, Run.Exact 54) ]) ]
-  in
-  check_rel ~msg:"sampled row, exact candidate" sampled_base_exact_cand
-    ~case:"a" ~metric:m_alloc "inconclusive:exactness_lost"
-
-let zero_tolerance_on_downgraded_metric_is_exactness_lost () =
-  (* Never a rank test at r = 0 on a downgraded exact-capable metric. *)
-  let file =
-    (fun f -> f)
-      (file_of
-         [
-           Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8
-             ~samples:(ties 5 54.0);
-         ])
-  in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 54.0))) ]) ]
-  in
-  check_rel t ~case:"a" ~metric:m_alloc "inconclusive:exactness_lost"
-
-let absolute_budget_gates_exact_evidence () =
-  let budgets = [ Budget.at_most ~metric:m_alloc 100.0 ] in
-  let t, r = exact_verdict ~budgets ~row:100 ~cand:120 () in
-  equal ~msg:"over the cap" string "regressed-exact" r;
-  check_overall t `Fail;
-  let t, r = exact_verdict ~budgets ~row:200 ~cand:150 () in
-  equal ~msg:"below baseline but over the cap still regresses" string
-    "regressed-exact" r;
-  check_overall t `Fail;
-  let t, r = exact_verdict ~budgets ~row:100 ~cand:80 () in
-  equal ~msg:"under the cap, below baseline" string "improved-exact" r;
-  check_overall t `Pass;
-  let _, r = exact_verdict ~budgets ~row:90 ~cand:95 () in
-  equal ~msg:"under the cap, above baseline" string "changed_within_budget" r;
-  let _, r = exact_verdict ~budgets ~row:100 ~cand:100 () in
-  equal ~msg:"unchanged" string "equivalent-exact" r
-
-let absolute_budget_never_gates_sampled_evidence () =
-  (* A statistical estimate crossing an absolute line is not an earned
-     verdict; the relation is reported under default parameters instead.
-     Constructed on alloc_words with a failed exactness probe — the one way
-     sampled evidence can meet an absolute cap now that [at_most] refuses
-     never-exact metrics at construction. *)
-  let file =
-    file_of
-      [
-        Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 100.0);
-      ]
-  in
-  let alloc_sampled v = trial [ (m_alloc, Run.Samples (sam (ties 5 v))) ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.at_most ~metric:m_alloc 150. ]
-      ~confirm:(fun _ -> Some (alloc_sampled 200.0))
-      [ (bcase "a", alloc_sampled 200.0) ]
-  in
-  check_rel t ~case:"a" ~metric:m_alloc "regressed-confirmed";
-  check_overall ~msg:"reported, never gating" t `Pass
-
-let a_cap_is_judged_without_a_baseline_row () =
-  (* An absolute cap consults no baseline: a proven-exact count over it
-     fails its case on a first run, on a stale section, for a new case, at a
-     moved batch size, and against a sampled row. *)
-  let budgets = [ Budget.at_most ~metric:m_alloc 100.0 ] in
-  let alloc n = trial [ (m_alloc, Run.Exact n) ] in
-  let first_run n = run_check ~budgets [ (bcase "a", alloc n) ] in
-  let t = first_run 120 in
-  check_rel ~msg:"first run: the row is proposed" t ~case:"a" ~metric:m_alloc
-    "proposed";
-  check_overall ~msg:"first run: over the cap fails" t `Fail;
-  equal ~msg:"first run: exit 1" int 1 (Verdict.exit_code t);
-  check_overall ~msg:"first run: at the cap passes" (first_run 100) `Pass;
-  let stale =
-    Baseline.set_section
-      (Baseline.empty ~suite:"digest")
-      stale_ident
-      [ alloc_row "a" 50 ]
-  in
-  check_overall ~msg:"stale section"
-    (run_check ~budgets ~file:stale [ (bcase "a", alloc 120) ])
-    `Fail;
-  let other = file_of [ alloc_row "b" 50 ] in
-  check_overall ~msg:"a new case"
-    (run_check ~budgets ~file:other [ (bcase "a", alloc 120) ])
-    `Fail;
-  let moved =
-    run_check ~budgets
-      ~file:(file_of [ wall_row ~k:16 "a" (ties 5 1.0); alloc_row "a" 50 ])
-      [
-        ( bcase "a",
-          trial ~k:8
-            [
-              (m_wall, Run.Samples (sam (ties 5 1.0))); (m_alloc, Run.Exact 120);
-            ] );
-      ]
-  in
-  check_rel ~msg:"a moved batch size" moved ~case:"a" ~metric:m_alloc
-    "regressed-exact";
-  check_overall ~msg:"a moved batch size fails" moved `Fail;
-  let sampled_row =
-    file_of
-      [
-        Baseline.sampled_row ~id:"a" ~metric:"alloc_words" ~k:8
-          ~samples:(ties 5 50.0);
-      ]
-  in
-  check_overall ~msg:"against a sampled row"
-    (run_check ~budgets ~file:sampled_row [ (bcase "a", alloc 120) ])
-    `Fail;
-  let sampled_first_run =
-    run_check ~budgets
-      [ (bcase "a", trial [ (m_alloc, Run.Samples (sam (ties 5 120.0))) ]) ]
-  in
-  check_overall ~msg:"a sampled count never gates" sampled_first_run `Pass
-
-(* Budgets and case verdicts *)
-
-let uncollected_inherited_budget_is_dropped () =
-  (* tolk's compile cases: suite budgets on wall and alloc, a case that
-     collects wall only. The alloc budget does not bind it. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
-  let c = List.hd (Verdict.cases t) in
-  equal ~msg:"one report, the measured metric" (list string) [ "wall_time" ]
-    (List.map (fun r -> Metric.id r.Verdict.metric) c.Verdict.reports);
-  is_some ~msg:"wall keeps its budget"
-    (report t ~case:"a" ~metric:m_wall).Verdict.budget;
-  check_overall t `Pass
-
-let default_binds_only_a_case_collecting_wall_time () =
-  let file =
-    file_of
-      [
-        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-          ~samples:(ties 5 1.0);
-      ]
-  in
-  let t =
-    run_check ~file
-      [ (bcase "a", trial [ (m_cpu, Run.Samples (sam (ties 5 1.0))) ]) ]
-  in
-  is_none ~msg:"no default budget on cpu_time"
-    (report t ~case:"a" ~metric:m_cpu).Verdict.budget;
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
-  is_some ~msg:"the default binds wall_time"
-    (report t ~case:"a" ~metric:m_wall).Verdict.budget
-
-let the_default_binds_after_the_drop () =
-  (* A suite that budgets only alloc, a case that collects wall_time only:
-     the alloc budget drops, nothing remains, so the default binds wall_time
-     and a large regression fails the case. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 1.5)))
-      [ (bcase "a", wall_trial (ties 5 1.5)) ]
-  in
-  is_some ~msg:"the default binds wall_time"
-    (report t ~case:"a" ~metric:m_wall).Verdict.budget;
-  check_rel t ~case:"a" ~metric:m_wall "regressed-confirmed";
-  check_overall ~msg:"the regression fails the case" t `Fail
-
-let unbudgeted_metrics_report_but_never_gate () =
-  let file =
-    (fun f -> f)
-      (file_of
-         [
-           wall_row "a" (ties 5 1.0);
-           Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-             ~samples:(ties 5 1.0);
-         ])
-  in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_slower_than 0.05 ]
-      ~confirm:(fun _ ->
-        Some (trial [ (m_cpu, Run.Samples (sam (ties 5 2.0))) ]))
-      [
-        ( bcase "a",
-          trial
-            [
-              (m_wall, Run.Samples (sam (ties 5 1.0)));
-              (m_cpu, Run.Samples (sam (ties 5 2.0)));
-            ] );
-      ]
-  in
-  check_rel ~msg:"reported" t ~case:"a" ~metric:m_cpu "regressed-confirmed";
-  is_none ~msg:"no budget attached"
-    (report t ~case:"a" ~metric:m_cpu).Verdict.budget;
-  check_overall ~msg:"never gates" t `Pass
-
-let no_cross_metric_forgiveness () =
-  (* A confirmed alloc regression fails the case even when time improved
-     — and the improvement still ratchets. *)
-  let file = file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.0 ]
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 0.5)))
-      [
-        ( bcase "a",
-          trial
-            [
-              (m_wall, Run.Samples (sam (ties 5 0.5))); (m_alloc, Run.Exact 100);
-            ] );
-      ]
-  in
-  check_rel ~msg:"time improved" t ~case:"a" ~metric:m_wall "improved-confirmed";
-  check_rel ~msg:"alloc regressed" t ~case:"a" ~metric:m_alloc "regressed-exact";
-  check_overall t `Fail;
-  match Verdict.corrected t with
-  | None -> failf "the unrelated improvement must still write a candidate"
-  | Some result -> (
-      equal ~msg:"alloc row not advanced" (option string) (row_line file "a")
-        (List.find_opt
-           (fun l -> String.starts_with ~prefix:"a\talloc_words" l)
-           (file_lines result));
-      match
-        Baseline.row_evidence
-          (Option.get
-             (Baseline.find_row (section_of result) ~id:"a" ~metric:"wall_time"))
-      with
-      | Baseline.Sampled { samples; _ } ->
-          equal ~msg:"wall row pooled" (array float_exact) (ties 10 0.5) samples
-      | Baseline.Exact_int _ -> failf "expected a sampled row")
-
-let case_budgets_override_run_budgets_per_metric () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_slower_than 0.0 ]
-      [
-        ( bcase ~budgets:[ Budget.no_slower_than 0.5 ] "a",
-          wall_trial (ties 5 1.3) );
-      ]
-  in
-  check_rel t ~case:"a" ~metric:m_wall "changed_within_budget";
-  check_overall t `Pass
-
-let judge_validates_inputs () =
-  invalid (fun () ->
-      ignore
-        (judge
+      ~file:
+        (file_of
            [
-             (bcase "a", wall_trial (ties 5 1.0));
-             (bcase "a", wall_trial (ties 5 1.0));
-           ]))
-
-(* NEW rows *)
-
-let new_section_proposes_everything () =
-  let t =
-    run_check
-      [ (bcase "a", trial [ (m_wall, Run.Samples (sam (ties 5 1.0))) ]) ]
-  in
-  is_true ~msg:"comparison"
-    (match Verdict.comparison t with No_baseline -> true | _ -> false);
-  check_rel t ~case:"a" ~metric:m_wall "proposed";
-  check_overall ~msg:"NEW is not a verdict" t `Pass;
-  equal ~msg:"exit 0" int 0 (Verdict.exit_code t);
-  equal ~msg:"exit 1 under strict" int 1 (Verdict.exit_code ~strict:true t);
-  match Verdict.corrected t with
-  | None -> failf "expected a proposed section"
-  | Some result ->
-      equal ~msg:"suite header added" (option string) (Some "digest")
-        (Baseline.suite result);
-      is_some ~msg:"section present" (Baseline.section result "testmachine")
-
-let new_metric_row_is_added_on_compared_runs () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
+             wall_row "c1" (ties 5 1.);
+             wall_row "c2" (ties 5 1.);
+             wall_row "c3" (ties 5 1.);
+             alloc_row "c4" 54;
+           ])
       [
-        ( bcase "a",
+        (case "c1", wall (ties 5 2.));
+        (case "c2", wall (ties 5 1.));
+        (case "c3", wall (ties 5 0.5));
+        (case ~budgets:[ Budget.no_more_alloc_than 0. ] "c4", alloc 100);
+      ]
+  in
+  equal (list string) [ "c1"; "c3" ] (Verdict.confirmations p)
+
+let a_case_with_two_pending_metrics_is_listed_once () =
+  let p =
+    judge
+      ~file:
+        (file_of
+           [
+             Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+               ~samples:(ties 5 1.);
+             wall_row "a" (ties 5 1.);
+           ])
+      [
+        ( case "a",
           trial
             [
-              (m_wall, Run.Samples (sam (ties 5 1.0))); (m_alloc, Run.Exact 54);
+              (wall_time, sampled (ties 5 2.)); (cpu_time, sampled (ties 5 2.));
             ] );
       ]
   in
-  check_rel ~msg:"judged metric" t ~case:"a" ~metric:m_wall "equivalent";
-  check_rel ~msg:"new metric" t ~case:"a" ~metric:m_alloc "proposed";
-  equal ~msg:"strict exits 1 on a NEW row" int 1
-    (Verdict.exit_code ~strict:true t);
-  match Verdict.corrected t with
-  | None -> failf "expected the new row to be proposed"
-  | Some result ->
-      equal ~msg:"row added" (option string) (Some "a\talloc_words\texact\t54")
-        (List.find_opt
-           (fun l -> String.starts_with ~prefix:"a\talloc_words" l)
-           (file_lines result));
-      equal ~msg:"judged row untouched" (option string) (row_line file "a")
-        (List.find_opt
-           (fun l -> String.starts_with ~prefix:"a\twall_time" l)
-           (file_lines result))
+  equal (list string) [ "a" ] (Verdict.confirmations p)
 
-let proposals_record_gated_and_flagged_evidence () =
-  (* The ratchet adds first evidence unconditionally: a fresh-section proposal from a
-     Loaded run and a NEW metric row from a drifted trial both propose the
-     measured evidence — only bless has a gate guard, and it is the CLI's
-     (see the candidate doc). The promotion prompt is the review point. *)
-  let fresh =
-    run_check ~load:loaded
-      [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
+let nothing_to_confirm =
+  [
+    ("a loaded host", (fun () -> Budget.no_slower_than 0.05), loaded, 2.);
+    ( "an unchanged row at r = 0",
+      (fun () -> Budget.no_slower_than 0.),
+      Env.Quiet,
+      1. );
+  ]
+
+(* The first trial regresses by 2x against tied 1s unless a row says;
+   [(e, r)] is the budget. *)
+let confirmations =
+  [
+    ( "a confirmation that reproduces it",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall (ties 5 2.))),
+      "regressed, confirmed" );
+    ( "a confirmation at the row's level",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall (ties 5 1.))),
+      "inconclusive, unconfirmed" );
+    ( "a confirmation in the other direction",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall (ties 5 0.5))),
+      "inconclusive, unconfirmed" );
+    ( "no confirmation",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> None),
+      "inconclusive, unconfirmed" );
+    ( "a drifted confirmation",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall ~drifted:true (ties 5 2.))),
+      "inconclusive, unconfirmed" );
+    ( "a confirmation without the metric",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (alloc 3)),
+      "inconclusive, unconfirmed" );
+    ( "a confirmation with a non-positive sample",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall [| 0.; 2.; 2.; 2.; 2. |])),
+      "inconclusive, unconfirmed" );
+    ( "a confirmation at another batch size",
+      (0.025, 0.05),
+      ties 5 2.,
+      (fun () -> Some (wall ~k:16 (ties 5 2.))),
+      "inconclusive, unconfirmed" );
+    ( "an unstable confirmation beyond 2e",
+      (0.025, 0.05),
+      ties 5 5.,
+      (fun () -> Some (wall (spiked 5.))),
+      "regressed, confirmed" );
+    ( "a stable confirmation within 2e",
+      (0.1, 0.1),
+      ties 5 2.,
+      (fun () -> Some (wall (ties 5 1.15))),
+      "regressed, confirmed" );
+    ( "an unstable confirmation within 2e",
+      (0.1, 0.1),
+      ties 5 2.,
+      (fun () -> Some (wall (spiked 1.15))),
+      "inconclusive, unconfirmed" );
+    ( "an unstable confirmation of exactly 2e",
+      (d15 /. 2., 0.3),
+      ties 5 2.,
+      (fun () -> Some (wall (spiked 1.5))),
+      "inconclusive, unconfirmed" );
+  ]
+
+(* A sampled count regresses by 2x, and its confirmation is exact. *)
+let a_confirmation_measured_as_exact_is_unconfirmed () =
+  let t =
+    one
+      ~budgets:[ Budget.no_more_alloc_than 0.05 ]
+      ~rows:[ sampled_alloc_row (ties 5 1.) ]
+      ~confirm:(Some (alloc 2))
+      (trial [ (alloc_words, sampled (ties 5 2.)) ])
   in
-  (match Verdict.corrected fresh with
-  | None -> failf "expected a fresh-section proposal"
-  | Some result ->
-      is_some ~msg:"gated drifted trial still proposes first evidence"
-        (row_line result "a"));
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let compared =
-    run_check ~file
-      [
-        ( bcase "a",
-          trial
-            [
-              (m_wall, Run.Samples (sam (ties 5 1.0)));
-              (m_cpu, Run.Samples (sam ~drifted:true (ties 5 1.0)));
-            ] );
-      ]
+  equal string "inconclusive, unconfirmed" (relation ~metric:alloc_words t)
+
+(* Against [0.9; 0.95; 1; 1.05; 1.1], one of the 25 differences of
+   [1.14; 1.2; 1.2; 1.2; 1.2] is below [log 1.05]: the lower bound is about
+   +3.6% at 0.005 per side and +9.1% at 0.05, and only the latter is beyond
+   [r = 0.05]. *)
+let the_confirmation_is_judged_at_0_05_per_side () =
+  let t =
+    one
+      ~rows:[ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ]
+      ~confirm:(Some (wall [| 1.14; 1.2; 1.2; 1.2; 1.2 |]))
+      (wall (ties 5 2.))
   in
-  check_rel ~msg:"drift never affects a NEW judgment" compared ~case:"a"
-    ~metric:m_cpu "proposed";
-  match Verdict.corrected compared with
-  | None -> failf "expected the drifted NEW row to be proposed"
-  | Some result ->
-      is_some ~msg:"cpu row proposed from the drifted trial"
-        (Baseline.find_row (section_of result) ~id:"a" ~metric:"cpu_time")
+  equal string "regressed, confirmed" (relation t)
 
-(* The ratchet *)
+let confirmed (r : Verdict.metric_report) =
+  match r.verdict with
+  | Judged (Regressed (Confirmed { first; confirmation; pooled; k }))
+  | Judged (Improved (Confirmed { first; confirmation; pooled; k })) ->
+      Some (first, confirmation, pooled, k)
+  | _ -> None
 
-let equivalent_run_writes_nothing () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
+let a_confirmed_relation_carries_both_shifts_and_the_pooled_samples () =
+  let first, confirmation, pooled, k =
+    require_match confirmed (report (one (wall (ties 5 2.))))
+  in
+  equal ~msg:"first" shift (1., 1., 1.) (shift_triple first);
+  equal ~msg:"confirmation" shift (1., 1., 1.) (shift_triple confirmation);
+  equal (pair (array float_exact) int) (ties 10 2., 8) (pooled, k)
+
+let pooling_leaves_both_trials_unchanged () =
+  let samples tr =
+    require_match
+      (function Some (Run.Samples s) -> Some s.Run.sorted | _ -> None)
+      (Run.Trial.measurement tr wall_time)
+  in
+  let first = wall [| 0.4; 0.45; 0.5; 0.55; 0.6 |]
+  and again = wall [| 0.42; 0.47; 0.52; 0.57; 0.62 |] in
+  let t = one ~confirm:(Some again) first in
+  let _, _, pooled, _ = require_match confirmed (report t) in
+  ignore (Verdict.corrected t);
+  equal ~msg:"pooled" (array float_exact)
+    [| 0.4; 0.42; 0.45; 0.47; 0.5; 0.52; 0.55; 0.57; 0.6; 0.62 |]
+    pooled;
+  equal
+    (pair (array float_exact) (array float_exact))
+    ([| 0.4; 0.45; 0.5; 0.55; 0.6 |], [| 0.42; 0.47; 0.52; 0.57; 0.62 |])
+    (samples first, samples again)
+
+(* The first trial improves by half against tied 1s. *)
+let improvements =
+  [
+    ( "not reproduced",
+      (fun () -> Some (wall (ties 5 1.))),
+      Env.Quiet,
+      "within budget" );
+    ("without a confirmation", (fun () -> None), Env.Quiet, "within budget");
+    ( "on a loaded host at the confirmations",
+      (fun () -> Some (wall (ties 5 0.5))),
+      loaded,
+      "inconclusive, environment" );
+  ]
+
+let an_unconfirmed_improvement_keeps_its_first_shift () =
+  let t = one ~confirm:(Some (wall (ties 5 1.))) (wall (ties 5 0.5)) in
+  let sh =
+    require_match
+      (fun (r : Verdict.metric_report) ->
+        match r.verdict with Judged (Within_budget sh) -> Some sh | _ -> None)
+      (report t)
+  in
+  equal shift (-0.5, -0.5, -0.5) (shift_triple sh);
   is_none (Verdict.corrected t)
 
-let advance_is_a_one_row_diff () =
-  let file = file_of [ wall_row "a" (ties 5 1.0); wall_row "b" (ties 5 1.0) ] in
+let inconclusive_shift (r : Verdict.metric_report) =
+  match r.verdict with
+  | Judged (Inconclusive { reason; shift }) ->
+      Some (reason_name reason, Option.map shift_triple shift)
+  | _ -> None
+
+(* An inconclusive relation keeps the first trial's shift iff the rank test
+   ran, whatever its reason. A loaded host at the confirmations makes a
+   pending relation environment whatever its confirmation, which here
+   reproduces it. *)
+let kept_shifts =
+  [
+    ( "unconfirmed",
+      (fun () -> one ~confirm:None (wall (ties 5 2.))),
+      ("unconfirmed", Some (1., 1., 1.)) );
+    ( "on a loaded host at the confirmations",
+      (fun () -> one ~decide_load:loaded (wall (ties 5 2.))),
+      ("environment", Some (1., 1., 1.)) );
+    ( "on a loaded host at the first pass",
+      (fun () -> one ~load:loaded (wall (ties 5 2.))),
+      ("environment", Some (1., 1., 1.)) );
+    ( "a wide interval",
+      (fun () -> one (wall spread)),
+      ("wide interval", Some (-0.5, -0.5, 1.)) );
+    ( "a drifted trial",
+      (fun () -> one (wall ~drifted:true (ties 5 1.04))),
+      ("candidate drifted", Some (0.04, 0.04, 0.04)) );
+    ( "a non-positive sample",
+      (fun () -> one (wall (ties 5 0.))),
+      ("non-positive", None) );
+  ]
+
+let pp_load ppf = function
+  | Env.Quiet -> Format.pp_print_string ppf "quiet"
+  | Env.Loaded { load; cores } ->
+      Format.fprintf ppf "loaded %g on %d" load cores
+
+let host_load =
+  Testable.make ~pp:pp_load ~equal:(fun a b ->
+      match (a, b) with
+      | Env.Quiet, Env.Quiet -> true
+      | Env.Loaded a, Env.Loaded b ->
+          Float.equal a.load b.load && a.cores = b.cores
+      | Env.Quiet, Env.Loaded _ | Env.Loaded _, Env.Quiet -> false)
+
+let decide_refuses () =
+  let p =
+    judge
+      ~file:(file_of [ wall_row "a" (ties 5 1.) ])
+      [ (case "a", wall (ties 5 2.)) ]
+  in
+  raises
+    (Invalid_argument
+       "Verdict.decide: confirmation for 'nope' was not requested") (fun () ->
+      Verdict.decide ~load:Env.Quiet
+        ~confirmations:[ ("nope", wall (ties 5 2.)) ]
+        p);
+  raises (Invalid_argument "Verdict.decide: duplicate confirmation id 'a'")
+    (fun () ->
+      Verdict.decide ~load:Env.Quiet
+        ~confirmations:[ ("a", wall (ties 5 2.)); ("a", wall (ties 5 2.)) ]
+        p)
+
+let judging =
+  group "Judging"
+    [
+      cases "the drift veto"
+        ~name:(fun (name, _, _, _) -> name)
+        drifted_trials
+        (fun (_, budget, v, expected) ->
+          equal string expected
+            (relation
+               (one
+                  ~budgets:[ relative budget ]
+                  ~confirm:(Some (wall (ties 5 v)))
+                  (wall ~drifted:true (ties 5 v)))));
+      cases "the order of the tests"
+        ~name:(fun (name, _, _, _, _) -> name)
+        orders
+        (fun (_, load, row, first, expected) ->
+          equal string expected
+            (relation (one ~load ~rows:[ wall_row "a" row ] (first ()))));
+      test "an exact comparison settles on a loaded host"
+        an_exact_comparison_settles_on_a_loaded_host;
+      test "exactness lost holds on a loaded host"
+        exactness_lost_holds_on_a_loaded_host;
+      test "judge refuses two cases with one id" (fun () ->
+          raises (Invalid_argument "Verdict.judge: duplicate case id 'a'")
+            (fun () ->
+              judge
+                [ (case "a", wall (ties 5 1.)); (case "a", wall (ties 5 1.)) ]));
+      test "confirmations lists the cases with a pending relation, in order"
+        confirmations_list_the_pending_cases_in_order;
+      test "confirmations lists a case with two pending metrics once"
+        a_case_with_two_pending_metrics_is_listed_once;
+      cases "confirmations is empty"
+        ~name:(fun (name, _, _, _) -> name)
+        nothing_to_confirm
+        (fun (_, budget, load, v) ->
+          let p =
+            judge ~load
+              ~budgets:[ budget () ]
+              ~file:(file_of [ wall_row "a" (ties 5 1.) ])
+              [ (case "a", wall (ties 5 v)) ]
+          in
+          equal (list string) [] (Verdict.confirmations p));
+      cases "decide, on a pending regression"
+        ~name:(fun (name, _, _, _, _) -> name)
+        confirmations
+        (fun (_, budget, first, confirm, expected) ->
+          equal string expected
+            (relation
+               (one
+                  ~budgets:[ relative budget ]
+                  ~confirm:(confirm ()) (wall first))));
+      test "decide, on a pending count, with an exact confirmation"
+        a_confirmation_measured_as_exact_is_unconfirmed;
+      test "decide judges the confirmation at 0.05 per side"
+        the_confirmation_is_judged_at_0_05_per_side;
+      test "a confirmed relation carries both shifts and the pooled samples"
+        a_confirmed_relation_carries_both_shifts_and_the_pooled_samples;
+      test "pooling leaves both trials' samples unchanged"
+        pooling_leaves_both_trials_unchanged;
+      cases "decide, on a pending improvement"
+        ~name:(fun (name, _, _, _) -> name)
+        improvements
+        (fun (_, confirm, decide_load, expected) ->
+          equal string expected
+            (relation
+               (one ~decide_load ~confirm:(confirm ()) (wall (ties 5 0.5)))));
+      test "an unconfirmed improvement keeps its first shift and no row"
+        an_unconfirmed_improvement_keeps_its_first_shift;
+      cases "an inconclusive relation's shift"
+        ~name:(fun (name, _, _) -> name)
+        kept_shifts
+        (fun (_, t, expected) ->
+          equal
+            (pair string (option shift))
+            expected
+            (require_match inconclusive_shift (report (t ()))));
+      test "the verdict's load is decide's" (fun () ->
+          equal host_load loaded
+            (Verdict.load (one ~decide_load:loaded (wall (ties 5 1.)))));
+      test "decide refuses an unrequested or repeated confirmation"
+        decide_refuses;
+    ]
+
+(* Observers *)
+
+(* Each row's verdict has one case "a", and its first report is read. *)
+let failing =
+  [
+    ( "a regression under a relative budget",
+      (fun () ->
+        one
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          ~rows:[ alloc_row "a" 54 ]
+          (alloc 55)),
+      true );
+    ( "an inconclusive relation under a relative budget",
+      (fun () -> one (wall spread)),
+      false );
+    ( "a regressed count under a cap",
+      (fun () ->
+        one
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          ~rows:[ alloc_row "a" 200 ]
+          (alloc 150)),
+      true );
+    ( "a count at the cap",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          [ (case "a", alloc 100) ]),
+      false );
+    ( "a proposed count over the cap",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          [ (case "a", alloc 120) ]),
+      true );
+    ( "a count over the cap on a stale section",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          ~file:(file_of ~identity:stale_ident [ alloc_row "a" 50 ])
+          [ (case "a", alloc 120) ]),
+      true );
+    ( "a count over the cap of a case without a row",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          ~file:(file_of [ alloc_row "b" 50 ])
+          [ (case "a", alloc 120) ]),
+      true );
+    ( "a count over the cap against a sampled row",
+      (fun () ->
+        one
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          ~rows:[ sampled_alloc_row (ties 5 50.) ]
+          (alloc 120)),
+      true );
+    ( "a sampled count over the cap",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          [ (case "a", trial [ (alloc_words, sampled (ties 5 120.)) ]) ]),
+      false );
+    ( "a confirmed regression of sampled counts under a cap",
+      (fun () ->
+        one
+          ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
+          ~rows:[ sampled_alloc_row (ties 5 100.) ]
+          (trial [ (alloc_words, sampled (ties 5 200.)) ])),
+      false );
+    ( "a confirmed regression without a budget",
+      (fun () ->
+        one
+          ~rows:
+            [
+              Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+                ~samples:(ties 5 1.);
+            ]
+          (trial [ (cpu_time, sampled (ties 5 2.)) ])),
+      false );
+  ]
+
+let first_report_fails (_, t, expected) =
+  let t = t () in
+  let c = case_report t in
+  equal bool expected (Verdict.report_fails c (List.hd c.Verdict.reports))
+
+(* One case "a": its wall_time against a row of 1s, with a budget or none,
+   and its alloc_words count under a relative budget of 0 against a row of
+   54 words. *)
+let case_outcomes =
+  [
+    ("a failing report fails the case", true, ties 5 1., 55, `Fail);
+    ( "a failing report fails the case beside an improved one",
+      true,
+      ties 5 0.5,
+      55,
+      `Fail );
+    ("a failing report beats an inconclusive one", true, spread, 55, `Fail);
+    ( "an inconclusive report with a budget makes it inconclusive",
+      true,
+      spread,
+      54,
+      `Inconclusive );
+    ("an inconclusive report without a budget passes", false, spread, 54, `Pass);
+    ("passing reports pass", true, ties 5 1., 53, `Pass);
+  ]
+
+let case_outcome (_, budgeted, samples, count, expected) =
   let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 0.5)))
+    one
+      ~budgets:
+        (Budget.no_more_alloc_than 0.
+        :: (if budgeted then [ Budget.no_slower_than 0.05 ] else []))
+      ~rows:[ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]
+      (trial [ (wall_time, sampled samples); (alloc_words, Run.Exact count) ])
+  in
+  equal string (outcome_name expected)
+    (outcome_name (Verdict.case_overall (case_report t)))
+
+(* Cases "a" and "b", each alloc_words under a relative budget of 0 against
+   a row of 54 words. *)
+let run_outcomes =
+  [
+    ("a failing case fails the run", Some 55, None, `Fail);
+    ("an inconclusive case makes it inconclusive", None, Some 54, `Inconclusive);
+    ("passing cases pass", Some 54, Some 53, `Pass);
+  ]
+
+(* An exact count, or else a sampled one, which loses exactness. *)
+let count = function
+  | Some n -> alloc n
+  | None -> trial [ (alloc_words, sampled (ties 5 54.)) ]
+
+let run_outcome (_, a, b, expected) =
+  let t =
+    decided
+      ~budgets:[ Budget.no_more_alloc_than 0. ]
+      ~file:(file_of [ alloc_row "a" 54; alloc_row "b" 54 ])
+      [ (case "a", count a); (case "b", count b) ]
+  in
+  equal string (outcome_name expected) (outcome_name (Verdict.overall t))
+
+let exit_codes =
+  let compared () = file_of [ wall_row "a" (ties 5 1.) ] in
+  [
+    ("a pass", (fun () -> one (wall (ties 5 1.))), (0, 0));
+    ( "a failure",
+      (fun () ->
+        one
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          ~rows:[ alloc_row "a" 54 ]
+          (alloc 55)),
+      (1, 1) );
+    ( "a failure on a loaded host",
+      (fun () ->
+        one ~load:loaded
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          ~rows:[ alloc_row "a" 54 ]
+          (alloc 55)),
+      (1, 1) );
+    ( "a first run over a cap",
+      (fun () ->
+        decided
+          ~budgets:[ Budget.at_most ~metric:alloc_words 100. ]
+          [ (case "a", alloc 120) ]),
+      (1, 1) );
+    ( "a sampled regression over a cap",
+      (fun () ->
+        one
+          ~budgets:[ Budget.at_most ~metric:alloc_words 150. ]
+          ~rows:[ sampled_alloc_row (ties 5 100.) ]
+          (trial [ (alloc_words, sampled (ties 5 200.)) ])),
+      (0, 0) );
+    ("an inconclusive run", (fun () -> one (wall spread)), (0, 1));
+    ( "a missing section",
+      (fun () -> decided [ (case "a", wall (ties 5 1.)) ]),
+      (0, 1) );
+    ( "a stale section",
+      (fun () ->
+        decided
+          ~file:(file_of ~identity:stale_ident [ wall_row "a" (ties 5 1.) ])
+          [ (case "a", wall (ties 5 1.)) ]),
+      (0, 1) );
+    ( "a proposed metric",
+      (fun () ->
+        decided ~file:(compared ())
+          [
+            ( case "a",
+              trial
+                [
+                  (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact 54);
+                ] );
+          ]),
+      (0, 1) );
+  ]
+
+let a_shift = { Verdict.estimate = 0.3; lower = 0.2; upper = 0.4 }
+
+let strong_estimates =
+  [
+    ( "a confirmed relation's is its first shift's",
+      Verdict.Confirmed
+        { first = a_shift; confirmation = a_shift; pooled = [||]; k = 1 },
+      Some 0.3 );
+    ( "a growth's is relative to the row",
+      Exact_change { baseline = 54; candidate = 81 },
+      Some 0.5 );
+    ( "a drop's is relative to the row",
+      Exact_change { baseline = 100; candidate = 50 },
+      Some (-0.5) );
+    ( "growth from 0 has none",
+      Exact_change { baseline = 0; candidate = 3 },
+      None );
+  ]
+
+(* The row ids of the section are "a", "b-dead" and "a-dead"; the run judges
+   the cases of [ids]. *)
+let warned =
+  let section identity () =
+    file_of ~identity
       [
-        (bcase "a", wall_trial (ties 5 0.5));
-        (bcase "b", wall_trial (ties 5 1.0));
+        wall_row "a" (ties 5 1.);
+        wall_row "b-dead" (ties 5 1.);
+        wall_row "a-dead" (ties 5 1.);
       ]
   in
-  match Verdict.corrected t with
-  | None -> failf "expected an advanced candidate"
-  | Some result ->
-      is_true ~msg:"a's row changed" (row_line file "a" <> row_line result "a");
-      equal ~msg:"b's row byte-identical" (option string) (row_line file "b")
-        (row_line result "b");
-      let changed =
-        List.filter
-          (fun l -> not (List.mem l (file_lines file)))
-          (file_lines result)
-      in
-      equal ~msg:"exactly one new line" int 1 (List.length changed)
+  [
+    ( "a full selection of a compared section names each absent case",
+      section ident,
+      `Full,
+      [ "a" ],
+      __POS_OF__
+        {|
+        case a-dead no longer exists in this binary; its rows will be pruned from the corrected file
+        case b-dead no longer exists in this binary; its rows will be pruned from the corrected file
+        |}
+    );
+    ( "a partial selection of a compared section",
+      section ident,
+      `Partial,
+      [ "a" ],
+      __POS_OF__ {||} );
+    ( "a partial selection of a stale section counts the dropped cases",
+      section stale_ident,
+      `Partial,
+      [ "a" ],
+      __POS_OF__
+        {| partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 2 unselected cases |}
+    );
+    ( "a partial selection of a stale section with one dropped case",
+      section stale_ident,
+      `Partial,
+      [ "a"; "a-dead" ],
+      __POS_OF__
+        {| partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 1 unselected case |}
+    );
+    ( "a partial selection of a stale section that drops nothing",
+      section stale_ident,
+      `Partial,
+      [ "a"; "a-dead"; "b-dead" ],
+      __POS_OF__ {||} );
+    ( "a full selection of a stale section",
+      section stale_ident,
+      `Full,
+      [ "a" ],
+      __POS_OF__ {||} );
+  ]
 
-let partial_selection_never_prunes () =
-  let file =
-    file_of [ wall_row "a" (ties 5 1.0); wall_row "dead" (ties 5 1.0) ]
-  in
+let warnings_of (_, file, selection, ids, expected) =
   let t =
-    run_check ~selection:`Partial ~file
-      ~confirm:(fun _ -> Some (wall_trial (ties 5 0.5)))
-      [ (bcase "a", wall_trial (ties 5 0.5)) ]
+    decided ~selection ~file:(file ())
+      (List.map (fun id -> (case id, wall (ties 5 1.))) ids)
   in
-  equal ~msg:"no prune notice" (list string) [] (Verdict.warnings t);
-  match Verdict.corrected t with
-  | None -> failf "expected an advanced candidate"
-  | Some result ->
-      equal ~msg:"dead row kept" (option string) (row_line file "dead")
-        (row_line result "dead")
+  expect (String.concat "\n" (Verdict.warnings t)) expected
 
-let stale_partial_selection_warns_about_dropped_rows () =
-  (* A stale section's candidate replaces the section wholesale from the
-     judged cases alone; under a partial selection that silently drops the
-     unselected cases' rows — so the verdict must carry the same warning
-     bless gives its partial re-record. A full-selection stale run drops
-     nothing it did not judge and warns about nothing. *)
-  let stale_file =
-    Baseline.set_section
-      (Baseline.empty ~suite:"digest")
-      { ident with Baseline.ocaml = "0.0.0" }
-      [ wall_row "a" (ties 5 1.0); wall_row "b" (ties 5 1.0) ]
+(* The JSON document *)
+
+let wall_rows ids = List.map (fun id -> wall_row id (ties 5 1.)) ids
+
+(* Each document's name, and its verdict. *)
+let documents =
+  [
+    ( "exact",
+      fun () ->
+        decided
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          ~file:(file_of [ alloc_row "a" 54; alloc_row "b" 54 ])
+          [
+            (case "a", alloc 54);
+            (case "b", trial [ (alloc_words, sampled [| 1.; 2.; 3. |]) ]);
+            (case "c", alloc 7);
+          ] );
+    ("confirmed-regression", fun () -> one (wall (ties 5 2.)));
+    ( "exact-changes",
+      fun () ->
+        decided
+          ~budgets:[ Budget.no_more_alloc_than 0.1 ]
+          ~file:
+            (file_of
+               [
+                 alloc_row "improved" 100;
+                 alloc_row "to-zero" 100;
+                 alloc_row "regressed" 100;
+                 alloc_row "from-zero" 0;
+                 alloc_row "capped" 0;
+               ])
+          [
+            (case "improved", alloc 50);
+            (case "to-zero", alloc 0);
+            (case "regressed", alloc 200);
+            (case "from-zero", alloc 3);
+            ( case ~budgets:[ Budget.at_most ~metric:alloc_words 10. ] "capped",
+              alloc 3 );
+          ] );
+    ( "passing",
+      fun () ->
+        decided
+          ~file:
+            (file_of
+               [
+                 wall_row "within" (ties 5 1.);
+                 Baseline.sampled_row ~id:"unbudgeted" ~metric:"cpu_time" ~k:8
+                   ~samples:(ties 5 1.);
+                 wall_row "unbudgeted" (ties 5 1.);
+               ])
+          [
+            (case "within", wall [| 0.5; 0.5; 1.; 1.; 1. |]);
+            ( case "unbudgeted",
+              trial
+                [ (wall_time, sampled (ties 5 1.)); (cpu_time, sampled spread) ]
+            );
+          ] );
+    ( "environment",
+      fun () ->
+        one ~load:loaded
+          ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0. ]
+          ~rows:[ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]
+          (trial
+             [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 108) ])
+    );
+    ("unconfirmed", fun () -> one ~confirm:None (wall (ties 5 2.)));
+    ("no-comparison", fun () -> one (wall (ties 5 0.)));
+  ]
+
+(* Each reason's spelling, on a verdict that holds it. *)
+let spellings =
+  let tight = [ relative (0.025, 0.03) ] in
+  [
+    ("wide_interval", fun () -> one (wall spread));
+    ("non_positive", fun () -> one (wall (ties 5 0.)));
+    ( "baseline_unstable",
+      fun () ->
+        one ~budgets:tight
+          ~rows:[ wall_row "a" (spiked 1.) ]
+          (wall (ties 20 1.04)) );
+    ("environment", fun () -> one ~load:loaded (wall (ties 5 2.)));
+    ("unconfirmed", fun () -> one ~confirm:None (wall (ties 5 2.)));
+    ( "exactness_lost",
+      fun () ->
+        one
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          ~rows:[ alloc_row "a" 54 ]
+          (trial [ (alloc_words, sampled (ties 5 54.)) ]) );
+    ( "batch_drifted",
+      fun () -> one ~rows:[ wall_row ~k:32 "a" (ties 5 1.) ] (wall (ties 5 1.))
+    );
+    ("unstable", fun () -> one ~budgets:tight (wall (spiked 1.04)));
+    ("drifted", fun () -> one (wall ~drifted:true (ties 5 1.)));
+    ("missing_baseline", fun () -> decided [ (case "a", wall (ties 5 1.)) ]);
+  ]
+
+let a_change_within_budget_counts_as_equivalent () =
+  let json =
+    Verdict.to_json
+      (one
+         ~budgets:[ Budget.no_more_alloc_than 0.1 ]
+         ~rows:[ alloc_row "a" 100 ]
+         (alloc 105))
   in
+  contains
+    ~sub:
+      {|"relation":"changed_within_budget","status":"pass","reason":null,"exact":true,"delta":0.050000000000000003|}
+    json;
+  contains ~sub:{|"n_equivalent":1,"n_inconclusive":0|} json
+
+(* The name's id is its slug, "q-b-n". *)
+let strings_are_escaped () =
+  contains ~sub:{|"id":"q-b-n","full_name":"q\"b\\n\n\r\t\u0001é"|}
+    (Verdict.to_json (decided [ (case "q\"b\\n\n\r\t\001\xc3\xa9", alloc 1) ]))
+
+let to_json =
+  group "to_json"
+    [
+      cases "a document" ~name:fst documents (fun (name, t) ->
+          expect_file
+            (Verdict.to_json (t ()))
+            ("test/unit/json/" ^ name ^ ".json"));
+      cases "a reason's spelling" ~name:fst spellings (fun (spelling, t) ->
+          contains
+            ~sub:(strf {|"reason":"%s"|} spelling)
+            (Verdict.to_json (t ())));
+      test "a change within budget counts as equivalent"
+        a_change_within_budget_counts_as_equivalent;
+      test "strings are escaped" strings_are_escaped;
+    ]
+
+let observers =
+  group "Observers"
+    [
+      cases "overall"
+        ~name:(fun (name, _, _, _) -> name)
+        run_outcomes run_outcome;
+      cases "report_fails"
+        ~name:(fun (name, _, _) -> name)
+        failing first_report_fails;
+      cases "case_overall"
+        ~name:(fun (name, _, _, _, _) -> name)
+        case_outcomes case_outcome;
+      cases "strong_estimate"
+        ~name:(fun (name, _, _) -> name)
+        strong_estimates
+        (fun (_, s, expected) ->
+          equal (option (float 1e-12)) expected (Verdict.strong_estimate s));
+      cases "warnings" ~name:(fun (name, _, _, _, _) -> name) warned warnings_of;
+      cases "exit_code, then under strict"
+        ~name:(fun (name, _, _) -> name)
+        exit_codes
+        (fun (_, t, expected) ->
+          let t = t () in
+          equal (pair int int) expected
+            (Verdict.exit_code t, Verdict.exit_code ~strict:true t));
+      to_json;
+    ]
+
+(* Write paths *)
+
+let an_equivalent_run_changes_no_byte () =
+  is_none (Verdict.corrected (one (wall (ties 5 1.))))
+
+(* The diff of case "a"'s rows and the corrected file. *)
+let corrected_diff ?budgets ~rows first =
+  diff (file_of rows)
+    (require_some (Verdict.corrected (one ?budgets ~rows first)))
+
+(* "b" is judged equivalent and keeps its bytes. *)
+let a_confirmed_improvement_advances_its_row () =
+  let file = file_of (wall_rows [ "a"; "b" ]) in
   let t =
-    run_check ~selection:`Partial ~file:stale_file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
+    decided ~file
+      ~confirm:(fun _ -> Some (wall (ties 5 0.5)))
+      [ (case "a", wall (ties 5 0.5)); (case "b", wall (ties 5 1.)) ]
   in
-  (match Verdict.warnings t with
-  | [ w ] ->
-      is_true ~msg:"warning names the drop"
-        (contains ~sub:"drops the rows of the 1 unselected case" w)
-  | ws -> failf "expected one stale-partial warning, got %d" (List.length ws));
-  (match Verdict.corrected t with
-  | None -> failf "expected a fresh-section candidate"
-  | Some result ->
-      is_none ~msg:"unselected row dropped (the specified semantics)"
-        (row_line result "b"));
-  let full =
-    run_check ~selection:`Full ~file:stale_file
+  equal text_diff
+    ( [ row_text (wall_row "a" (ties 5 1.)) ],
+      [ row_text (wall_row "a" (ties 10 0.5)) ] )
+    (diff file (require_some (Verdict.corrected t)))
+
+let the_advanced_row_takes_the_confirmation_s_batch_size () =
+  equal text_diff
+    ( [ row_text (wall_row ~k:8 "a" (ties 5 1.)) ],
+      [ row_text (wall_row ~k:16 "a" (ties 10 0.5)) ] )
+    (corrected_diff
+       ~rows:[ wall_row ~k:8 "a" (ties 5 1.) ]
+       (wall ~k:16 (ties 5 0.5)))
+
+let an_exact_improvement_advances_to_the_count () =
+  equal text_diff
+    ([ row_text (alloc_row "a" 54) ], [ row_text (alloc_row "a" 50) ])
+    (corrected_diff
+       ~budgets:[ Budget.no_more_alloc_than 0. ]
+       ~rows:[ alloc_row "a" 54 ]
+       (alloc 50))
+
+let proposals =
+  [
+    ( "a metric without a row",
+      (fun () -> []),
+      (fun () ->
+        trial [ (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact 54) ]),
+      fun () -> alloc_row "a" 54 );
+    ( "a count over its cap",
+      (fun () -> [ Budget.at_most ~metric:alloc_words 100. ]),
+      (fun () ->
+        trial [ (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact 120) ]),
+      fun () -> alloc_row "a" 120 );
+    ( "a drifted trial's samples",
+      (fun () -> []),
+      (fun () ->
+        trial
+          [
+            (wall_time, sampled (ties 5 1.));
+            (cpu_time, sampled ~drifted:true (ties 5 1.));
+          ]),
+      fun () ->
+        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+          ~samples:(ties 5 1.) );
+  ]
+
+(* The wall_time row regresses and keeps its bytes while alloc_words
+   improves and advances. *)
+let a_regression_keeps_its_row_beside_an_advance () =
+  equal text_diff
+    ([ row_text (alloc_row "a" 54) ], [ row_text (alloc_row "a" 50) ])
+    (corrected_diff
+       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0. ]
+       ~rows:[ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]
+       (trial [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 50) ]))
+
+(* "b" is new, so the corrected file exists; "dead" has no case. *)
+let absent_cases selection =
+  let file = file_of (wall_rows [ "a"; "dead" ]) in
+  let t =
+    decided ~selection ~file
+      [ (case "a", wall (ties 5 1.)); (case "b", wall (ties 5 1.)) ]
+  in
+  diff file (require_some (Verdict.corrected t))
+
+(* [file] with this machine's section recorded from the first trials. *)
+let recorded_section file =
+  Baseline.set_section
+    (match Baseline.suite file with
+    | Some _ -> file
+    | None -> Baseline.empty ~suite:"digest")
+    ident
+    [ wall_row "a" (ties 5 2.); alloc_row "a" 100 ]
+
+let replacements =
+  [
+    ("a missing section, under a new suite header", fun () -> empty_file ());
+    ( "a stale section, with no annotation",
+      fun () ->
+        Baseline.set_section
+          (file_of ~identity:stale_ident ~annotations:[ "forced: earlier" ]
+             [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ])
+          other_ident
+          [ wall_row "z" (ties 5 1.) ] );
+  ]
+
+(* The host is loaded and the trial drifted: a replaced section records the
+   trial as measured. *)
+let a_section_is_replaced_by_the_first_trials (_, file) =
+  let file = file () in
+  let t =
+    decided ~load:loaded ~file
       [
-        (bcase "a", wall_trial (ties 5 1.0));
-        (bcase "b", wall_trial (ties 5 1.0));
+        ( case "a",
+          trial
+            [
+              (wall_time, sampled ~drifted:true (ties 5 2.));
+              (alloc_words, Run.Exact 100);
+            ] );
       ]
   in
-  equal ~msg:"full stale selection warns about nothing" (list string) []
-    (Verdict.warnings full)
+  equal string
+    (Baseline.to_string (recorded_section file))
+    (Baseline.to_string (require_some (Verdict.corrected t)))
 
-let full_selection_prunes_dead_ids_with_a_notice () =
-  let file =
-    file_of [ wall_row "a" (ties 5 1.0); wall_row "dead" (ties 5 1.0) ]
-  in
+let corrected_refuses_a_suite_it_cannot_head () =
   let t =
-    run_check ~selection:`Full ~file [ (bcase "a", wall_trial (ties 5 1.0)) ]
+    Verdict.decide ~load:Env.Quiet ~confirmations:[]
+      (Verdict.judge ~identity:ident ~suite:"" ~load:Env.Quiet ~selection:`Full
+         ~budgets:[] ~file:(empty_file ())
+         ~cases:[ (case "a", alloc 1) ])
   in
-  (match Verdict.warnings t with
-  | [ w ] -> is_true ~msg:"notice names the id" (contains ~sub:"dead" w)
-  | ws -> failf "expected one prune notice, got %d" (List.length ws));
-  match Verdict.corrected t with
-  | None -> failf "expected a pruning candidate"
-  | Some result ->
-      is_none ~msg:"dead row pruned" (row_line result "dead");
-      equal ~msg:"live row untouched" (option string) (row_line file "a")
-        (row_line result "a")
+  raises
+    (Invalid_argument
+       "Baseline.empty: suite name must be non-empty and single-line (it heads \
+        fresh baselines)") (fun () -> Verdict.corrected t)
 
 (* The monotone-ratchet property *)
 
@@ -1421,7 +1825,7 @@ type outcome =
   | Fresh
   | Dead
 
-let outcome_name = function
+let outcome_label = function
   | Improve_confirmed -> "improve+"
   | Improve_unconfirmed -> "improve-"
   | Regress_confirmed -> "regress+"
@@ -1439,11 +1843,11 @@ type scenario = {
 let pp_scenario ppf s =
   Format.fprintf ppf "{%s; %s; other=%b}"
     (String.concat ", "
-       (List.map (fun (id, o) -> id ^ ":" ^ outcome_name o) s.outcomes))
+       (List.map (fun (id, o) -> id ^ ":" ^ outcome_label o) s.outcomes))
     (if s.full then "full" else "partial")
     s.other
 
-let scenario_gen =
+let scenario =
   let open Gen in
   let outcome =
     of_list
@@ -1457,671 +1861,255 @@ let scenario_gen =
         Dead;
       ]
   in
-  let+ outcomes = list ~size:(int_range 1 6) outcome
-  and+ full = bool
-  and+ other = bool in
-  {
-    outcomes = List.mapi (fun i o -> (Printf.sprintf "c%d" i, o)) outcomes;
-    full;
-    other;
-  }
+  with_pp pp_scenario
+    (let+ outcomes = list ~size:(int_range 1 6) outcome
+     and+ full = bool
+     and+ other = bool in
+     {
+       outcomes = List.mapi (fun i o -> (Printf.sprintf "c%d" i, o)) outcomes;
+       full;
+       other;
+     })
 
-let scenario = Gen.with_pp pp_scenario scenario_gen
+(* What the corrected file did to row [id]: [advanced] is a row of both
+   trials' ten samples. *)
+let fate ~before ~after id =
+  match (row_line before id, row_line after id) with
+  | None, None -> "absent"
+  | None, Some _ -> "proposed"
+  | Some _, None -> "pruned"
+  | Some b, Some a when String.equal b a -> "kept"
+  | Some _, Some a ->
+      if String.starts_with ~prefix:(id ^ "\twall_time\tbatch=8\tn=10\t") a then
+        "advanced"
+      else "changed"
 
-let monotone_ratchet s =
-  (* Build the file: every outcome except Fresh has a committed row, plus a
-     sentinel case so the judged section is never empty. *)
-  let rows =
-    List.filter_map
-      (fun (id, o) ->
-        if o = Fresh then None else Some (wall_row id (ties 5 1.0)))
-      s.outcomes
-    @ [ wall_row "keep" (ties 5 1.0) ]
+let expected_fate s = function
+  | Improve_confirmed -> "advanced"
+  | Improve_unconfirmed | Regress_confirmed | Regress_unconfirmed | Equal ->
+      "kept"
+  | Fresh -> "proposed"
+  | Dead -> if s.full then "pruned" else "kept"
+
+(* Every outcome but [Fresh] has a row, and a sentinel case "keep" keeps the
+   section from being empty. *)
+let the_ratchet_is_monotone s =
+  let level = function
+    | Improve_confirmed | Improve_unconfirmed -> 0.5
+    | Regress_confirmed | Regress_unconfirmed -> 2.
+    | Equal | Fresh | Dead -> 1.
   in
-  let file = file_of rows in
+  let file =
+    file_of
+      (List.filter_map
+         (fun (id, o) ->
+           if o = Fresh then None else Some (wall_row id (ties 5 1.)))
+         s.outcomes
+      @ [ wall_row "keep" (ties 5 1.) ])
+  in
   let file =
     if s.other then
-      Baseline.set_section file other_ident [ wall_row "z" (ties 5 1.0) ]
+      Baseline.set_section file other_ident [ wall_row "z" (ties 5 1.) ]
     else file
-  in
-  let measured =
-    List.filter_map
-      (fun (id, o) ->
-        let value =
-          match o with
-          | Improve_confirmed | Improve_unconfirmed -> 0.5
-          | Regress_confirmed | Regress_unconfirmed -> 2.0
-          | Equal | Fresh -> 1.0
-          | Dead -> 1.0
-        in
-        if o = Dead then None else Some (bcase id, wall_trial (ties 5 value)))
-      s.outcomes
-    @ [ (bcase "keep", wall_trial (ties 5 1.0)) ]
   in
   let confirm id =
     match List.assoc_opt id s.outcomes with
-    | Some Improve_confirmed -> Some (wall_trial (ties 5 0.5))
-    | Some Regress_confirmed -> Some (wall_trial (ties 5 2.0))
+    | Some ((Improve_confirmed | Regress_confirmed) as o) ->
+        Some (wall (ties 5 (level o)))
     | Some (Improve_unconfirmed | Regress_unconfirmed) ->
-        Some (wall_trial (ties 5 1.0))
-    | _ -> None
+        Some (wall (ties 5 1.))
+    | Some (Equal | Fresh | Dead) | None -> None
   in
   let t =
-    run_check
+    decided
       ~selection:(if s.full then `Full else `Partial)
-      ~file ~confirm measured
+      ~file ~confirm
+      (List.filter_map
+         (fun (id, o) ->
+           if o = Dead then None else Some (case id, wall (ties 5 (level o))))
+         s.outcomes
+      @ [ (case "keep", wall (ties 5 1.)) ])
   in
-  let expect_some =
+  let changes =
     List.exists
       (fun (_, o) -> o = Improve_confirmed || o = Fresh || (o = Dead && s.full))
       s.outcomes
   in
-  match Verdict.corrected t with
-  | None -> is_false ~msg:"None only when nothing may change" expect_some
-  | Some result ->
-      is_true ~msg:"Some only when something may change" expect_some;
-      not_equal ~msg:"Some iff bytes differ" string (Baseline.to_string file)
-        (Baseline.to_string result);
-      equal ~msg:"sentinel row byte-preserved" (option string)
-        (row_line file "keep") (row_line result "keep");
-      if s.other then
-        equal ~msg:"other machine's section byte-preserved" (option string)
-          (row_line file "z") (row_line result "z");
-      List.iter
-        (fun (id, o) ->
-          match o with
-          | Improve_confirmed ->
-              is_true ~msg:(id ^ ": advanced")
-                (row_line file id <> row_line result id);
-              is_true ~msg:(id ^ ": pooled evidence")
-                (contains ~sub:"n=10" (Option.get (row_line result id)))
-          | Improve_unconfirmed | Regress_confirmed | Regress_unconfirmed
-          | Equal ->
-              equal
-                ~msg:(id ^ ": byte-preserved (never advanced)")
-                (option string) (row_line file id) (row_line result id)
-          | Fresh ->
-              is_none ~msg:(id ^ ": absent before") (row_line file id);
-              is_some ~msg:(id ^ ": proposed") (row_line result id)
-          | Dead ->
-              if s.full then
-                is_none
-                  ~msg:(id ^ ": pruned on full selection")
-                  (row_line result id)
-              else
-                equal
-                  ~msg:(id ^ ": kept on partial selection")
-                  (option string) (row_line file id) (row_line result id))
-        s.outcomes
+  let after =
+    if changes then (
+      let after = require_some (Verdict.corrected t) in
+      not_equal string (Baseline.to_string file) (Baseline.to_string after);
+      after)
+    else (
+      is_none (Verdict.corrected t);
+      file)
+  in
+  let ids =
+    List.map fst s.outcomes @ [ "keep" ] @ if s.other then [ "z" ] else []
+  in
+  let expected id =
+    match List.assoc_opt id s.outcomes with
+    | Some o -> expected_fate s o
+    | None -> "kept"
+  in
+  equal
+    (list (pair string string))
+    (List.map (fun id -> (id, expected id)) ids)
+    (List.map (fun id -> (id, fate ~before:file ~after id)) ids)
 
 (* Bless *)
 
-let bless_rerecords_the_section_wholesale () =
-  let file = stale_file () in
-  let run =
-    Run.create
-      [
-        ( "a",
-          trial
-            [
-              (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 99);
-            ] );
-      ]
-  in
-  let result, notices =
-    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Full ~run file
-  in
-  equal ~msg:"a full selection notices nothing" (list string) [] notices;
-  let s = section_of result in
-  equal ~msg:"exactly the run's rows (non-monotone: old rows dropped)"
-    (list (pair string string))
-    [ ("a", "alloc_words"); ("a", "wall_time") ]
-    (List.map
-       (fun r -> (Baseline.row_id r, Baseline.row_metric r))
-       (Baseline.rows s));
-  equal ~msg:"identity re-recorded" string ident.Baseline.ocaml
-    (Baseline.ocaml_of s);
-  equal ~msg:"other machine byte-preserved" (option string) (row_line file "z")
-    (row_line result "z")
+let bless_run () =
+  Run.create
+    [
+      ( "a",
+        trial [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 100) ]
+      );
+    ]
 
-let bless_adds_a_suite_header_over_the_empty_file () =
-  let file = Result.get_ok (Baseline.of_string "") in
-  let run = Run.create [ ("a", trial [ (m_alloc, Run.Exact 1) ]) ] in
-  let result, notices =
-    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial ~run file
-  in
-  equal (option string) (Some "digest") (Baseline.suite result);
-  equal ~msg:"no section, nothing dropped, no notice" (list string) [] notices
+let blessed =
+  [
+    ( "a full selection of a stale section",
+      `Full,
+      fun () ->
+        Baseline.set_section
+          (file_of ~identity:stale_ident ~annotations:[ "forced: earlier" ]
+             [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ])
+          other_ident
+          [ wall_row "z" (ties 5 1.) ] );
+    ( "a full selection of a compared section",
+      `Full,
+      fun () -> file_of (wall_rows [ "a"; "old" ]) );
+    ( "the empty file, under a new suite header",
+      `Partial,
+      fun () -> empty_file () );
+  ]
 
-let bless_partial_on_a_current_section_replaces_the_selected_cases () =
-  (* The header and its annotations stay, every unselected row keeps its
-     bytes, and the selected case's rows are replaced by case id: its new
-     metric is added and the metric it no longer collects is removed. The
-     new annotation is appended below the earlier one. *)
-  let file =
-    Baseline.set_section ~annotations:[ "forced: earlier" ]
-      (Baseline.empty ~suite:"digest")
+let bless_rerecords_the_section (_, selection, file) =
+  let file = file () in
+  let result, warnings =
+    Verdict.bless ~annotations:[ "forced: now" ] ~identity:ident ~suite:"digest"
+      ~selection ~run:(bless_run ()) file
+  in
+  let expected =
+    Baseline.set_section ~annotations:[ "forced: now" ]
+      (match Baseline.suite file with
+      | Some _ -> file
+      | None -> Baseline.empty ~suite:"digest")
       ident
+      [ alloc_row "a" 100; wall_row "a" (ties 5 2.) ]
+  in
+  equal
+    (pair string (list string))
+    (Baseline.to_string expected, [])
+    (Baseline.to_string result, warnings)
+
+(* The header and its annotations stay, every unselected row keeps its
+   bytes, and the selected case's rows are replaced by case id: its new
+   metric is added and the metric it no longer collects is removed. *)
+let a_partial_bless_replaces_the_selected_cases_rows () =
+  let file =
+    file_of ~annotations:[ "forced: earlier" ]
       [
-        wall_row "a" (ties 5 1.0);
+        wall_row "a" (ties 5 1.);
         Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-          ~samples:(ties 5 1.0);
-        wall_row "b" (ties 5 3.0);
+          ~samples:(ties 5 1.);
+        wall_row "b" (ties 5 3.);
       ]
   in
-  let run =
-    Run.create
-      [
-        ( "a",
-          trial
-            [ (m_wall, Run.Samples (sam (ties 5 2.0))); (m_alloc, Run.Exact 7) ]
-        );
-      ]
-  in
-  let result, notices =
+  let result, warnings =
     Verdict.bless ~annotations:[ "forced: now" ]
       ~identity:{ ident with Baseline.host = "renamed-host" }
-      ~suite:"digest" ~selection:`Partial ~run file
+      ~suite:"digest" ~selection:`Partial ~run:(bless_run ()) file
   in
-  equal ~msg:"no notice: nothing is dropped" (list string) [] notices;
-  let s = section_of result in
-  equal ~msg:"a replaced by case id, b kept"
-    (list (pair string string))
-    [ ("a", "alloc_words"); ("a", "wall_time"); ("b", "wall_time") ]
-    (List.map
-       (fun r -> (Baseline.row_id r, Baseline.row_metric r))
-       (Baseline.rows s));
-  equal ~msg:"unselected row byte-identical" (option string) (row_line file "b")
-    (row_line result "b");
-  let header =
-    List.filter (fun l -> String.starts_with ~prefix:"# " l) (file_lines result)
-  in
-  equal ~msg:"header kept, annotation appended" (list string)
-    [
-      "# thumper baseline v1";
-      "# suite: digest";
-      "# machine: testmachine";
-      "# host: test-host";
-      "# ocaml: 5.5.0 64-bit release";
-      "# forced: earlier";
-      "# forced: now";
-    ]
-    header
-
-let bless_partial_on_a_stale_section_notices_the_drop () =
-  (* A stale section is not comparable, so a partial bless re-records it
-     whole and says, in check's words, which cases' rows go. *)
-  let file = stale_file () in
-  let run =
-    Run.create [ ("a", trial [ (m_wall, Run.Samples (sam (ties 5 2.0))) ]) ]
-  in
-  let result, notices =
-    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial ~run file
-  in
-  equal ~msg:"the stale-partial notice" (list string)
-    [
-      "partial selection on a stale section: the corrected file re-records \
-       this machine's whole section and drops the rows of the 1 unselected \
-       case";
-    ]
-    notices;
-  is_none ~msg:"unselected row dropped" (row_line result "old");
-  equal ~msg:"current identity recorded" string ident.Baseline.ocaml
-    (Baseline.ocaml_of (section_of result))
-
-(* Evidence ownership *)
-
-let pooling_copies_and_sorts_without_mutating_inputs () =
-  let first = [| 0.4; 0.45; 0.5; 0.55; 0.6 |] in
-  let conf = [| 0.42; 0.47; 0.52; 0.57; 0.62 |] in
-  let first_trial = wall_trial first in
-  let conf_trial = wall_trial conf in
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      ~confirm:(fun _ -> Some conf_trial)
-      [ (bcase "a", first_trial) ]
-  in
-  (match verdict_of t ~case:"a" ~metric:m_wall with
-  | Judged (Improved (Confirmed { pooled; _ })) ->
-      equal ~msg:"pooled is the sorted union" (array float_exact)
-        [| 0.4; 0.42; 0.45; 0.47; 0.5; 0.52; 0.55; 0.57; 0.6; 0.62 |]
-        pooled
-  | v -> failf "expected a confirmed improvement, got %s" (rel_name v));
-  let interior tr =
-    match Run.Trial.measurement tr m_wall with
-    | Some (Run.Samples s) -> s.Run.sorted
-    | _ -> assert false
-  in
-  equal ~msg:"first trial's evidence unmutated" (array float_exact) first
-    (interior first_trial);
-  equal ~msg:"confirmation trial's evidence unmutated" (array float_exact) conf
-    (interior conf_trial);
-  ignore (Verdict.corrected t);
-  equal ~msg:"still unmutated after the write path" (array float_exact) conf
-    (interior conf_trial)
-
-(* Exit codes *)
-
-let exit_code_table () =
-  let pass =
-    run_check
-      ~file:(file_of [ wall_row "a" (ties 5 1.0) ])
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
-  equal ~msg:"pass" int 0 (Verdict.exit_code pass);
-  equal ~msg:"pass strict" int 0 (Verdict.exit_code ~strict:true pass);
-  let fail, _ = exact_verdict ~row:54 ~cand:55 () in
-  equal ~msg:"fail" int 1 (Verdict.exit_code fail);
-  equal ~msg:"fail strict" int 1 (Verdict.exit_code ~strict:true fail);
-  let inconclusive =
-    run_check
-      ~file:(file_of [ wall_row "a" (ties 5 1.0) ])
-      [ (bcase "a", wall_trial spread) ]
-  in
-  equal ~msg:"inconclusive" int 0 (Verdict.exit_code inconclusive);
-  equal ~msg:"inconclusive strict" int 1
-    (Verdict.exit_code ~strict:true inconclusive)
-
-(* JSON *)
-
-let json_golden_document () =
-  (* Field names, order, and nullability pinned literally; values chosen so
-     every float renders cleanly. Covers: exact equivalence (delta 0.0, null
-     bounds), a mixed-exactness inconclusive with the sampled additive
-     fields, and a NEW row (null relation, v1's missing_baseline reason). *)
-  let file = file_of [ alloc_row "a" 54; alloc_row "b" 54 ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
+  equal (list string) [] warnings;
+  equal text_diff
+    ( [
+        row_text
+          (Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
+             ~samples:(ties 5 1.));
+        row_text (wall_row "a" (ties 5 1.));
+      ],
       [
-        (bcase "a", trial [ (m_alloc, Run.Exact 54) ]);
-        (bcase "b", trial [ (m_alloc, Run.Samples (sam [| 1.0; 2.0; 3.0 |])) ]);
-        (bcase "c", trial [ (m_alloc, Run.Exact 7) ]);
-      ]
-  in
-  equal string
-    ("{\"overall\":\"inconclusive\",\"machine\":\"testmachine\","
-   ^ "\"summary\":{\"alloc_words\":{\"n_improved\":0,\"n_regressed\":0,"
-   ^ "\"n_equivalent\":1,\"n_inconclusive\":2,\"geomean_delta\":0}},"
-   ^ "\"cases\":["
-   ^ "{\"id\":\"a\",\"full_name\":\"a\",\"overall\":\"pass\",\"metrics\":["
-   ^ "{\"metric\":\"alloc_words\",\"relation\":\"equivalent\","
-   ^ "\"status\":\"pass\",\"reason\":null,\"exact\":true,"
-   ^ "\"delta\":0,\"lower_delta\":null,\"upper_delta\":null}]},"
-   ^ "{\"id\":\"b\",\"full_name\":\"b\",\"overall\":\"inconclusive\",\"metrics\":["
-   ^ "{\"metric\":\"alloc_words\",\"relation\":\"inconclusive\","
-   ^ "\"status\":\"inconclusive\",\"reason\":\"exactness_lost\","
-   ^ "\"confirmed\":false,\"n\":3,"
-   ^ "\"delta\":null,\"lower_delta\":null,\"upper_delta\":null}]},"
-   ^ "{\"id\":\"c\",\"full_name\":\"c\",\"overall\":\"pass\",\"metrics\":["
-   ^ "{\"metric\":\"alloc_words\",\"relation\":null,"
-   ^ "\"status\":\"pass\",\"reason\":\"missing_baseline\","
-   ^ "\"delta\":null,\"lower_delta\":null,\"upper_delta\":null}]}]}")
-    (Verdict.to_json t)
+        "# forced: now";
+        row_text (alloc_row "a" 100);
+        row_text (wall_row "a" (ties 5 2.));
+      ] )
+    (diff file result);
+  equal (list string)
+    [ "# forced: earlier"; "# forced: now" ]
+    (List.filter
+       (String.starts_with ~prefix:"# forced")
+       (String.split_on_char '\n' (Baseline.to_string result)))
 
-let json_confirmed_regression_document () =
-  (* The sampled shape of the documented example, with the deltas computed through
-     the same shift arithmetic the module uses (tied vectors pin them). *)
-  let t =
-    regression_scenario ~confirm:(fun _ -> Some (wall_trial (ties 5 2.0))) ()
+let a_partial_bless_of_a_stale_section_says_what_it_drops () =
+  let file =
+    file_of ~identity:stale_ident
+      [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ]
   in
-  let d = expm1 (log 2.0) in
-  let f v = Printf.sprintf "%.17g" v in
-  let g = Stats.geometric_mean [| 1.0 +. d |] -. 1.0 in
-  equal string
-    ("{\"overall\":\"fail\",\"machine\":\"testmachine\","
-   ^ "\"summary\":{\"wall_time\":{\"n_improved\":0,\"n_regressed\":1,"
-   ^ "\"n_equivalent\":0,\"n_inconclusive\":0,\"geomean_delta\":" ^ f g
-   ^ "}},\"cases\":["
-   ^ "{\"id\":\"a\",\"full_name\":\"a\",\"overall\":\"fail\",\"metrics\":["
-   ^ "{\"metric\":\"wall_time\",\"relation\":\"regressed\","
-   ^ "\"status\":\"fail\",\"reason\":null,\"confirmed\":true,\"n\":5,"
-   ^ "\"delta\":" ^ f d ^ ",\"lower_delta\":" ^ f d ^ ",\"upper_delta\":" ^ f d
-   ^ "}]}]}")
-    (Verdict.to_json t)
-
-let json_within_budget_wire_relation () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.03)) ] in
-  let json = Verdict.to_json t in
-  is_true ~msg:"wire spelling"
-    (contains ~sub:"\"relation\":\"changed_within_budget\"" json);
-  is_true ~msg:"counts as equivalent in the summary"
-    (contains ~sub:"\"n_equivalent\":1" json)
-
-let json_within_budget_is_a_pass_with_its_interval () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check
-      ~budgets:[ Budget.no_slower_than 0.2 ]
-      ~file
-      [ (bcase "a", wall_trial [| 0.5; 0.5; 1.05; 1.05; 1.05 |]) ]
+  let result, warnings =
+    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial
+      ~run:(bless_run ()) file
   in
-  let json = Verdict.to_json t in
-  let sh =
-    match verdict_of t ~case:"a" ~metric:m_wall with
-    | Judged (Within_budget sh) -> sh
-    | v -> failf "expected within budget, got %s" (rel_name v)
-  in
-  let f v = Printf.sprintf "%.17g" v in
-  is_true ~msg:"the metric object"
-    (contains
-       ~sub:
-         ("{\"metric\":\"wall_time\",\"relation\":\"within_budget\",\"status\":\"pass\",\"reason\":null,\"confirmed\":false,\"n\":5,\"delta\":"
-        ^ f sh.Verdict.estimate ^ ",\"lower_delta\":" ^ f sh.Verdict.lower
-        ^ ",\"upper_delta\":" ^ f sh.Verdict.upper ^ "}")
-       json);
-  is_true ~msg:"counts as equivalent in the summary"
-    (contains ~sub:"\"n_equivalent\":1,\"n_inconclusive\":0" json);
-  check_overall t `Pass
-
-let json_unconfirmed_counts_inconclusive () =
-  let t = regression_scenario ~confirm:(fun _ -> None) () in
-  let json = Verdict.to_json t in
-  is_true ~msg:"reason" (contains ~sub:"\"reason\":\"unconfirmed\"" json);
-  is_true ~msg:"summary bucket" (contains ~sub:"\"n_inconclusive\":1" json);
-  is_true ~msg:"never improved" (contains ~sub:"\"n_improved\":0" json)
-
-let inconclusive_shift t =
-  match verdict_of t ~case:"a" ~metric:m_wall with
-  | Judged (Inconclusive { shift; _ }) -> shift
-  | v -> failf "expected an inconclusive relation, got %s" (rel_name v)
-
-let rank_tested_inconclusive_keeps_its_shift () =
-  (* Every row that reached the rank test keeps its first-pass estimate and
-     interval, whatever its relation; a row no comparison ran for has none. *)
-  let first_is_doubling msg t =
-    match inconclusive_shift t with
-    | Some sh -> is_true ~msg (Float.abs (sh.Verdict.estimate -. 1.0) < 1e-9)
-    | None -> failf "%s: expected the first-pass shift" msg
-  in
-  first_is_doubling "unconfirmed"
-    (regression_scenario ~confirm:(fun _ -> None) ());
-  first_is_doubling "environment at confirmation"
-    (let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-     run_check ~file
-       ~decide_load:(Env.Loaded { load = 8.; cores = 8 })
-       [ (bcase "a", wall_trial (ties 5 2.0)) ]);
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  (match
-     inconclusive_shift (run_check ~file [ (bcase "a", wall_trial spread) ])
-   with
-  | Some sh ->
-      is_true ~msg:"wide interval: a real interval"
-        (sh.Verdict.lower < sh.Verdict.upper)
-  | None -> failf "wide interval: expected the first-pass shift");
-  first_is_doubling "environment at the first pass"
-    (run_check ~file
-       ~load:(Env.Loaded { load = 8.; cores = 8 })
-       [ (bcase "a", wall_trial (ties 5 2.0)) ]);
-  is_none ~msg:"a non-positive sample: no comparison ran"
-    (inconclusive_shift
-       (run_check ~file [ (bcase "a", wall_trial (ties 5 0.0)) ]));
-  match
-    inconclusive_shift
-      (run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.04)) ])
-  with
-  | Some sh ->
-      is_true ~msg:"drifted candidate: the shift its veto read"
-        (Float.abs (sh.Verdict.estimate -. 0.04) < 1e-9)
-  | None -> failf "drifted candidate: expected the first-pass shift"
-
-let json_rank_tested_inconclusive_reports_its_deltas () =
-  let d = expm1 (log 2.0) in
-  let f v = Printf.sprintf "%.17g" v in
-  let json =
-    Verdict.to_json (regression_scenario ~confirm:(fun _ -> None) ())
-  in
-  is_true ~msg:"deltas"
-    (contains
-       ~sub:
-         ("\"delta\":" ^ f d ^ ",\"lower_delta\":" ^ f d ^ ",\"upper_delta\":"
-        ^ f d)
-       json);
-  is_true ~msg:"in the geomean"
-    (contains ~sub:("\"geomean_delta\":" ^ f d) json);
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let loaded =
-    Verdict.to_json
-      (run_check ~file
-         ~load:(Env.Loaded { load = 8.; cores = 8 })
-         [ (bcase "a", wall_trial (ties 5 2.0)) ])
-  in
-  is_true ~msg:"under load, the deltas as information"
-    (contains
-       ~sub:
-         ("\"reason\":\"environment\",\"confirmed\":false,\"n\":5,\"delta\":"
-        ^ f d ^ ",\"lower_delta\":" ^ f d ^ ",\"upper_delta\":" ^ f d)
-       loaded);
-  let json =
-    Verdict.to_json (run_check ~file [ (bcase "a", wall_trial (ties 5 0.0)) ])
-  in
-  is_true ~msg:"no comparison: null deltas"
-    (contains ~sub:"\"delta\":null,\"lower_delta\":null,\"upper_delta\":null"
-       json);
-  is_true ~msg:"no comparison: null geomean"
-    (contains ~sub:"\"geomean_delta\":null" json)
-
-let json_candidate_side_reason_wire_strings () =
-  let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let drifted =
-    run_check ~file [ (bcase "a", wall_trial ~drifted:true (ties 5 1.0)) ]
-  in
-  is_true ~msg:"drifted wire string"
-    (contains ~sub:"\"reason\":\"drifted\"" (Verdict.to_json drifted));
-  let unstable =
-    run_check
-      ~budgets:
-        [
-          Budget.relative ~metric:m_wall ~equivalent_within:0.025
-            ~max_regression:0.03 ();
-        ]
-      ~file
-      [ (bcase "a", wall_trial (spiked 1.04)) ]
-  in
-  is_true ~msg:"unstable wire string"
-    (contains ~sub:"\"reason\":\"unstable\"" (Verdict.to_json unstable))
-
-let json_geomean_over_ratios () =
-  (* Exact deltas -0.5 and +1.0: ratios 0.5 and 2.0, geometric mean 1.0,
-     reported delta 0. *)
-  let file = file_of [ alloc_row "a" 100; alloc_row "b" 100 ] in
-  let t =
-    run_check ~file
-      ~budgets:[ Budget.no_more_alloc_than 0.0 ]
+  equal
+    (pair string (list string))
+    ( Baseline.to_string
+        (Baseline.set_section file ident
+           [ alloc_row "a" 100; wall_row "a" (ties 5 2.) ]),
       [
-        (bcase "a", trial [ (m_alloc, Run.Exact 50) ]);
-        (bcase "b", trial [ (m_alloc, Run.Exact 200) ]);
-      ]
-  in
-  is_true (contains ~sub:"\"geomean_delta\":0}" (Verdict.to_json t))
+        "partial selection on a stale section: the corrected file re-records \
+         this machine's whole section and drops the rows of the 1 unselected \
+         case";
+      ] )
+    (Baseline.to_string result, warnings)
 
-let json_escapes_strings () =
-  let case =
-    match Bench.resolve [ Bench.bench {|q"x|} (fun () -> ()) ] with
-    | Ok [ c ] -> c
-    | _ -> assert false
-  in
-  let t = run_check [ (case, trial [ (m_alloc, Run.Exact 1) ]) ] in
-  is_true (contains ~sub:{|"full_name":"q\"x"|} (Verdict.to_json t))
-
-let json_machine_field () =
-  let t = run_check [ (bcase "a", trial [ (m_alloc, Run.Exact 1) ]) ] in
-  is_true (contains ~sub:"\"machine\":\"testmachine\"" (Verdict.to_json t))
-
-(* Suite *)
+let write_paths =
+  group "Write paths"
+    [
+      test "an equivalent run changes no byte" an_equivalent_run_changes_no_byte;
+      test "a confirmed improvement advances its row alone"
+        a_confirmed_improvement_advances_its_row;
+      test "the advanced row takes the confirmation's batch size"
+        the_advanced_row_takes_the_confirmation_s_batch_size;
+      test "an exact improvement advances to this run's count"
+        an_exact_improvement_advances_to_the_count;
+      cases "a proposed row is added"
+        ~name:(fun (name, _, _, _) -> name)
+        proposals
+        (fun (_, budgets, first, row) ->
+          equal text_diff
+            ([], [ row_text (row ()) ])
+            (corrected_diff ~budgets:(budgets ())
+               ~rows:[ wall_row "a" (ties 5 1.) ]
+               (first ())));
+      test "a regression keeps its row beside an advance"
+        a_regression_keeps_its_row_beside_an_advance;
+      test "a full selection prunes the rows of absent cases" (fun () ->
+          equal text_diff
+            ( [ row_text (wall_row "dead" (ties 5 1.)) ],
+              [ row_text (wall_row "b" (ties 5 1.)) ] )
+            (absent_cases `Full));
+      test "a partial selection prunes nothing" (fun () ->
+          equal text_diff
+            ([], [ row_text (wall_row "b" (ties 5 1.)) ])
+            (absent_cases `Partial));
+      cases "a section is replaced by the first trials" ~name:fst replacements
+        a_section_is_replaced_by_the_first_trials;
+      test "corrected refuses a suite name it cannot write"
+        corrected_refuses_a_suite_it_cannot_head;
+      prop "the ratchet is monotone" scenario the_ratchet_is_monotone;
+      cases "bless re-records the section"
+        ~name:(fun (name, _, _) -> name)
+        blessed bless_rerecords_the_section;
+      test "a partial bless replaces the selected cases' rows alone"
+        a_partial_bless_replaces_the_selected_cases_rows;
+      test "a partial bless of a stale section says what it drops"
+        a_partial_bless_of_a_stale_section_says_what_it_drops;
+    ]
 
 let () =
-  run "verdict"
-    [
-      group "relation table"
-        [
-          relation_grid;
-          prop "judgment follows the decision model's port" port_case
-            judgment_follows_the_port;
-          test "a straddling interval is inconclusive (wide_interval)"
-            wide_interval_is_inconclusive;
-          test "a change needs the whole interval above the band"
-            a_change_needs_the_whole_interval_above_the_band;
-          test "within budget's edges" within_budget_edges;
-        ];
-      group "confirmation"
-        [
-          test "a confirmed regression carries both shifts, pooled 2n, and k"
-            confirmed_regression_carries_evidence;
-          test "an unrepeated regression is inconclusive (unconfirmed)"
-            unconfirmed_regression_is_inconclusive;
-          test "a missing confirmation trial is inconclusive"
-            missing_confirmation_is_inconclusive;
-          test "a drifted confirmation trial is inconclusive"
-            drifted_confirmation_is_inconclusive;
-          test "an unstable confirmation counts only beyond 2e"
-            unstable_confirmation_counts_beyond_2e;
-          test "a confirmation in the opposite direction is inconclusive"
-            opposite_confirmation_is_inconclusive;
-          test "exact-form confirmation evidence is inconclusive"
-            exact_confirmation_evidence_is_inconclusive;
-          test "the confirmation is judged at the wider alpha"
-            confirmation_is_judged_at_the_wider_alpha;
-          test "an unconfirmed improvement is within budget and never ratchets"
-            unconfirmed_improvement_is_within_budget_and_never_ratchets;
-          test "a confirmation's warnings reach the report"
-            confirmation_warnings_reach_the_report;
-          test "the queue lists sampled strongs in case order"
-            queue_lists_only_sampled_strongs_in_case_order;
-          test "decide rejects unrequested or duplicate confirmations"
-            decide_rejects_unrequested_or_duplicate_ids;
-        ];
-      group "quality degradations"
-        [
-          test "a rank-tested inconclusive row keeps its shift"
-            rank_tested_inconclusive_keeps_its_shift;
-          test "a drifting candidate trial is vetoed within 2e only"
-            drifted_candidate_is_vetoed_within_2e;
-          test "an unstable candidate blocks demonstrated directions only"
-            unstable_candidate_blocks_demonstrated_directions;
-          test "a shift beyond 2e on unstable evidence is judged"
-            large_shift_on_unstable_evidence_is_judged;
-          test "baseline instability is recomputed from stored samples"
-            baseline_instability_is_recomputed_from_stored_samples;
-          test "non-positive samples get their own reason"
-            non_positive_samples_get_their_own_reason;
-        ];
-      group "environment gate"
-        [
-          test "loaded degrades sampled relations; exact still gates"
-            loaded_gate_degrades_sampled_but_not_exact;
-          test "loaded queues no confirmations"
-            loaded_gate_queues_no_confirmations;
-          test "loaded at decide degrades pending relations"
-            loaded_gate_at_decide_degrades_pendings;
-          test "evidence-shape reasons survive a loaded gate"
-            evidence_shape_reasons_survive_a_loaded_gate;
-          test "a non-positive sample survives load; drift does not"
-            non_positive_survives_a_loaded_gate_and_drift_does_not;
-        ];
-      group "staleness"
-        [
-          test "a compiler mismatch makes every row new"
-            stale_section_makes_every_row_new;
-          test "the candidate proposes a fresh section"
-            stale_candidate_proposes_a_fresh_section;
-        ];
-      group "exact metrics"
-        [
-          test "integers compare against the budget without confirmation"
-            exact_integer_comparison;
-          test "a change from a zero baseline exceeds any relative budget"
-            exact_zero_baseline_regresses_any_relative_budget;
-          test "an exact row drifts only past the probe's bound"
-            exact_rows_and_the_probe_k;
-          test "a recalibrated improvement stands and records the new k"
-            recalibrated_improvement_stands_and_records_new_k;
-          test "mixed exact/sampled comparisons lose exactness"
-            exactness_lost_edges;
-          test "a zero-tolerance budget on a downgraded metric loses exactness"
-            zero_tolerance_on_downgraded_metric_is_exactness_lost;
-          test "an absolute budget gates exact evidence"
-            absolute_budget_gates_exact_evidence;
-          test "an absolute budget never gates sampled evidence"
-            absolute_budget_never_gates_sampled_evidence;
-          test "a cap is judged without a baseline row"
-            a_cap_is_judged_without_a_baseline_row;
-        ];
-      group "budgets and case verdicts"
-        [
-          test "an inherited budget on an uncollected metric is dropped"
-            uncollected_inherited_budget_is_dropped;
-          test "the default binds only a case collecting wall_time"
-            default_binds_only_a_case_collecting_wall_time;
-          test "the default binds a case whose budgets all drop"
-            the_default_binds_after_the_drop;
-          test "unbudgeted metrics report but never gate"
-            unbudgeted_metrics_report_but_never_gate;
-          test "no cross-metric forgiveness; improvements still ratchet"
-            no_cross_metric_forgiveness;
-          test "case budgets override run budgets per metric"
-            case_budgets_override_run_budgets_per_metric;
-          test "judge rejects duplicate case ids" judge_validates_inputs;
-        ];
-      group "NEW"
-        [
-          test "a missing section proposes everything and exits 0"
-            new_section_proposes_everything;
-          test "a new metric row is proposed on compared runs"
-            new_metric_row_is_added_on_compared_runs;
-          test "proposals record gated and flagged evidence"
-            proposals_record_gated_and_flagged_evidence;
-        ];
-      group "ratchet"
-        [
-          test "an equivalent run writes nothing" equivalent_run_writes_nothing;
-          test "an advance is a one-row diff" advance_is_a_one_row_diff;
-          test "partial selections never prune" partial_selection_never_prunes;
-          test "a stale partial selection warns about dropped rows"
-            stale_partial_selection_warns_about_dropped_rows;
-          test "full selections prune dead ids with a notice"
-            full_selection_prunes_dead_ids_with_a_notice;
-          prop "the ratchet is monotone over generated scenarios" scenario
-            monotone_ratchet;
-        ];
-      group "bless"
-        [
-          test "re-records the section wholesale, non-monotone"
-            bless_rerecords_the_section_wholesale;
-          test "adds a suite header over the empty file"
-            bless_adds_a_suite_header_over_the_empty_file;
-          test "a partial bless on a current section replaces its cases only"
-            bless_partial_on_a_current_section_replaces_the_selected_cases;
-          test "a partial bless on a stale section notices the drop"
-            bless_partial_on_a_stale_section_notices_the_drop;
-        ];
-      group "ownership"
-        [
-          test "pooling copies and sorts without mutating either trial"
-            pooling_copies_and_sorts_without_mutating_inputs;
-        ];
-      group "exit codes" [ test "the exit table incl. strict" exit_code_table ];
-      group "json"
-        [
-          test "a rank-tested inconclusive row reports its deltas"
-            json_rank_tested_inconclusive_reports_its_deltas;
-          test "golden document: field names, order, nullability"
-            json_golden_document;
-          test "confirmed regression document"
-            json_confirmed_regression_document;
-          test "within_budget wire relation and summary bucket"
-            json_within_budget_wire_relation;
-          test "within_budget is a pass with its interval"
-            json_within_budget_is_a_pass_with_its_interval;
-          test "unconfirmed strongs count in n_inconclusive"
-            json_unconfirmed_counts_inconclusive;
-          test "candidate-side reasons use the additive wire strings"
-            json_candidate_side_reason_wire_strings;
-          test "geomean is over per-case ratios" json_geomean_over_ratios;
-          test "strings are escaped" json_escapes_strings;
-          test "the machine field is the identity's key" json_machine_field;
-        ];
-    ]
-  |> exit
+  exit
+    (run "verdict"
+       [
+         relations; reports; comparison_states; judging; observers; write_paths;
+       ])

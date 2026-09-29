@@ -42,6 +42,13 @@ second process that `test_env` forks, since exclusion shows only from
 another process; the other operational laws (the lock seen through the
 command line, single write path, honest exits) are cram scenarios.
 
+The JSON goldens are `test_verdict`'s documents under `test/unit/json/`,
+one per verdict state, compared with windtrap's `expect_file`: a changed
+document fails `dune runtest` with its diff, and `dune promote` accepts
+it once read. Their samples are chosen so that every delta is exact
+(0.5, 1, 2 and 4 against rows of 1), so the documents print the same
+digits on any libm.
+
 ## The golden stats corpus
 
 `stats.ml` is the highest-validation-risk module: novel numerics with

@@ -1,0 +1,1 @@
+{"overall":"fail","machine":"testmachine","summary":{"wall_time":{"n_improved":0,"n_regressed":1,"n_equivalent":0,"n_inconclusive":0,"geomean_delta":1}},"cases":[{"id":"a","full_name":"a","overall":"fail","metrics":[{"metric":"wall_time","relation":"regressed","status":"fail","reason":null,"confirmed":true,"n":5,"delta":1,"lower_delta":1,"upper_delta":1}]}]}
