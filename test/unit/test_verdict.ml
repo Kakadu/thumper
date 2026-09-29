@@ -58,10 +58,9 @@ let spiked v = Array.append (ties 19 v) [| 100. *. v |]
 (* Against tied 1s: the estimate and [L] are -50%, [U] is +100%. *)
 let spread = [| 0.5; 0.5; 0.5; 2.0; 2.0 |]
 
-(* The shifts of tied [1.5]s and [4]s against tied [1]s, so that a budget
-   can sit exactly on one. *)
-let d15 = expm1 (log 1.5)
-let d4 = expm1 (log 4.0)
+(* The shift of tied [v]s against tied [1]s, so that a budget, or its band,
+   can sit exactly on one: the band of [r <= 0.05] is [r /. 2.]. *)
+let d v = expm1 (log v)
 
 (* The case named [name], whose id is its slug. *)
 let case ?budgets name =
@@ -80,9 +79,6 @@ let file_of ?(identity = ident) ?annotations rows =
     identity rows
 
 let empty_file () = require_ok (Baseline.of_string "")
-
-let relative ?(metric = wall_time) (e, r) =
-  Budget.relative ~metric ~equivalent_within:e ~max_regression:r ()
 
 (* Verdicts *)
 
@@ -116,12 +112,10 @@ let one ?load ?budgets ?(rows = [ wall_row "a" (ties 5 1.) ]) ?decide_load
 let reason_name = function
   | Verdict.Wide_interval -> "wide interval"
   | Non_positive -> "non-positive"
-  | Baseline_unstable -> "baseline unstable"
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness lost"
   | Batch_drifted -> "batch drifted"
-  | Candidate_unstable -> "candidate unstable"
   | Candidate_drifted -> "candidate drifted"
 
 (* A verdict's name, so that a mismatch prints both. *)
@@ -204,117 +198,115 @@ let at_a_point =
   ]
 
 (* Each row sits a bound of the interval on [-e], [e] or [r], or places it
-   against the band, with the budget's [(e, r)]. *)
+   against the band, with the budget [r]. *)
 let edges =
   [
     ( "an interval ending at -e is equivalent",
-      (0.5, 1.),
-      ties 5 0.5,
+      -2. *. d 0.99,
+      ties 5 0.99,
       "equivalent" );
-    ("an interval ending at e is equivalent", (1., 1.), ties 5 2., "equivalent");
+    ( "an interval ending at e is equivalent",
+      2. *. d 1.01,
+      ties 5 1.01,
+      "equivalent" );
     ( "an interval starting at e is within budget",
-      (1., 4.),
-      [| 2.; 2.; 4.; 4.; 4. |],
+      2. *. d 1.01,
+      [| 1.01; 1.01; 1.015; 1.015; 1.015 |],
       "within budget" );
     ( "an interval above the band ending at r is changed within budget",
-      (0.5, d4),
-      [| 2.; 2.; 4.; 4.; 4. |],
+      d 1.03,
+      [| 1.02; 1.02; 1.03; 1.03; 1.03 |],
       "changed within budget" );
     ( "an interval ending at r is within budget",
-      (0.01, d15),
-      [| 0.5; 0.5; 1.5; 1.5; 1.5 |],
+      d 1.03,
+      [| 0.5; 0.5; 1.03; 1.03; 1.03 |],
       "within budget" );
     ( "an interval straddling the band from below is within budget",
-      (0.025, 0.2),
+      0.2,
       [| 1.; 1.; 1.05; 1.05; 1.05 |],
       "within budget" );
     ( "an interval reaching below the band is within budget",
-      (0.025, 0.2),
+      0.2,
       [| 0.5; 0.5; 1.05; 1.05; 1.05 |],
       "within budget" );
     ( "an interval past r and below the band is inconclusive",
-      (0.025, 0.05),
+      0.05,
       spread,
       "inconclusive, wide interval" );
     ( "at r = 0 an interval across 0 is inconclusive",
-      (0., 0.),
+      0.,
       spread,
       "inconclusive, wide interval" );
   ]
 
-(* The instability veto, with the budget's [(e, r)], the row's samples, this
-   run's and the confirmation's. *)
+(* The instability veto, with the budget [r], the row's samples, this run's
+   and the confirmation's. A direction within 2e is an improvement or a
+   change within budget, since [2e <= r]. *)
 let vetoes =
-  let default = (0.025, 0.05) and tight = (0.025, 0.03) in
   let row = ties 5 1. and spiked_row = spiked 1. in
   [
     ( "an improvement within 2e falls back to within budget",
-      default,
+      0.05,
       row,
       spiked 0.96,
       None,
       "within budget" );
     ( "a change within budget within 2e falls back to within budget",
-      default,
+      0.05,
       row,
       spiked 1.03,
       None,
       "within budget" );
-    ( "a regression within 2e is candidate unstable",
-      tight,
-      row,
-      spiked 1.04,
-      None,
-      "inconclusive, candidate unstable" );
     ( "an equivalent shift is not vetoed",
-      default,
+      0.05,
       row,
       spiked 1.,
       None,
       "equivalent" );
-    ( "an unstable row within 2e is baseline unstable",
-      tight,
+    ( "an unstable row within 2e falls back to within budget",
+      0.05,
       spiked_row,
-      ties 20 1.04,
-      None,
-      "inconclusive, baseline unstable" );
-    ( "an unstable row takes precedence over an unstable trial",
-      tight,
-      spiked_row,
-      spiked 1.04,
-      None,
-      "inconclusive, baseline unstable" );
-    ( "a vetoed change ending at r is within budget",
-      (d15 /. 2., d15),
-      row,
-      spiked 1.5,
+      ties 20 1.03,
       None,
       "within budget" );
-    ( "a shift of exactly 2e is vetoed",
-      (d15 /. 2., 0.3),
+    ( "a change of exactly 2e is vetoed",
+      d 1.03,
       row,
-      spiked 1.5,
+      spiked 1.03,
       None,
-      "inconclusive, candidate unstable" );
+      "within budget" );
+    ( "a stable change of exactly 2e is changed within budget",
+      d 1.03,
+      row,
+      ties 20 1.03,
+      None,
+      "changed within budget" );
+    ( "a confirmed improvement within 2e on an unstable row falls back to \
+       within budget",
+      0.05,
+      spiked_row,
+      ties 20 0.96,
+      Some (ties 20 0.96),
+      "within budget" );
     ( "an unstable row beyond 2e is judged",
-      default,
+      0.05,
       spiked_row,
       ties 20 5.,
       None,
       "regressed, confirmed" );
     ( "an unstable trial beyond 2e is judged",
-      default,
+      0.05,
       row,
       spiked 2.,
       Some (ties 5 2.),
       "regressed, confirmed" );
   ]
 
-let vetoed (_, budget, row, first, confirmation, expected) =
+let vetoed (_, r, row, first, confirmation, expected) =
   let confirm = Option.map (fun c -> Some (wall c)) confirmation in
   let t =
     one
-      ~budgets:[ relative budget ]
+      ~budgets:[ Budget.no_slower_than r ]
       ~rows:[ wall_row "a" row ]
       ?confirm (wall first)
   in
@@ -425,8 +417,7 @@ let documented_relation ~e ~r ~l ~u ~est ~unstable =
     else None
   in
   match direction with
-  | Some _ when unstable && Float.abs est <= 2. *. e ->
-      if u <= r then "within budget" else "inconclusive, candidate unstable"
+  | Some _ when unstable && Float.abs est <= 2. *. e -> "within budget"
   | Some relation -> relation
   | None ->
       if r > 0. && -.e <= l && u <= e then "equivalent"
@@ -626,9 +617,9 @@ let relations =
       cases "an interval"
         ~name:(fun (name, _, _, _) -> name)
         edges
-        (fun (_, budget, samples, expected) ->
+        (fun (_, r, samples, expected) ->
           equal string expected
-            (relation (one ~budgets:[ relative budget ] (wall samples))));
+            (relation (one ~budgets:[ Budget.no_slower_than r ] (wall samples))));
       prop "every interval has its documented relation" interval
         every_interval_has_its_documented_relation;
       prop "judgment follows the decision model's port" port_case
@@ -674,8 +665,7 @@ let budget_name = function
   | None -> "none"
   | Some b -> (
       match Budget.contract b with
-      | Budget.Relative { max_regression; band } ->
-          strf "r = %g, e = %g" max_regression band
+      | Budget.Relative r -> strf "r = %g" r
       | Budget.Absolute_max v -> strf "at most %g" v)
 
 let resolutions =
@@ -684,17 +674,17 @@ let resolutions =
       (fun () -> [ Budget.no_slower_than 0. ]),
       (fun () -> Some [ Budget.no_slower_than 0.5 ]),
       [ wall_time ],
-      [ ("wall_time", "r = 0.5, e = 0.025") ] );
+      [ ("wall_time", "r = 0.5") ] );
     ( "a budget on a metric the trial did not measure is dropped",
       (fun () -> [ Budget.no_slower_than 0.1; Budget.no_more_alloc_than 0. ]),
       (fun () -> None),
       [ wall_time ],
-      [ ("wall_time", "r = 0.1, e = 0.025") ] );
+      [ ("wall_time", "r = 0.1") ] );
     ( "a case left with none gets the default on wall_time",
       (fun () -> [ Budget.no_more_alloc_than 0. ]),
       (fun () -> None),
       [ wall_time ],
-      [ ("wall_time", "r = 0.05, e = 0.025") ] );
+      [ ("wall_time", "r = 0.05") ] );
     ( "the default binds no other metric",
       (fun () -> []),
       (fun () -> None),
@@ -704,12 +694,12 @@ let resolutions =
       (fun () -> [ Budget.no_slower_than 0.1 ]),
       (fun () -> None),
       [ cpu_time; wall_time ],
-      [ ("cpu_time", "none"); ("wall_time", "r = 0.1, e = 0.025") ] );
+      [ ("cpu_time", "none"); ("wall_time", "r = 0.1") ] );
     ( "a second budget for one metric is ignored",
       (fun () -> [ Budget.no_slower_than 0.1; Budget.no_slower_than 0.5 ]),
       (fun () -> None),
       [ wall_time ],
-      [ ("wall_time", "r = 0.1, e = 0.025") ] );
+      [ ("wall_time", "r = 0.1") ] );
   ]
 
 let budgets_resolve (_, run_budgets, case_budgets, metrics, expected) =
@@ -828,22 +818,22 @@ let comparison_states =
 
 let loaded = Env.Loaded { load = 8.; cores = 8 }
 
-(* The drift veto, with the budget's [(e, r)]. *)
+(* The drift veto, with the budget [r]. *)
 let drifted_trials =
   [
     ( "an equivalent shift is candidate drifted",
-      (0.025, 0.05),
+      0.05,
       1.,
       "inconclusive, candidate drifted" );
     ( "a shift within 2e never falls back to within budget",
-      (0.025, 0.05),
+      0.05,
       1.04,
       "inconclusive, candidate drifted" );
     ( "a shift of exactly 2e is candidate drifted",
-      (d15 /. 2., 0.3),
-      1.5,
+      d 1.03,
+      1.03,
       "inconclusive, candidate drifted" );
-    ("a shift beyond 2e is judged", (0.025, 0.05), 2., "regressed, confirmed");
+    ("a shift beyond 2e is judged", 0.05, 2., "regressed, confirmed");
   ]
 
 (* Each row's reason is the first of judge's tests that the evidence meets. *)
@@ -950,70 +940,55 @@ let nothing_to_confirm =
       1. );
   ]
 
-(* The first trial regresses by 2x against tied 1s unless a row says;
-   [(e, r)] is the budget. *)
+(* The first trial regresses by 2x against tied 1s unless a row says, under
+   the budget [r]. *)
 let confirmations =
   [
     ( "a confirmation that reproduces it",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall (ties 5 2.))),
       "regressed, confirmed" );
     ( "a confirmation at the row's level",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall (ties 5 1.))),
       "inconclusive, unconfirmed" );
     ( "a confirmation in the other direction",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall (ties 5 0.5))),
       "inconclusive, unconfirmed" );
     ( "no confirmation",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> None),
       "inconclusive, unconfirmed" );
     ( "a drifted confirmation",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall ~drifted:true (ties 5 2.))),
       "inconclusive, unconfirmed" );
     ( "a confirmation without the metric",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (alloc 3)),
       "inconclusive, unconfirmed" );
     ( "a confirmation with a non-positive sample",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall [| 0.; 2.; 2.; 2.; 2. |])),
       "inconclusive, unconfirmed" );
     ( "a confirmation at another batch size",
-      (0.025, 0.05),
+      0.05,
       ties 5 2.,
       (fun () -> Some (wall ~k:16 (ties 5 2.))),
       "inconclusive, unconfirmed" );
     ( "an unstable confirmation beyond 2e",
-      (0.025, 0.05),
+      0.05,
       ties 5 5.,
       (fun () -> Some (wall (spiked 5.))),
       "regressed, confirmed" );
-    ( "a stable confirmation within 2e",
-      (0.1, 0.1),
-      ties 5 2.,
-      (fun () -> Some (wall (ties 5 1.15))),
-      "regressed, confirmed" );
-    ( "an unstable confirmation within 2e",
-      (0.1, 0.1),
-      ties 5 2.,
-      (fun () -> Some (wall (spiked 1.15))),
-      "inconclusive, unconfirmed" );
-    ( "an unstable confirmation of exactly 2e",
-      (d15 /. 2., 0.3),
-      ties 5 2.,
-      (fun () -> Some (wall (spiked 1.5))),
-      "inconclusive, unconfirmed" );
   ]
 
 (* A sampled count regresses by 2x, and its confirmation is exact. *)
@@ -1074,15 +1049,42 @@ let pooling_leaves_both_trials_unchanged () =
     ([| 0.4; 0.45; 0.5; 0.55; 0.6 |], [| 0.42; 0.47; 0.52; 0.57; 0.62 |])
     (samples first, samples again)
 
-(* The first trial improves by half against tied 1s. *)
+(* The first trial improves by half against tied 1s, under the budget [r].
+   Only an improvement's confirmation can reproduce it within 2e of zero. *)
 let improvements =
   [
     ( "not reproduced",
+      0.05,
       (fun () -> Some (wall (ties 5 1.))),
       Env.Quiet,
       "within budget" );
-    ("without a confirmation", (fun () -> None), Env.Quiet, "within budget");
+    ( "without a confirmation",
+      0.05,
+      (fun () -> None),
+      Env.Quiet,
+      "within budget" );
+    ( "a stable confirmation within 2e",
+      0.05,
+      (fun () -> Some (wall (ties 20 0.96))),
+      Env.Quiet,
+      "improved, confirmed" );
+    ( "an unstable confirmation within 2e",
+      0.05,
+      (fun () -> Some (wall (spiked 0.96))),
+      Env.Quiet,
+      "within budget" );
+    ( "an unstable confirmation of exactly 2e",
+      -.d 0.97,
+      (fun () -> Some (wall (spiked 0.97))),
+      Env.Quiet,
+      "within budget" );
+    ( "an unstable confirmation beyond 2e",
+      0.05,
+      (fun () -> Some (wall (spiked 0.9))),
+      Env.Quiet,
+      "improved, confirmed" );
     ( "on a loaded host at the confirmations",
+      0.05,
       (fun () -> Some (wall (ties 5 0.5))),
       loaded,
       "inconclusive, environment" );
@@ -1168,11 +1170,11 @@ let judging =
       cases "the drift veto"
         ~name:(fun (name, _, _, _) -> name)
         drifted_trials
-        (fun (_, budget, v, expected) ->
+        (fun (_, r, v, expected) ->
           equal string expected
             (relation
                (one
-                  ~budgets:[ relative budget ]
+                  ~budgets:[ Budget.no_slower_than r ]
                   ~confirm:(Some (wall (ties 5 v)))
                   (wall ~drifted:true (ties 5 v)))));
       cases "the order of the tests"
@@ -1208,11 +1210,11 @@ let judging =
       cases "decide, on a pending regression"
         ~name:(fun (name, _, _, _, _) -> name)
         confirmations
-        (fun (_, budget, first, confirm, expected) ->
+        (fun (_, r, first, confirm, expected) ->
           equal string expected
             (relation
                (one
-                  ~budgets:[ relative budget ]
+                  ~budgets:[ Budget.no_slower_than r ]
                   ~confirm:(confirm ()) (wall first))));
       test "decide, on a pending count, with an exact confirmation"
         a_confirmation_measured_as_exact_is_unconfirmed;
@@ -1223,12 +1225,15 @@ let judging =
       test "pooling leaves both trials' samples unchanged"
         pooling_leaves_both_trials_unchanged;
       cases "decide, on a pending improvement"
-        ~name:(fun (name, _, _, _) -> name)
+        ~name:(fun (name, _, _, _, _) -> name)
         improvements
-        (fun (_, confirm, decide_load, expected) ->
+        (fun (_, r, confirm, decide_load, expected) ->
           equal string expected
             (relation
-               (one ~decide_load ~confirm:(confirm ()) (wall (ties 5 0.5)))));
+               (one ~decide_load
+                  ~budgets:[ Budget.no_slower_than r ]
+                  ~confirm:(confirm ())
+                  (wall (ties 5 0.5)))));
       test "an unconfirmed improvement keeps its first shift and no row"
         an_unconfirmed_improvement_keeps_its_first_shift;
       cases "an inconclusive relation's shift"
@@ -1572,15 +1577,9 @@ let documents =
 
 (* Each reason's spelling, on a verdict that holds it. *)
 let spellings =
-  let tight = [ relative (0.025, 0.03) ] in
   [
     ("wide_interval", fun () -> one (wall spread));
     ("non_positive", fun () -> one (wall (ties 5 0.)));
-    ( "baseline_unstable",
-      fun () ->
-        one ~budgets:tight
-          ~rows:[ wall_row "a" (spiked 1.) ]
-          (wall (ties 20 1.04)) );
     ("environment", fun () -> one ~load:loaded (wall (ties 5 2.)));
     ("unconfirmed", fun () -> one ~confirm:None (wall (ties 5 2.)));
     ( "exactness_lost",
@@ -1592,7 +1591,6 @@ let spellings =
     ( "batch_drifted",
       fun () -> one ~rows:[ wall_row ~k:32 "a" (ties 5 1.) ] (wall (ties 5 1.))
     );
-    ("unstable", fun () -> one ~budgets:tight (wall (spiked 1.04)));
     ("drifted", fun () -> one (wall ~drifted:true (ties 5 1.)));
     ("missing_baseline", fun () -> decided [ (case "a", wall (ties 5 1.)) ]);
   ]

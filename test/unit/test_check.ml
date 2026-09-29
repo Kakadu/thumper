@@ -131,12 +131,10 @@ let trial_k v ~case = Run.Trial.k (case_report v ~case).Verdict.trial
 let reason_name = function
   | Verdict.Wide_interval -> "wide interval"
   | Non_positive -> "non-positive"
-  | Baseline_unstable -> "baseline unstable"
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness lost"
   | Batch_drifted -> "batch drifted"
-  | Candidate_unstable -> "candidate unstable"
   | Candidate_drifted -> "candidate drifted"
 
 (* A relation's name, so that a mismatch prints both. *)
@@ -330,7 +328,7 @@ let refusals =
         select
           [
             Bench.bench
-              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
               "a" ignore;
           ]),
       Check.Error
@@ -716,7 +714,7 @@ let measure_refusals =
     ("an empty selection", `Or [], [], Check.Error Check.Empty_selection);
     ( "a case budget on a metric the case does not collect",
       `Id "",
-      [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+      [ Budget.relative ~metric:Metric.cpu_time 0.05 ],
       Check.Error
         (Check.Invalid_suite
            (Bench.Uncollected_budget { scope = "a"; metric = "cpu_time" })) );

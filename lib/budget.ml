@@ -5,50 +5,25 @@
 
 let strf = Printf.sprintf
 
-type contract =
-  | Relative of { max_regression : float; band : float }
-  | Absolute_max of float
-
+type contract = Relative of float | Absolute_max of float
 type t = { metric : Metric.t; contract : contract }
 
 let default_max_regression = 0.05
-let band_cap = 0.025
 
 (* Tolerances are tested with [not (x >= 0.)] so that NaN fails too: a NaN
-   tolerance would make every later comparison false. An explicit band may
-   exceed [band_cap] but never the budget, since the relations partition the
-   shifts only when e <= r: with e > r, a confirmed shift in (r, e] would be
-   both regressed and equivalent. At r = 0 the band is therefore 0. *)
-let err_relative fname problem = strf "Thumper.Budget.%s: %s" fname problem
+   tolerance would make every later comparison false. *)
+let make_relative ~fname ~metric r =
+  if not (r >= 0.) then
+    invalid_arg (strf "Thumper.Budget.%s: negative or NaN tolerance" fname);
+  { metric; contract = Relative r }
 
-let make_relative ~fname ~metric ?equivalent_within max_regression =
-  if not (max_regression >= 0.) then
-    invalid_arg (err_relative fname "negative or NaN max_regression");
-  let band =
-    match equivalent_within with
-    | Some e ->
-        if not (e >= 0.) then
-          invalid_arg (err_relative fname "negative or NaN equivalent_within");
-        if e > max_regression then
-          invalid_arg
-            (err_relative fname "equivalent_within exceeds max_regression");
-        e
-    | None -> Float.min band_cap (max_regression /. 2.)
-  in
-  { metric; contract = Relative { max_regression; band } }
+let relative ~metric r = make_relative ~fname:"relative" ~metric r
 
-let relative ~metric ?equivalent_within ~max_regression () =
-  make_relative ~fname:"relative" ~metric ?equivalent_within max_regression
+let no_slower_than r =
+  make_relative ~fname:"no_slower_than" ~metric:Metric.wall_time r
 
-let no_slower_than ?(metric = Metric.wall_time) ?equivalent_within
-    max_regression =
-  make_relative ~fname:"no_slower_than" ~metric ?equivalent_within
-    max_regression
-
-let no_more_alloc_than ?(metric = Metric.alloc_words) ?equivalent_within
-    max_regression =
-  make_relative ~fname:"no_more_alloc_than" ~metric ?equivalent_within
-    max_regression
+let no_more_alloc_than r =
+  make_relative ~fname:"no_more_alloc_than" ~metric:Metric.alloc_words r
 
 let at_most ~metric v =
   if not (v >= 0.) then

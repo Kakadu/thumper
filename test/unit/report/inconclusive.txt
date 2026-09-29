@@ -1,20 +1,16 @@
-thumper: digest — 8 cases vs digest.thumper for machine testkey
+thumper: digest — 6 cases vs digest.thumper for machine testkey
 
   inconclusive  1.00 us  ±150.0%         wide-interval
       wide interval
   inconclusive  0.00 us    ±0.0%         non-positive
       non-positive sample
-  inconclusive  1.04 us    ±0.0%         baseline-unstable
-      baseline unstable
   inconclusive  2.00 us    ±0.0%         unconfirmed
       unconfirmed
   inconclusive  1.00 us    ±0.0%  ~54 w  exactness-lost
       alloc: exactness lost
   inconclusive  1.00 us    ±0.0%         batch-drifted
       batch drifted
-  inconclusive  1.04 us    ±0.0%         unstable
-      unstable
   inconclusive  1.00 us    ±0.0%         drifted
       drifted
 
-  8 cases: 0 passed, 8 inconclusive.
+  6 cases: 0 passed, 6 inconclusive.

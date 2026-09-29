@@ -33,7 +33,7 @@ let error =
 let budget_label b =
   let m = Metric.id (Budget.metric b) in
   match Budget.contract b with
-  | Budget.Relative { max_regression; _ } -> strf "%s +%g" m max_regression
+  | Budget.Relative r -> strf "%s +%g" m r
   | Budget.Absolute_max v -> strf "%s at most %g" m v
 
 (* Resolved cases and recorded calls *)
@@ -345,7 +345,7 @@ let collections =
       Ok () );
     ( "a run budget on a metric the run does not collect",
       (fun () ->
-        ( [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+        ( [ Budget.relative ~metric:Metric.cpu_time 0.05 ],
           [ Bench.bench "x" noop ] )),
       Error (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }) );
     ( "a case budget on a metric its own list leaves out",
@@ -366,7 +366,7 @@ let collections =
         ( [],
           [
             Bench.group
-              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
               "g"
               [ Bench.bench "x" noop ];
           ] )),
@@ -378,8 +378,7 @@ let collections =
             Bench.group ~metrics:[ Metric.cpu_time ] "g"
               [
                 Bench.bench
-                  ~budgets:
-                    [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+                  ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
                   "x" noop;
               ];
           ] )),
@@ -400,10 +399,10 @@ let collections =
       Ok () );
     ( "the run's budgets before the tree's",
       (fun () ->
-        ( [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+        ( [ Budget.relative ~metric:Metric.cpu_time 0.05 ],
           [
             Bench.bench
-              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
               "x" noop;
           ] )),
       Error (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }) );
@@ -412,10 +411,10 @@ let collections =
         ( [],
           [
             Bench.bench
-              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
               "x" noop;
             Bench.bench
-              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              ~budgets:[ Budget.relative ~metric:Metric.cpu_time 0.05 ]
               "y" noop;
           ] )),
       Error (Bench.Uncollected_budget { scope = "x"; metric = "cpu_time" }) );

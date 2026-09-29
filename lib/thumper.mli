@@ -136,46 +136,32 @@ module Budget : sig
 
   (** {2:relative Relative budgets}
 
-      A relative budget [r] comes with an equivalence band [e], both fractions
-      of the baseline value. A comparison of samples yields an interval
-      \[[L];[U]\] for the change, positive when worse: the metric has regressed
-      when [L > r], improved when [U < -e], is equivalent when \[[L];[U]\] lies
-      within \[[-e];[e]\], within budget otherwise when [U <= r], and
-      inconclusive otherwise, when the noise exceeds the budget. A sampled
-      regression or improvement counts only when a second trial of the case
-      confirms it ({!Check.run}); an improvement that is not confirmed is within
-      budget. An exact count compares as an integer, with no second trial: it
-      has improved when it shrinks, and regressed when it grows by more than [r]
-      of its baseline value or grows at all from [0].
+      A relative budget [r] is a fraction of the baseline value ([0.05] is 5%).
+      A comparison of samples yields an interval \[[L];[U]\] for the change,
+      positive when worse. With the band [e = min 0.025 (r /. 2.)], the metric
+      has regressed when [L > r], improved when [U < -e], is equivalent when
+      \[[L];[U]\] lies within \[[-e];[e]\], within budget otherwise when
+      [U <= r], and inconclusive otherwise, when the noise exceeds the budget. A
+      sampled regression or improvement counts only when a second trial of the
+      case confirms it ({!Check.run}); an improvement that is not confirmed is
+      within budget. An exact count compares as an integer, with no second
+      trial: it has improved when it shrinks, and regressed when it grows by
+      more than [r] of its baseline value or grows at all from [0].
 
-      Each constructor raises [Invalid_argument] if [r] or [e] is negative or
-      NaN, or if [e] exceeds [r]. *)
+      Each constructor raises [Invalid_argument] if [r] is negative or NaN. *)
 
-  val relative :
-    metric:Metric.t ->
-    ?equivalent_within:float ->
-    max_regression:float ->
-    unit ->
-    t
-  (** [relative ~metric ?equivalent_within ~max_regression ()] is the budget
-      [r = max_regression] on [metric] ([0.05] is 5%). [equivalent_within] is
-      the band [e] and defaults to [min 0.025 (max_regression /. 2.)]; an
-      explicit band may exceed [0.025]. With [max_regression = 0.] the band is
-      [0.] and no sampled comparison is equivalent. A counter metric then
-      compares exact counts only, and is [inconclusive: exactness lost] when
-      either side is sampled. *)
+  val relative : metric:Metric.t -> float -> t
+  (** [relative ~metric r] is the budget [r] on [metric]. With [r = 0.] no
+      sampled comparison is equivalent, and a counter metric compares exact
+      counts only: it is [inconclusive: exactness lost] when either side is
+      sampled. *)
 
-  val no_slower_than :
-    ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-  (** [no_slower_than r] is
-      [relative ~metric ?equivalent_within ~max_regression:r ()]. [metric]
-      defaults to {!Metric.wall_time}. *)
+  val no_slower_than : float -> t
+  (** [no_slower_than r] is [relative ~metric:Metric.wall_time r]. *)
 
-  val no_more_alloc_than :
-    ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-  (** [no_more_alloc_than r] is {!no_slower_than} with [metric] defaulting to
-      {!Metric.alloc_words}. [no_more_alloc_than 0.] allows no growth of the
-      exact allocation count. *)
+  val no_more_alloc_than : float -> t
+  (** [no_more_alloc_than r] is [relative ~metric:Metric.alloc_words r].
+      [no_more_alloc_than 0.] allows no growth of the exact allocation count. *)
 
   (** {2:absolute Absolute budgets} *)
 

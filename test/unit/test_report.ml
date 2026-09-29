@@ -39,7 +39,6 @@ let ident =
 (* The identity of a section another compiler recorded. *)
 let stale_ident = { ident with Baseline.ocaml = "5.4.0 · 64-bit · release" }
 let ties n v = Array.make n v
-let spiked v = Array.append (Array.make 19 v) [| 100. *. v |]
 let sam ?(drifted = false) sorted = Run.sampled ~sorted ~drifted
 
 (* A trial of [wall] seconds a call, with an exact allocation of 54 words
@@ -262,27 +261,18 @@ let exact_regression () =
   verdict_of_cases ~file [ exact_regression_case "alpha" ]
 
 (* One case per reason but [Environment], which needs a loaded run and is the
-   loaded state's. A budget whose band is close to its tolerance puts a
-   regression within twice the band, where instability vetoes it. *)
+   loaded state's. *)
 let every_reason () =
-  let narrow =
-    [
-      Budget.relative ~metric:m_wall ~equivalent_within:0.025
-        ~max_regression:0.03 ();
-    ]
-  in
   let flat = ties 5 1e-6 in
   let file =
     file_of
       [
         wall_row "wide-interval" (ties 5 2e-6);
         wall_row "non-positive" flat;
-        wall_row "baseline-unstable" (spiked 1e-6);
         wall_row "unconfirmed" flat;
         wall_row "exactness-lost" flat;
         alloc_row "exactness-lost" 54;
         wall_row "batch-drifted" flat;
-        wall_row "unstable" flat;
         wall_row "drifted" flat;
       ]
   in
@@ -291,13 +281,10 @@ let every_reason () =
       ( bcase "wide-interval",
         trial ~alloc:None [| 1e-6; 1e-6; 1e-6; 4e-6; 4e-6 |] );
       (bcase "non-positive", trial ~alloc:None (ties 5 0.));
-      ( bcase ~budgets:narrow "baseline-unstable",
-        trial ~alloc:None (ties 20 1.04e-6) );
       (bcase "unconfirmed", trial ~alloc:None (ties 5 2e-6));
       ( bcase ~budgets:[ Budget.no_more_alloc_than 0.0 ] "exactness-lost",
         sampled_alloc 54. );
       (bcase "batch-drifted", trial ~k:16 ~alloc:None flat);
-      (bcase ~budgets:narrow "unstable", trial ~alloc:None (spiked 1.04e-6));
       (bcase "drifted", trial ~drifted:true ~alloc:None flat);
     ]
 

@@ -105,12 +105,10 @@ let count p l = List.length (List.filter p l)
 let reason_short = function
   | Verdict.Wide_interval -> "wide interval"
   | Verdict.Non_positive -> "non-positive sample"
-  | Verdict.Baseline_unstable -> "baseline unstable"
   | Verdict.Environment -> "environment"
   | Verdict.Unconfirmed -> "unconfirmed"
   | Verdict.Exactness_lost -> "exactness lost"
   | Verdict.Batch_drifted -> "batch drifted"
-  | Verdict.Candidate_unstable -> "unstable"
   | Verdict.Candidate_drifted -> "drifted"
 
 (* Hint arguments paste into a shell where the command ran: a path that a
@@ -309,8 +307,7 @@ let interval (s : Verdict.shift) =
 
 let relative_budget (mr : Verdict.metric_report) =
   match Option.map Budget.contract mr.budget with
-  | Some (Budget.Relative { max_regression; _ }) ->
-      Some (strf "budget +%g%%" (max_regression *. 100.))
+  | Some (Budget.Relative r) -> Some (strf "budget +%g%%" (r *. 100.))
   | Some (Budget.Absolute_max _) | None -> None
 
 (* An exact count over its absolute cap, as [(count, cap)], when the metric

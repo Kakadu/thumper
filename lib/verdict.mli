@@ -41,11 +41,6 @@ type reason =
       (** A sample on either side is zero or negative, so the logarithmic
           comparison is undefined. A loaded host does not hide it. Its JSON
           spelling is [non_positive]. *)
-  | Baseline_unstable
-      (** The baseline row's samples show severe outlier variance inflation
-          ({!Stats.severe_outlier_inflation_sorted}) and the shift is within
-          [2e] of zero. It takes precedence over [Candidate_unstable]. Its JSON
-          spelling is [baseline_unstable]. *)
   | Environment
       (** The load given to {!judge}, or to {!decide} for a pending relation,
           was [Loaded]. It concerns sampled comparisons only, and its shift is
@@ -65,9 +60,6 @@ type reason =
           ({!Baseline.case_frozen_k}), which happens only when the frozen one is
           more than 16 times this trial's ({!Measure.probe_k}), and the counts
           differ. Its JSON spelling is [batch_drifted]. *)
-  | Candidate_unstable
-      (** This run's samples show severe outlier variance inflation and the
-          shift is within [2e] of zero. Its JSON spelling is [unstable]. *)
   | Candidate_drifted
       (** This run's trial carries the drift flag ({!Run.type-sampled}) and the
           shift is within [2e] of zero. The flag is read only on a quiet host.
@@ -89,10 +81,10 @@ type strong =
     }
 
 (** The type for relations. A relation compares this run's evidence with a
-    baseline row under the metric's budget: its relative tolerance [r] and
-    equivalence band [e] ({!Budget.type-contract}), or those of the default
-    budget ([r = 0.05], [e = 0.025]) for a metric with an [at_most] cap or no
-    budget.
+    baseline row under the metric's budget: its relative tolerance [r]
+    ({!Budget.type-contract}), or the default budget's [r = 0.05] for a metric
+    with an [at_most] cap or no budget, and the equivalence band
+    [e = min 0.025 (r /. 2.)], so that [2e <= r].
 
     Over samples, with [L] and [U] the shift's bounds, the relation is
     [Improved] if [U < -e], [Regressed] if [L > r], [Equivalent] if [-e <= L]
@@ -100,12 +92,12 @@ type strong =
     [Within_budget] if [U <= r], and [Inconclusive Wide_interval] otherwise. At
     [r = 0], hence [e = 0], it is [Improved] if [U < 0], [Regressed] if [L > 0],
     [Within_budget] if [U <= 0] and [Wide_interval] otherwise, never
-    [Equivalent]. An [Improved], [Regressed] or [Changed_within_budget] relation
-    whose estimate is within [2e] of zero is vetoed when a side's samples are
-    unstable: it is [Within_budget] if [U <= r], and otherwise
-    [Baseline_unstable] or [Candidate_unstable], the baseline's taking
-    precedence. An [Improved] or [Regressed] relation then waits for its
-    confirmation ({!decide}).
+    [Equivalent]. An [Improved] or [Changed_within_budget] relation whose
+    estimate is within [2e] of zero is [Within_budget] when a side's samples
+    show severe outlier variance inflation
+    ({!Stats.severe_outlier_inflation_sorted}); a [Regressed] one never is,
+    since [L > r >= 2e]. An [Improved] or [Regressed] relation then waits for
+    its confirmation ({!decide}).
 
     Over exact counts [b] (baseline) and [c] (this run), the relation is
     [Equivalent None] if [c = b] and [Improved] if [c < b]. A growth is
@@ -262,13 +254,14 @@ val decide :
     0.05 per side ([U < -e] for an improvement, [L > r] for a regression). It is
     unconfirmed when the confirmation does not, and when the trial is missing,
     lacks the metric, measured it as exact, is drifted, holds a non-positive
-    sample, ran at another batch size than the first trial, or is unstable with
-    an estimate within [2e] of zero. An unconfirmed improvement is
-    [Within_budget] with the first shift, since its [U < -e] is within any
-    budget; an unconfirmed regression is [Inconclusive Unconfirmed]. When [load]
-    is [Loaded], every pending relation is [Inconclusive Environment] instead,
-    whatever the trials. An inconclusive relation keeps the first shift. Settled
-    metrics are unchanged, and [load] is recorded as {!load}.
+    sample, ran at another batch size than the first trial, or shows severe
+    outlier variance inflation with an estimate within [2e] of zero. An
+    unconfirmed improvement is [Within_budget] with the first shift, since its
+    [U < -e] is within any budget; an unconfirmed regression is
+    [Inconclusive Unconfirmed]. When [load] is [Loaded], every pending relation
+    is [Inconclusive Environment] instead, whatever the trials. An inconclusive
+    relation keeps the first shift. Settled metrics are unchanged, and [load] is
+    recorded as {!load}.
 
     Raises [Invalid_argument] if [confirmations] names a case twice or names a
     case {!confirmations} did not list. *)

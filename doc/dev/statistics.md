@@ -29,17 +29,18 @@ diagnostics decide whether a trial can support a direction:
 
 - **drifted** (measurement time): two-sided Mann–Whitney between the
   first and second half in collection order, α = 0.01. A drifting
-  trial produces no verdict within 2e of zero, like an unstable one; a
-  shift beyond 2e is judged. Collection order dies at sorting, so this
+  trial produces no verdict within 2e of zero (`inconclusive:
+  drifted`); a shift beyond 2e is judged. Collection order dies at sorting, so this
   is the one flag `measure` computes and stores. Baseline rows get no
   drift check: it ran when their trial was measured, though a drifted
   trial can still be recorded.
 - **unstable** (judgment time): criterion's severe outlier-variance
   inflation (≥ 0.5 of variance explainable by outliers), computed from
   the sorted vector, the same way for a stored baseline row and for a
-  trial. An unstable trial may support `equivalent` or `inconclusive`,
-  never a demonstrated direction within 2e of zero; a shift beyond 2e
-  is judged as on a stable trial, the bound batch drift uses.
+  trial. An unstable side supports no demonstrated direction within 2e
+  of zero: since 2e ≤ r, such a direction is an improvement or a change
+  within budget, and it reads within budget. A shift beyond 2e is
+  judged as on a stable trial, the bound batch drift uses.
 
 ## The comparison
 
@@ -64,9 +65,9 @@ regressed (L > 0) → within budget (U ≤ 0) → inconclusive is total.
 **Within budget.** `within_budget` claims no direction, only "no slower
 than the budget", at the first pass's α = 0.005 on the upper side. It
 needs no confirmation: a confirmation guards against false failures,
-and a pass adds none. A direction vetoed by instability within 2e, and
-an unconfirmed improvement, fall back to it when U ≤ r; an unconfirmed
-regression has L > r and never does.
+and a pass adds none. A direction vetoed by instability within 2e and
+an unconfirmed improvement fall back to it, both having U ≤ r; an
+unconfirmed regression has L > r and never does.
 
 **No stopping.** n is fixed, never a convergence target. Optional
 stopping silently inflates type-I error in the high-frequency regime
@@ -85,8 +86,8 @@ against the same baseline samples. A confirmed relation carries both
 shifts, the pooled 2n samples, and the confirmation's k: what an
 advanced row records. Anything else is unconfirmed, with no in-run
 retry: an unconfirmed regression is `inconclusive: unconfirmed`, and
-an unconfirmed improvement reads within budget when U ≤ r and
-`inconclusive: unconfirmed` otherwise; neither ever advances a row.
+an unconfirmed improvement reads within budget; neither ever advances
+a row.
 That includes an unstable confirmation within 2e of zero, and a
 confirmation that recalibrated to another batch size, which is never
 pooled: one row never mixes two batch sizes under one `batch=`. On a
@@ -154,7 +155,7 @@ has a reason but no derivation.
 | frozen-k window [0.2×, 5×] | `measure.ml` | lower: clock law still holds at 1 ms; upper: 5× × n=20 ≈ the 0.5 s case budget | derived |
 | n = 20 / 11 / 40 | `config.ml` | power: CoV ≈ 2%, m=n=20 ⇒ ~3% shifts always detected; scaled against the ~0.4 s case budget | derived; U1 validates |
 | α 0.005 initial + 0.05 confirmation | `verdict.ml` | suite FP ≲ 1% at 40 cases under independence; the split is underdetermined | flagged; U1 decides |
-| band e = min(2.5%, r/2) | `budget.ml` (cap shared with `verdict.ml`) | the band stays inside the budget (e ≤ r); r/2 and the 2.5% cap are chosen | chosen |
+| band e = min(2.5%, r/2) | `verdict.ml` | 2e ≤ r, so a direction within 2e ends within the budget; r/2 and the 2.5% cap are chosen | chosen |
 | bias-comparability 2e | `verdict.ml` | batch-size bias small relative to the ≥2.5× shift that triggered recalibration | derived |
 | budget r = 5% | `budget.ml` | none | NAKED |
 | warmup 100 ms / 3 batches | `config.ml` | fixed-not-adaptive (protocol identity); ≥ frequency-ramp settling | part-derived |

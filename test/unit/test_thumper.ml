@@ -64,11 +64,8 @@ let budgets =
     [
       refuses
         [
-          ( "relative with a band over its budget",
-            (fun () ->
-              ignore
-                (Thumper.Budget.relative ~metric:wall ~equivalent_within:0.1
-                   ~max_regression:0.05 ())),
+          ( "relative -0.05",
+            (fun () -> ignore (Thumper.Budget.relative ~metric:wall (-0.05))),
             "Thumper.Budget.relative: " );
           ( "no_slower_than -0.1",
             (fun () -> ignore (Thumper.Budget.no_slower_than (-0.1))),

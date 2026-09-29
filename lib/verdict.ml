@@ -17,12 +17,10 @@ type shift = { estimate : float; lower : float; upper : float }
 type reason =
   | Wide_interval
   | Non_positive
-  | Baseline_unstable
   | Environment
   | Unconfirmed
   | Exactness_lost
   | Batch_drifted
-  | Candidate_unstable
   | Candidate_drifted
 
 type strong =
@@ -61,8 +59,8 @@ type case_report = {
 type staleness = Ocaml_mismatch of { section : string; current : string }
 type comparison = No_baseline | Stale of staleness | Compared
 
-(* Constants. The band cap and the default budget are [Budget]'s; the
-   drift level is [Measure]'s, read when the trial is measured. *)
+(* Constants. The default budget is [Budget]'s; the drift level is
+   [Measure]'s, read when the trial is measured. *)
 
 (* Initial rank-test level, 0.005 per side. *)
 let alpha_initial = 0.005
@@ -73,11 +71,15 @@ let alpha_confirmation = 0.05
 (* A shift within 2e of zero is bias-comparable after recalibration. *)
 let bias_comparability_factor = 2.0
 
+(* The equivalence band of a budget [r] is at most half of it, so that
+   [2e <= r], and at most [band_cap]. *)
+let band_cap = 0.025
+let band r = Float.min band_cap (r /. 2.)
+
 (* Judgment parameters for metrics with no relative contract: the default
    budget's shape (r = 5%, derived band), used for reporting only. *)
 let default_params =
-  ( min Budget.band_cap (Budget.default_max_regression /. 2.),
-    Budget.default_max_regression )
+  (band Budget.default_max_regression, Budget.default_max_regression)
 
 (* Internal representation. Judging takes two passes: [judge] settles each
    metric or leaves it [Pending] with what its confirmation is compared
@@ -177,7 +179,7 @@ let effective_budgets ~run_budgets ~collected case =
 
 let relative_params budget =
   match Option.map Budget.contract budget with
-  | Some (Budget.Relative { max_regression; band }) -> (band, max_regression)
+  | Some (Budget.Relative r) -> (band r, r)
   | Some (Budget.Absolute_max _) | None -> default_params
 
 (* A counter metric measured as samples, not exact, under a relative budget
@@ -186,13 +188,12 @@ let zero_tolerance_downgrade metric budget =
   Metric.is_counter metric
   &&
   match Option.map Budget.contract budget with
-  | Some (Budget.Relative { max_regression = 0.; _ }) -> true
+  | Some (Budget.Relative 0.) -> true
   | Some (Budget.Relative _ | Budget.Absolute_max _) | None -> false
 
 (* The relation table over the fractional bounds [l <= u]. Every metric is
    lower-is-better, so a positive bound is worse. The r = 0 chain keeps the
-   table total at a degenerate band (e = 0 whenever r = 0: Budget enforces
-   band <= max_regression). *)
+   table total at a degenerate band ([band 0.] is [0.]). *)
 
 type raw =
   | Strong of [ `Improved | `Regressed ]
@@ -212,12 +213,6 @@ let table ~e ~r sh =
   else if l > e && u <= r then Demonstrated
   else if u <= r then Tame (Within_budget sh)
   else Tame (inconclusive ~shift:sh Wide_interval)
-
-(* A direction that cannot stand still shows its interval's upper end: at
-   [U <= r] it falls back to within budget, which needs no confirmation. A
-   regression has [U >= L > r] and never falls back. *)
-let unless_within ~r (sh : shift) reason =
-  if sh.upper <= r then Within_budget sh else inconclusive ~shift:sh reason
 
 (* First-pass judgment of one sampled comparison. *)
 let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
@@ -253,33 +248,29 @@ let judge_sampled ~load ~budget ~row_k ~baseline ~cand ~trial_k =
       Settled (Judged (inconclusive ~shift:sh Batch_drifted))
     else
       (* Instability undermines a direction only within 2e, the batch-drift
-         threshold: one outlier barely moves a rank interval, and at the
-         derived band (r >= 2e) a strong regression must not hide behind a
-         heavy tail. *)
-      let unless_unstable state =
-        if not (bias_comparable ~e sh) then state
-        else if unstable baseline then
-          Settled (Judged (unless_within ~r sh Baseline_unstable))
-        else if unstable cand.Run.sorted then
-          Settled (Judged (unless_within ~r sh Candidate_unstable))
-        else state
+         threshold: one outlier barely moves a rank interval, and a strong
+         regression must not hide behind a heavy tail. Since [2e <= r], a
+         direction within 2e is an improvement or a change within budget, and
+         its interval ends within the budget. *)
+      let vetoed () =
+        bias_comparable ~e sh && (unstable baseline || unstable cand.Run.sorted)
       in
       match table ~e ~r sh with
       | Tame rel -> Settled (Judged rel)
-      | Demonstrated ->
-          unless_unstable (Settled (Judged (Changed_within_budget sh)))
+      | (Demonstrated | Strong _) when vetoed () ->
+          Settled (Judged (Within_budget sh))
+      | Demonstrated -> Settled (Judged (Changed_within_budget sh))
       | Strong dir ->
-          unless_unstable
-            (Pending
-               {
-                 p_dir = dir;
-                 p_first = sh;
-                 p_first_sorted = cand.Run.sorted;
-                 p_first_k = trial_k;
-                 p_baseline_log = baseline_log;
-                 p_e = e;
-                 p_r = r;
-               })
+          Pending
+            {
+              p_dir = dir;
+              p_first = sh;
+              p_first_sorted = cand.Run.sorted;
+              p_first_k = trial_k;
+              p_baseline_log = baseline_log;
+              p_e = e;
+              p_r = r;
+            }
 
 (* The cap is on the measured value itself, baseline-independent. *)
 let over_cap budget c =
@@ -481,12 +472,19 @@ let confirmations p =
 
 (* Deciding *)
 
+(* An unconfirmed improvement is within budget, since its [U < -e] is within
+   any budget; an unconfirmed regression has [U >= L > r]. *)
+let unconfirmed pd =
+  match pd.p_dir with
+  | `Improved -> Within_budget pd.p_first
+  | `Regressed -> inconclusive ~shift:pd.p_first Unconfirmed
+
 let resolve_pending ~load ~conf metric pd =
   let first = pd.p_first in
   if is_loaded load then inconclusive ~shift:first Environment
   else
     match conf with
-    | None -> unless_within ~r:pd.p_r first Unconfirmed
+    | None -> unconfirmed pd
     | Some trial -> (
         (* A confirmation that recalibrated measured at another batch size:
            two batch sizes are never pooled into one row. *)
@@ -510,7 +508,7 @@ let resolve_pending ~load ~conf metric pd =
               (not reproduced)
               || unstable s.Run.sorted
                  && bias_comparable ~e:pd.p_e confirmation
-            then unless_within ~r:pd.p_r first Unconfirmed
+            then unconfirmed pd
             else
               (* Pool both trials, which an improved row advances to;
                  [Array.append] is a fresh array, so neither trial's evidence
@@ -529,8 +527,7 @@ let resolve_pending ~load ~conf metric pd =
               match pd.p_dir with
               | `Improved -> Improved strong
               | `Regressed -> Regressed strong)
-        | Some (Run.Samples _) | Some (Run.Exact _) | None ->
-            unless_within ~r:pd.p_r first Unconfirmed)
+        | Some (Run.Samples _) | Some (Run.Exact _) | None -> unconfirmed pd)
 
 let decide ~load ~confirmations:confs p =
   let queue = confirmations p in
@@ -686,12 +683,10 @@ let json_overall = function
 let wire_reason = function
   | Wide_interval -> "wide_interval"
   | Non_positive -> "non_positive"
-  | Baseline_unstable -> "baseline_unstable"
   | Environment -> "environment"
   | Unconfirmed -> "unconfirmed"
   | Exactness_lost -> "exactness_lost"
   | Batch_drifted -> "batch_drifted"
-  | Candidate_unstable -> "unstable"
   | Candidate_drifted -> "drifted"
 
 let wire_relation = function

@@ -5,12 +5,11 @@
 
 (** Budgets: one metric and the {!type:contract} that bounds it.
 
-    A budget is validated when it is built, and its equivalence band is resolved
-    then, so [Verdict] reads the band from the {!type:contract} and never
-    derives it. The module never sees evidence: what a contract makes of a
-    comparison is [Verdict]'s rule. [Thumper.Budget] re-exports {!type:t} and
-    the four {{!constructors}constructors} with their user contract, and nothing
-    else of this module. *)
+    A budget is validated when it is built. The module never sees evidence: what
+    a contract makes of a comparison, the equivalence band included, is
+    [Verdict]'s rule. [Thumper.Budget] re-exports {!type:t} and the four
+    {{!constructors}constructors} with their user contract, and nothing else of
+    this module. *)
 
 (** {1:types Types} *)
 
@@ -19,11 +18,9 @@ type t
 
 (** The type for what a budget bounds. *)
 type contract =
-  | Relative of { max_regression : float; band : float }
-      (** A bound on the change from the baseline, as a fraction of the baseline
-          value: [max_regression] is the budget [r] and [band] the equivalence
-          band [e]. [0. <= band <= max_regression], neither is NaN, and [band]
-          is [0.] when [max_regression] is. *)
+  | Relative of float
+      (** A bound [r] on the change from the baseline, as a fraction of the
+          baseline value: non-negative and not NaN. *)
   | Absolute_max of float
       (** A cap on this run's exact count, in the metric's {!Metric.units}:
           non-negative, not NaN, and only on a counter metric
@@ -32,32 +29,18 @@ type contract =
 
 (** {1:constructors Constructors}
 
-    Each constructor raises [Invalid_argument] if a tolerance is negative or
+    Each constructor raises [Invalid_argument] if its tolerance is negative or
     NaN. *)
 
-val relative :
-  metric:Metric.t ->
-  ?equivalent_within:float ->
-  max_regression:float ->
-  unit ->
-  t
-(** [relative ~metric ?equivalent_within ~max_regression ()] is the budget on
-    [metric] with the contract [Relative { max_regression; band }]. [band] is
-    [equivalent_within], which defaults to
-    [min band_cap (max_regression /. 2.)].
+val relative : metric:Metric.t -> float -> t
+(** [relative ~metric r] is the budget on [metric] with the contract
+    [Relative r]. *)
 
-    Raises [Invalid_argument] if [equivalent_within] exceeds [max_regression].
-*)
+val no_slower_than : float -> t
+(** [no_slower_than r] is [relative ~metric:Metric.wall_time r]. *)
 
-val no_slower_than : ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-(** [no_slower_than r] is
-    [relative ~metric ?equivalent_within ~max_regression:r ()]. [metric]
-    defaults to {!Metric.wall_time}. *)
-
-val no_more_alloc_than :
-  ?metric:Metric.t -> ?equivalent_within:float -> float -> t
-(** [no_more_alloc_than r] is {!no_slower_than} with [metric] defaulting to
-    {!Metric.alloc_words}. *)
+val no_more_alloc_than : float -> t
+(** [no_more_alloc_than r] is [relative ~metric:Metric.alloc_words r]. *)
 
 val at_most : metric:Metric.t -> float -> t
 (** [at_most ~metric v] is the budget on [metric] with the contract
@@ -75,7 +58,7 @@ val metric : t -> Metric.t
     {!Metric.equal}, is the list's key. *)
 
 val contract : t -> contract
-(** [contract b] is [b]'s contract, with its band resolved. *)
+(** [contract b] is [b]'s contract. *)
 
 val check_distinct : fname:string -> t list -> unit
 (** [check_distinct ~fname budgets] checks that no two of [budgets] bind the
@@ -92,12 +75,6 @@ val check_distinct : fname:string -> t list -> unit
 val default_max_regression : float
 (** [default_max_regression] is [0.05]. [Verdict] judges a metric without a
     budget, and sampled evidence under an {!at_most} cap, with this [r]. *)
-
-val band_cap : float
-(** [band_cap] is [0.025], the largest band {!relative} derives. An explicit
-    [equivalent_within] may exceed it. [Verdict]'s band for a metric without a
-    budget, and for sampled evidence under an {!at_most} cap, is
-    [min band_cap (default_max_regression /. 2.)]. *)
 
 val defaults : t list
 (** [defaults] is [[no_slower_than default_max_regression]]: the budgets of a
