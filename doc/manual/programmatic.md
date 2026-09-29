@@ -45,7 +45,8 @@ To check a suite against a baseline, read the baseline, pass it to
 
 ```ocaml
 let check () =
-  let v = Check.run ?baseline:(Baseline.read_exn file) "programmatic" suite in
+  let baseline = Baseline.read_exn file in
+  let v = Check.run ?baseline "programmatic" suite in
   print_endline (Verdict.to_json v);
   Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
   exit (Verdict.exit_code v)
