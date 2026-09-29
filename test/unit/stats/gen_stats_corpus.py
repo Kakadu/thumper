@@ -443,13 +443,20 @@ def build() -> str:
     assert not severe_inflation(stable20), "corpus must contain a severe=0 case"
 
     # --- mw_p ---------------------------------------------------------------
+    # The OCaml side reads each pair through drifted on x followed by y, which
+    # splits n values into n // 2 and n - n // 2: y holds as many values as x
+    # or one more. The unequal pair keeps 21 of its 40 draws, so the rows after
+    # it keep their data.
     classic_x = [1.0, 2.0, 3.0]
     classic_y = [4.0, 5.0, 6.0]
     mw_cases = [
         (classic_x, classic_y),  # p = 2/20 = 0.1
         (uvec(rng, 10, 0, 10_000_000), uvec(rng, 10, 0, 10_000_000)),
         (uvec(rng, 20, 6_400_000, 6_700_000), uvec(rng, 20, 6_450_000, 6_750_000)),
-        (uvec(rng, 20, 6_400_000, 6_700_000), uvec(rng, 40, 6_500_000, 6_800_000)),
+        (
+            uvec(rng, 20, 6_400_000, 6_700_000),
+            uvec(rng, 40, 6_500_000, 6_800_000)[:21],
+        ),
         (uvec(rng, 11, 100_000, 200_000), uvec(rng, 11, 250_000, 350_000)),
         (uvec(rng, 5, 0, 1_000_000), uvec(rng, 6, 0, 1_000_000)),
         (uvec(rng, 10, 10, 20, step=8192), uvec(rng, 10, 12, 22, step=8192)),
@@ -458,6 +465,7 @@ def build() -> str:
     same = uvec(rng, 15, 0, 1_000_000)
     mw_cases.append((same, list(same)))  # identical vectors: p = 1
     for x, y in mw_cases:
+        assert len(y) - len(x) in (0, 1), "drifted must split x from y"
         p = mw_p(x, y)
         xcheck_mw_p(x, y, p)
         emit("mw_p", hexv(x), hexv(y), hexf(p))

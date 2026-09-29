@@ -6,13 +6,14 @@
 (* Three layers pin [Stats], each for what the others miss. The corpus,
    stats/stats.tsv, holds values that gen_stats_corpus.py beside it computes
    in exact arithmetic and cross-checks against scipy: order statistics,
-   estimates and booleans compare bit for bit, and what goes through libm or
-   divides two big counts to 1e-12. The laws run on the dyadic grid k/2^16,
-   where sums, differences and halvings are exact, so they hold with no
-   tolerance. The anchors pin the cutoff indices against counts derived by
-   enumerating the rank arrangements: the generator builds its cutoffs as
-   [Stats] does, so an off-by-one both share passes the corpus, and no law
-   tells a cutoff [k] from [k + 1]. *)
+   estimates and booleans compare bit for bit, what goes through libm to
+   1e-12, and a p-value through the decisions [drifted] takes either side of
+   it. The laws run on the dyadic grid k/2^16, where sums, differences and
+   halvings are exact, so they hold with no tolerance. The anchors pin the
+   cutoff indices against counts derived by enumerating the rank
+   arrangements: the generator builds its cutoffs as [Stats] does, so an
+   off-by-one both share passes the corpus, and no law tells a cutoff [k]
+   from [k + 1]. *)
 
 open Windtrap
 module Stats = Thumper.Private.Stats
@@ -27,8 +28,7 @@ let exactly =
   Testable.with_compare Float.compare
     (Testable.make ~pp:pp_float ~equal:Float.equal)
 
-(* [geometric_mean] goes through libm, and [mann_whitney_p] divides two
-   counts past the float range. *)
+(* [geometric_mean] goes through libm. *)
 let approximately = float_rel ~rel:1e-12 ~abs:0.
 
 let pp_interval ppf (i : Stats.interval) =
@@ -289,6 +289,16 @@ let quality_refusals =
       "Stats.drifted: alpha 1 not in ]0;1[" );
   ]
 
+(* [drifted] tests [p < alpha] exactly, so the p-value it computes for [v]
+   lies between the alphas a hair either side of [p] when it drifts above [p]
+   and not below it. A p-value of 1 has no alpha above it. *)
+let decides_at p v =
+  let below = if p < 1. then p *. (1. -. 1e-9) else 1. -. 1e-9 in
+  equal ~msg:"alpha just below p" bool false (Stats.drifted ~alpha:below v);
+  if p < 1. then
+    equal ~msg:"alpha just above p" bool true
+      (Stats.drifted ~alpha:(p *. (1. +. 1e-9)) v)
+
 let quality =
   group "Trial quality"
     [
@@ -303,6 +313,26 @@ let quality =
       corpus_cases "drifted agrees with the corpus"
         (function Drifted (a, v, d) -> Some (a, v, d) | _ -> None)
         (fun (alpha, v, d) -> equal bool d (Stats.drifted ~alpha v));
+      corpus_cases "drifted's p-value agrees with the corpus"
+        (function Mann_whitney (x, y, p) -> Some (x, y, p) | _ -> None)
+        (fun (x, y, p) ->
+          let v = Array.append x y in
+          equal ~msg:"x is the first half" int
+            (Array.length v / 2)
+            (Array.length x);
+          decides_at p v);
+      (* One tie in [1; 2] against [2; 3]: U = 1/2, P(U <= 0) = 1/6 and
+         P(U >= 1) = 5/6. *)
+      cases "drifted's p-value is exact"
+        ~name:(fun (name, _, _) -> name)
+        [
+          ("3 below 3 is 2/20", [| 1.; 2.; 3.; 4.; 5.; 6. |], 2. /. 20.);
+          ("3 below 4 is 2/35", [| 1.; 2.; 3.; 4.; 5.; 6.; 7. |], 2. /. 35.);
+          ( "a tie takes the tails on the integers",
+            [| 1.; 2.; 2.; 3. |],
+            1. /. 3. );
+        ]
+        (fun (_, v, p) -> decides_at p v);
       prop "drifted is false on a constant vector" (Gen.pair grid size)
         (fun (x, n) ->
           equal bool false (Stats.drifted ~alpha:0.05 (Array.make n x)));
@@ -381,15 +411,6 @@ let moses_rows =
 
 let comparison_refusals =
   [
-    ( "mann_whitney_p of no x",
-      (fun () -> ignore (Stats.mann_whitney_p [||] [| 1. |])),
-      "Stats.mann_whitney_p: 0 samples, need at least 1" );
-    ( "mann_whitney_p of no y",
-      (fun () -> ignore (Stats.mann_whitney_p [| 1. |] [||])),
-      "Stats.mann_whitney_p: 0 samples, need at least 1" );
-    ( "mann_whitney_p of a NaN",
-      (fun () -> ignore (Stats.mann_whitney_p [| 1. |] [| Float.nan |])),
-      "Stats.mann_whitney_p: non-finite sample" );
     ( "shift of a baseline of 2 values",
       (fun () ->
         ignore
@@ -419,31 +440,6 @@ let comparison_refusals =
 let comparison =
   group "Two-sample comparison"
     [
-      corpus_cases "mann_whitney_p agrees with the corpus"
-        (function Mann_whitney (x, y, p) -> Some (x, y, p) | _ -> None)
-        (fun (x, y, p) -> equal approximately p (Stats.mann_whitney_p x y));
-      prop "mann_whitney_p is symmetric and in ]0;1]"
-        (Gen.pair (vector_of ()) (vector_of ()))
-        (fun (x, y) ->
-          let p = Stats.mann_whitney_p x y in
-          equal exactly p (Stats.mann_whitney_p y x);
-          greater exactly ~than:0. p;
-          at_most exactly ~than:1. p);
-      cases "mann_whitney_p is exact"
-        ~name:(fun (name, _, _, _) -> name)
-        [
-          ("3 below 3 is 2/20", [| 1.; 2.; 3. |], [| 4.; 5.; 6. |], 2. /. 20.);
-          ( "4 below 3 is 2/35",
-            [| 1.; 2.; 3.; 4. |],
-            [| 5.; 6.; 7. |],
-            2. /. 35. );
-          (* One tie: U = 1/2, P(U <= 0) = 1/6 and P(U >= 1) = 5/6. *)
-          ( "a tie takes the tails on the integers",
-            [| 1.; 2. |],
-            [| 2.; 3. |],
-            1. /. 3. );
-        ]
-        (fun (_, x, y, p) -> equal exactly p (Stats.mann_whitney_p x y));
       corpus_cases "shift agrees with the corpus"
         (function Shift (a, b, c, s) -> Some (a, b, c, s) | _ -> None)
         (fun (alpha_per_side, baseline, candidate, s) ->

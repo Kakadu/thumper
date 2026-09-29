@@ -6,12 +6,11 @@
 (** Deterministic rank statistics.
 
     [Stats] holds the median and its confidence interval, the two tests of a
-    trial's quality, the exact Mann–Whitney p-value, the Hodges–Lehmann shift
-    with its Moses interval, and the geometric mean. Every function is pure,
-    with no randomness and no normality assumption. An interval's cutoffs come
-    from exact integer counts of the binomial and Mann–Whitney null
-    distributions, and its endpoints are values of the data, so the same vectors
-    give the same interval bit for bit.
+    trial's quality, the Hodges–Lehmann shift with its Moses interval, and the
+    geometric mean. Every function is pure, with no randomness and no normality
+    assumption. An interval's cutoffs come from exact integer counts of the
+    binomial and Mann–Whitney null distributions, and its endpoints are values
+    of the data, so the same vectors give the same interval bit for bit.
 
     The functions ignore units. A caller passes logarithms to {!val:shift} for a
     relative comparison, and raw per-call values everywhere else.
@@ -74,33 +73,24 @@ val severe_outlier_inflation_sorted : float array -> bool
 val drifted : alpha:float -> float array -> bool
 (** [drifted ~alpha v] is [true] iff the first [n / 2] values of [v], in
     collection order, differ in location from the other [n - n / 2] by the
-    two-sided Mann–Whitney test at level [alpha], that is
-    [mann_whitney_p first second < alpha], decided in exact integer arithmetic.
-    A rank test gives the same result on raw values and on their logarithms. The
+    two-sided Mann–Whitney test at level [alpha]: its exact p-value [2 q] is
+    below [alpha], with [q] the smaller tail probability of the U statistic's
+    exact null distribution without ties, decided in exact integer arithmetic. A
+    rank test gives the same result on raw values and on their logarithms. The
     smallest p-value is [2 / C(n, n / 2)], so at [alpha = 0.01] a vector of
     [n <= 9] values never drifts.
+
+    A tie adds 1/2 to U. The null distribution stays the tie-free one, whose
+    support is the integers, so a half-integral U has unambiguous tails
+    ([P(U <= floor U)] below, [P(U >= ceil U)] above). Without ties the p-value
+    is scipy's [mannwhitneyu(method='exact')]. With ties the level is
+    approximate, and under heavy ties the exact conditional p-value can be
+    larger.
 
     Raises [Invalid_argument] if [v] has fewer than 3 values or a non-finite
     value, or if [alpha] is outside \]0;1\[. *)
 
 (** {1:comparison Two-sample comparison} *)
-
-val mann_whitney_p : float array -> float array -> float
-(** [mann_whitney_p x y] is the exact two-sided p-value of the Mann–Whitney rank
-    test of [x] against [y]: [2. *. q] clamped to [1.], with [q] the smaller
-    tail probability of the U statistic's exact null distribution without ties.
-    It is symmetric in [x] and [y], and neither needs to be sorted.
-
-    A tie adds 1/2 to U. The null distribution stays the tie-free one, whose
-    support is the integers, so a half-integral U has unambiguous tails
-    ([P(U <= floor U)] below, [P(U >= ceil U)] above). Without ties it is the
-    p-value of scipy's [mannwhitneyu(method='exact')], up to the rounding of the
-    final division. With ties the level is approximate, and under heavy ties the
-    exact conditional p-value can be larger. The tails are exact integer counts
-    and only the final division rounds.
-
-    Raises [Invalid_argument] if [x] or [y] is empty or holds a non-finite
-    value. *)
 
 val shift :
   alpha_per_side:float -> baseline:float array -> candidate:float array -> shift

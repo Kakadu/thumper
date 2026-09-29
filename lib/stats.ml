@@ -118,13 +118,6 @@ module Nat = struct
       add
         (mul_small a (m land ((1 lsl 27) - 1)))
         (shift_left (mul_small a (m lsr 27)) 27)
-
-  let to_float a =
-    let r = ref 0.0 in
-    for i = Array.length a - 1 downto 0 do
-      r := (!r *. 16777216.0) +. float_of_int a.(i)
-    done;
-    !r
 end
 
 (* [cmp_scaled s ~alpha t] compares [s] with [alpha * t] exactly, treating the
@@ -310,12 +303,6 @@ let severe_outlier_inflation_sorted v =
     in
     var_out_min >= 0.5
   end
-
-let mann_whitney_p x y =
-  check_finite "mann_whitney_p" ~min_n:1 x;
-  check_finite "mann_whitney_p" ~min_n:1 y;
-  let q, total = mw_tails x y in
-  Float.min 1.0 (2.0 *. (Nat.to_float q /. Nat.to_float total))
 
 let drifted ~alpha v =
   check_finite "drifted" ~min_n:3 v;

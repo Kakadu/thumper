@@ -172,6 +172,6 @@ with `uv run test/unit/stats/gen_stats_corpus.py --write`, whenever the
 method changes. The byte-identity rule and the hand-derived anchor
 layer that catches boundary-convention mutations are described in
 [`testing.md`](testing.md). One convention to know before you read
-the code: `mann_whitney_p` uses midranks against the tie-free null (a
-screening diagnostic for drift only); the confidence intervals never
-use midranks, and their tie conservatism is exact.
+the code: `drifted`'s rank test uses midranks against the tie-free null
+(a screening diagnostic); the confidence intervals never use midranks,
+and their tie conservatism is exact.
