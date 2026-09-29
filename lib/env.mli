@@ -82,14 +82,6 @@ val ocaml_identity : unit -> string
     host that reports no load average samples {!Quiet}, so it measures and
     records as a quiet host does. *)
 
-val cores : unit -> int
-(** [cores ()] is [Domain.recommended_domain_count ()], at least [1]. *)
-
-val load_average : unit -> float option
-(** [load_average ()] is the host's 1-minute load average, or [None] when the
-    operating system does not report one. It is [getloadavg(3)] on Darwin and
-    other POSIX systems, and [None] on Windows. *)
-
 (** The type for load samples, as {!classify} decides them. *)
 type load =
   | Quiet  (** The load per core is below [0.5], or no load was read. *)
@@ -105,8 +97,10 @@ val classify : load:float option -> cores:int -> load
     Raises [Invalid_argument] if [cores < 1]. *)
 
 val load : unit -> load
-(** [load ()] is [classify ~load:(load_average ()) ~cores:(cores ())], the
-    host's load now. *)
+(** [load ()] is the host's load now: [classify ~load ~cores], where [load] is
+    the host's 1-minute load average, [getloadavg(3)] on Darwin and other POSIX
+    systems and [None] on Windows or when the system reports none, and [cores]
+    is [Domain.recommended_domain_count ()]. *)
 
 val wait_quiet :
   timeout_s:float ->

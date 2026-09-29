@@ -62,10 +62,6 @@ let fnv1a_vectors =
     ("\xff\xfe\x00\x80", "8fe3ee65389d12b0");
   ]
 
-let is_hex16 s =
-  String.length s = 16
-  && String.for_all (function '0' .. '9' | 'a' .. 'f' -> true | _ -> false) s
-
 (* The trimmed first line [prog] prints, or [None] if it prints none. *)
 let first_line prog args =
   match Unix.open_process_args_in prog (Array.of_list (prog :: args)) with
@@ -204,9 +200,6 @@ let ocaml_identity_is_version_word_size_and_profile () =
 let identifying_the_machine =
   group "Identifying the machine"
     [
-      prop "hash is 16 lowercase hex digits" Gen.string (fun s ->
-          satisfies ~claim:"16 lowercase hex digits" string is_hex16
-            (Env.hash s));
       cases
         ~name:(fun (s, _) -> Printf.sprintf "%S" s)
         "hash is FNV-1a 64" fnv1a_vectors
@@ -284,12 +277,14 @@ let refused_cores =
 (* The kernel updates the load average every few seconds, so two readings
    either side of [load ()] that agree are the reading it classified. *)
 let load_classifies_the_load_average () =
-  let before = Env.load_average () in
+  let before = Thumper_clock.load_average () in
   let sampled = Env.load () in
-  let after = Env.load_average () in
+  let after = Thumper_clock.load_average () in
   if not (Option.equal Float.equal before after) then
     skip ~reason:"the load average changed during the test" ();
-  equal load (Env.classify ~load:before ~cores:(Env.cores ())) sampled
+  equal load
+    (Env.classify ~load:before ~cores:(Domain.recommended_domain_count ()))
+    sampled
 
 let waited =
   result unit
@@ -389,13 +384,6 @@ let refused_polls =
 let sampling_the_load =
   group "Sampling the load"
     [
-      test "cores is the recommended domain count" (fun () ->
-          equal int (Domain.recommended_domain_count ()) (Env.cores ());
-          at_least int ~than:1 (Env.cores ()));
-      test "load_average is non-negative when the host reports one" (fun () ->
-          match Env.load_average () with
-          | None -> skip ~reason:"the host reports no load average" ()
-          | Some l -> at_least float_exact ~than:0. l);
       cases ~name:classified_name "classify" classified
         (fun (l, cores, expected) ->
           equal load expected (Env.classify ~load:l ~cores));
