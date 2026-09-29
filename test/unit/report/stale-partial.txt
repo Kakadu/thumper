@@ -1,6 +1,0 @@
-thumper: digest — stale baseline for machine testkey (ocaml 5.4.0 · 64-bit · release → 5.5.0 · 64-bit · release)
-
-  proposed  1.00 us  ±0.0%  54 w  alpha
-  warning: partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 1 unselected case
-
-  accept:  dune promote

@@ -556,41 +556,41 @@ let set_section ?(annotations = []) t identity row_list =
   in
   { t with t_sections = place t.t_sections }
 
-let update_rows ?(annotations = []) t ~machine ~advance ~prune =
+let update_rows ?(annotations = []) t ~machine ~replace ~remove =
   let fname = "Baseline.update_rows" in
   check_annotations fname annotations;
-  let advance = sort_rows fname advance in
-  let advanced key =
-    List.exists (fun r -> compare_key (row_key r) key = 0) advance
+  let replace = sort_rows fname replace in
+  let replaced key =
+    List.exists (fun r -> compare_key (row_key r) key = 0) replace
   in
   List.iter
     (fun (id, metric) ->
-      if advanced (id, metric) then
+      if replaced (id, metric) then
         invalid_arg
-          (strf "%s: %s %s is both advanced and pruned" fname id metric))
-    prune;
-  let pruned key = List.exists (fun k -> compare_key k key = 0) prune in
+          (strf "%s: %s %s is both replaced and removed" fname id metric))
+    remove;
+  let removed key = List.exists (fun k -> compare_key k key = 0) remove in
   let edit sec =
     let kept =
       List.filter
         (fun r ->
           let key = row_key r in
-          not (advanced key || pruned key))
+          not (replaced key || removed key))
         sec.s_rows
     in
     (* Both inputs are ascending and key-disjoint, so a merge preserves the
        canonical order and every kept row's verbatim text. *)
-    let rec merge kept advance =
-      match (kept, advance) with
+    let rec merge kept replace =
+      match (kept, replace) with
       | rows, [] | [], rows -> rows
-      | k :: ks, a :: adv ->
-          if compare_rows k a <= 0 then k :: merge ks (a :: adv)
-          else a :: merge (k :: ks) adv
+      | k :: ks, r :: rs ->
+          if compare_rows k r <= 0 then k :: merge ks (r :: rs)
+          else r :: merge (k :: ks) rs
     in
     {
       sec with
       s_annotations = sec.s_annotations @ annotations;
-      s_rows = merge kept advance;
+      s_rows = merge kept replace;
     }
   in
   let rec update = function
@@ -600,3 +600,47 @@ let update_rows ?(annotations = []) t ~machine ~advance ~prune =
         else s :: update rest
   in
   { t with t_sections = update t.t_sections }
+
+(* Recording *)
+
+let rows_of_trial id trial =
+  List.map
+    (fun (metric, measurement) ->
+      let metric = Metric.id metric in
+      match measurement with
+      | Run.Exact n -> exact_row ~id ~metric n
+      | Run.Samples s ->
+          sampled_row ~id ~metric ~k:(Run.Trial.k trial) ~samples:s.Run.sorted)
+    (Run.Trial.measurements trial)
+
+let record ?annotations ~identity ~suite ~selection ~run t =
+  let t =
+    match t.t_suite with
+    | None -> empty ~suite
+    | Some s when String.equal s suite -> t
+    | Some s ->
+        invalid_arg
+          (strf "Thumper.Baseline.record: baseline is for suite %s, not %s"
+             (quote s) (quote suite))
+  in
+  let trials = Run.trials run in
+  let rows =
+    List.concat_map (fun (id, trial) -> rows_of_trial id trial) trials
+  in
+  match (selection, section t identity.machine) with
+  | `Partial, Some s when String.equal s.s_ocaml identity.ocaml ->
+      (* A selected case's rows are replaced by case id, so a metric it no
+         longer collects loses its row too. *)
+      let ids = List.map fst trials in
+      let recorded = List.map row_key rows in
+      let remove =
+        List.filter_map
+          (fun r ->
+            let key = row_key r in
+            if List.mem r.r_id ids && not (List.mem key recorded) then Some key
+            else None)
+          s.s_rows
+      in
+      update_rows ?annotations t ~machine:identity.machine ~replace:rows ~remove
+  | (`Partial | `Full), (Some _ | None) ->
+      set_section ?annotations t identity rows

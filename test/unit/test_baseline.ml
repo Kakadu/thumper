@@ -10,6 +10,8 @@
 
 open Windtrap
 module Baseline = Thumper.Private.Baseline
+module Metric = Thumper.Private.Metric
+module Run = Thumper.Private.Run
 
 let file lines = String.concat "\n" lines ^ "\n"
 
@@ -70,6 +72,8 @@ let exact ?(metric = "m") id n = Baseline.exact_row ~id ~metric n
 
 let sampled ?(metric = "m") ?(k = 1) id samples =
   Baseline.sampled_row ~id ~metric ~k ~samples
+
+let wall_row id samples = sampled ~metric:"wall_time" ~k:8 id samples
 
 (* Evidence as the file writes it, the samples in hexadecimal, so two print
    alike only when they are equal. *)
@@ -1084,19 +1088,19 @@ let two_rows = with_section "key" [ exact "a" 1; exact "b" 2 ] empty
 
 let update_rows_refusals =
   let row = exact "a" 5 in
-  let update ?annotations ?(machine = "key") ?(advance = []) ?(prune = []) () =
-    Baseline.update_rows ?annotations two_rows ~machine ~advance ~prune
+  let update ?annotations ?(machine = "key") ?(replace = []) ?(remove = []) () =
+    Baseline.update_rows ?annotations two_rows ~machine ~replace ~remove
   in
   [
     ( "a machine without a section",
       (fun () -> update ~machine:"missing" ()),
       {|Baseline.update_rows: no section for machine "missing"|} );
-    ( "two advanced rows for one case and metric",
-      (fun () -> update ~advance:[ row; row ] ()),
+    ( "two replacing rows for one case and metric",
+      (fun () -> update ~replace:[ row; row ] ()),
       "Baseline.update_rows: duplicate row for a m" );
-    ( "a row both advanced and pruned",
-      (fun () -> update ~advance:[ row ] ~prune:[ ("a", "m") ] ()),
-      "Baseline.update_rows: a m is both advanced and pruned" );
+    ( "a row both replaced and removed",
+      (fun () -> update ~replace:[ row ] ~remove:[ ("a", "m") ] ()),
+      "Baseline.update_rows: a m is both replaced and removed" );
     ( "an annotation spelling machine:",
       (fun () -> update ~annotations:[ "machine: x" ] ()),
       {|Baseline.update_rows: annotation "machine: x" starts with a reserved header word|}
@@ -1118,7 +1122,7 @@ let gen_update =
       (fun t key add -> add key t)
       empty [ "aaa1"; "bbb2"; "ccc3" ] sections
   in
-  let advance =
+  let replacing =
     match Baseline.rows (section t "bbb2") with
     | existing :: _ when replace ->
         exact
@@ -1126,7 +1130,7 @@ let gen_update =
           (Baseline.row_id existing) 424242
     | _ -> fresh
   in
-  (t, advance)
+  (t, replacing)
 
 let update_t =
   Gen.with_pp
@@ -1135,7 +1139,7 @@ let update_t =
         (Baseline.row_metric r))
     gen_update
 
-(* Every line of the file but the blank ones and the advanced row's, in
+(* Every line of the file but the blank ones and the replaced row's, in
    order: a row inserted into a section without rows brings a blank line. *)
 let other_lines r text =
   let prefix = Baseline.row_id r ^ "\t" ^ Baseline.row_metric r ^ "\t" in
@@ -1143,13 +1147,13 @@ let other_lines r text =
     (fun line -> line <> "" && not (String.starts_with ~prefix line))
     (String.split_on_char '\n' text)
 
-let update_rows_keeps_every_other_byte (t, advance) =
+let update_rows_keeps_every_other_byte (t, replacing) =
   let t' =
-    Baseline.update_rows t ~machine:"bbb2" ~advance:[ advance ] ~prune:[]
+    Baseline.update_rows t ~machine:"bbb2" ~replace:[ replacing ] ~remove:[]
   in
   equal (list string)
-    (other_lines advance (printed t))
-    (other_lines advance (printed t'))
+    (other_lines replacing (printed t))
+    (other_lines replacing (printed t'))
 
 let building =
   group "Building files"
@@ -1226,17 +1230,17 @@ let building =
       test "update_rows replaces and inserts rows in order" (fun () ->
           let t =
             Baseline.update_rows two_rows ~machine:"key"
-              ~advance:[ exact "b" 3; exact "aa" 9 ]
-              ~prune:[]
+              ~replace:[ exact "b" 3; exact "aa" 9 ]
+              ~remove:[]
           in
           equal (list row)
             [ exact "a" 1; exact "aa" 9; exact "b" 3 ]
             (Baseline.rows (section t "key")));
-      test "update_rows prunes a present row and ignores an absent one"
+      test "update_rows removes a present row and ignores an absent one"
         (fun () ->
           let t =
-            Baseline.update_rows two_rows ~machine:"key" ~advance:[]
-              ~prune:[ ("b", "m"); ("ghost", "m") ]
+            Baseline.update_rows two_rows ~machine:"key" ~replace:[]
+              ~remove:[ ("b", "m"); ("ghost", "m") ]
           in
           equal
             (list (pair string string))
@@ -1248,8 +1252,8 @@ let building =
           in
           let t =
             Baseline.update_rows (parsed text) ~machine:"key"
-              ~advance:[ exact "b" 1 ]
-              ~prune:[]
+              ~replace:[ exact "b" 1 ]
+              ~remove:[]
           in
           equal string (text ^ "b\tm\texact\t1\n") (printed t));
       test "update_rows appends annotations to the section's" (fun () ->
@@ -1272,13 +1276,113 @@ let building =
                  ]))
             (printed
                (Baseline.update_rows ~annotations:[ "second" ] t ~machine:"key"
-                  ~advance:[] ~prune:[])));
+                  ~replace:[] ~remove:[])));
       cases "update_rows refuses"
         ~name:(fun (name, _, _) -> name)
         update_rows_refusals
         (fun (_, update, message) -> raises (Invalid_argument message) update);
-      prop "update_rows keeps every line but the advanced row's" update_t
+      prop "update_rows keeps every line but the replaced row's" update_t
         update_rows_keeps_every_other_byte;
+    ]
+
+(* Recording *)
+
+let current = identity "key"
+let stale = { current with Baseline.ocaml = "5.4.0 · 64-bit · release" }
+let ties n v = Array.make n v
+
+(* Case "a" measured at batch size 8: its wall time sampled, its allocation
+   exact. *)
+let run_a () =
+  Run.create
+    [
+      ( "a",
+        Run.Trial.make ~k:8
+          [
+            ( Metric.wall_time,
+              Run.Samples (Run.sampled ~sorted:(ties 5 2.) ~drifted:false) );
+            (Metric.alloc_words, Run.Exact 100);
+          ] );
+    ]
+
+let rows_a = [ exact ~metric:"alloc_words" "a" 100; wall_row "a" (ties 5 2.) ]
+
+let record ?annotations ?(identity = current) selection t =
+  Baseline.record ?annotations ~identity ~suite:"s" ~selection ~run:(run_a ()) t
+
+(* Each file holds "a" and "old" in this machine's section, and "z" in
+   another's. *)
+let replaced =
+  let file identity () =
+    Baseline.set_section ~annotations:[ "forced: earlier" ]
+      (with_section "other" [ exact "z" 1 ] empty)
+      identity
+      [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ]
+  in
+  [
+    ("a full selection of a current section", `Full, file current);
+    ("a full selection of a stale section", `Full, file stale);
+    ("a partial selection of a stale section", `Partial, file stale);
+    ( "a partial selection of a missing section",
+      `Partial,
+      fun () -> with_section "other" [ exact "z" 1 ] empty );
+  ]
+
+let a_section_is_replaced_by_the_run (_, selection, file) =
+  let file = file () in
+  equal string
+    (printed
+       (Baseline.set_section ~annotations:[ "forced: now" ] file current rows_a))
+    (printed (record ~annotations:[ "forced: now" ] selection file))
+
+(* The header keeps its host and its annotations, every unselected row keeps
+   its bytes, and "a"'s rows are replaced by case id: its new metric is
+   added and the metric it no longer collects is removed. *)
+let a_partial_selection_replaces_the_selected_rows () =
+  let before =
+    with_rows [ "a\tcpu_time\texact\t3"; "a\tm\texact\t4"; "b\tm\texact\t5" ]
+  in
+  let identity = { Baseline.machine = "key"; host = "renamed"; ocaml = "o" } in
+  let after =
+    Baseline.record ~annotations:[ "forced: now" ] ~identity ~suite:"s"
+      ~selection:`Partial ~run:(run_a ()) (parsed before)
+  in
+  equal string
+    (file
+       (preamble
+       @ [
+           "# machine: key";
+           "# host: h";
+           "# ocaml: o";
+           "# forced: now";
+           "";
+           "a\talloc_words\texact\t100";
+           last_line
+             (printed (with_section "key" [ wall_row "a" (ties 5 2.) ] empty));
+           "b\tm\texact\t5";
+         ]))
+    (printed after)
+
+let a_headerless_file_takes_the_suite () =
+  equal string
+    (printed (Baseline.set_section empty current rows_a))
+    (printed (record `Partial (parsed "")))
+
+let recording =
+  group "Recording"
+    [
+      cases "record replaces the section"
+        ~name:(fun (name, _, _) -> name)
+        replaced a_section_is_replaced_by_the_run;
+      test "record under a partial selection replaces the selected rows alone"
+        a_partial_selection_replaces_the_selected_rows;
+      test "record heads a file with no header with the suite"
+        a_headerless_file_takes_the_suite;
+      test "record refuses a file of another suite" (fun () ->
+          raises
+            (Invalid_argument
+               "Thumper.Baseline.record: baseline is for suite 'x', not 's'")
+            (fun () -> record `Full (Baseline.empty ~suite:"x")));
     ]
 
 let () =
@@ -1293,4 +1397,5 @@ let () =
          section_observers;
          row_observers;
          building;
+         recording;
        ])

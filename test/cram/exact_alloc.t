@@ -7,9 +7,8 @@ it.
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f alloc > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
-  $ cp fixture.thumper fast.thumper
+  $ $FIX bless --quick --force -f alloc > /dev/null 2>&1
+  $ cp fixture.thumper before.thumper
 
 The recorded rows are exact counts, not sampled vectors.
 
@@ -17,8 +16,8 @@ The recorded rows are exact counts, not sampled vectors.
   alloc/array	alloc_words	exact
   alloc/list	alloc_words	exact
 
-An exact regression fails the run with exit 1 and writes no corrected file:
-nothing improved, so there is nothing to propose.
+An exact regression fails the run with exit 1, and names no bless command:
+nothing improved.
 
   $ THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick -f alloc > out.log 2>&1
   [1]
@@ -26,34 +25,32 @@ nothing improved, so there is nothing to propose.
   300 w → 303 w (exact)
   $ grep -o '2 cases: .*' out.log
   2 cases: 1 passed, 1 regressed.
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
+  $ grep -c 'accept:' out.log
+  0
+  [1]
 
-An exact improvement passes, and the corrected file advances that one row.
+An exact improvement passes, and the accept line names the bless command
+that records it. One run can regress and improve: it fails, the rerun line
+names the failing case and the accept line the improved one. Neither run
+writes the baseline.
 
-  $ cp fixture.thumper before.thumper
   $ THUMPER_FIXTURE_MODE=alloc_less $FIX check --quick -f alloc > out.log 2>&1
   $ grep -o '2 cases: .*' out.log
   2 cases: 1 passed, 1 improved.
-  $ diff -u fixture.thumper fixture.thumper.corrected | grep '^[-+][^-+]'
-  -alloc/array	alloc_words	exact	101
-  +alloc/array	alloc_words	exact	100
-  $ cmp fixture.thumper before.thumper
-  $ rm fixture.thumper.corrected
-
-One run can regress and improve. It fails, and the corrected file still
-advances the improved row alone, since a regressed row cannot enter it. The
-rerun line names the failing case; the accept line names the corrected file.
-
   $ THUMPER_FIXTURE_MODE=alloc_more,alloc_less $FIX check --quick -f alloc > out.log 2>&1
   [1]
-  $ diff -u fixture.thumper fixture.thumper.corrected | grep '^[-+][^-+]'
-  -alloc/array	alloc_words	exact	101
-  +alloc/array	alloc_words	exact	100
   $ grep -e 'rerun:' -e 'accept:' out.log
     rerun:   ./fixture/bench_fixture.exe --quick -f alloc/list
-    accept:  mv $TESTCASE_ROOT/fixture.thumper.corrected $TESTCASE_ROOT/fixture.thumper
-  $ rm fixture.thumper.corrected
+    accept:  ./fixture/bench_fixture.exe bless --quick -f alloc/array
+  $ cmp fixture.thumper before.thumper
+
+bless records the improvement, that one row.
+
+  $ THUMPER_FIXTURE_MODE=alloc_less $FIX bless --quick --force -f alloc/array > /dev/null 2>&1
+  $ diff -u before.thumper fixture.thumper | grep '^[-+][^-+#]'
+  -alloc/array	alloc_words	exact	101
+  +alloc/array	alloc_words	exact	100
+  $ mv before.thumper fixture.thumper
 
 The rerun line is the command to paste: it carries the preset and an
 explicit --baseline, and names the executable relative to the working
@@ -77,11 +74,17 @@ directory when it lies under it, absolute otherwise.
   rerun:   $TESTCASE_ROOT/fixture/bench_fixture.exe
 
 A dune rule action (INSIDE_DUNE set and the working directory in the build
-tree, as a cram session's is) gets no rerun line: the executable's path is
-relative to the action's directory and could not be pasted.
+tree, as a cram session's is) names the executable from the workspace
+root that DUNE_SOURCEROOT names, or absolute without one. The session runs
+in dune's sandbox, which is gone after it, so the hint names the
+executable's place in the build context.
 
+  $ ROOT=$(dirname "$(dirname "$CONTEXT")")
+  $ INSIDE_DUNE="$CONTEXT" DUNE_SOURCEROOT="$ROOT" THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc/list > out.log 2>&1
+  [1]
+  $ grep -o 'rerun: *[^ ]*' out.log | sed "s|${CONTEXT#$ROOT/}|CONTEXT|"
+  rerun:   ./CONTEXT/test/cram/fixture/bench_fixture.exe
   $ INSIDE_DUNE="$CONTEXT" THUMPER_FIXTURE_MODE=alloc_more $FIX check --quick --baseline alt.thumper -f alloc/list > out.log 2>&1
   [1]
-  $ grep -c 'rerun:' out.log
-  0
-  [1]
+  $ grep -o 'rerun: *[^ ]*' out.log | sed "s|$CONTEXT|CONTEXT|"
+  rerun:   CONTEXT/test/cram/fixture/bench_fixture.exe

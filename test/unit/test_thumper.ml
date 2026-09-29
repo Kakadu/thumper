@@ -6,7 +6,7 @@
 (* What only the facade shows: that its values are the internal ones, that
    each refuses under the name a user calls it by, that [run] returns its exit
    code, and that the documented examples compile and run. What each value
-   does is its owner suite's. The two tests that measure are [slow] and read
+   does is its owner suite's. The tests that measure are [slow] and read
    nothing a timing can move. *)
 
 open Windtrap
@@ -190,15 +190,15 @@ let exit_codes =
     ("an invalid suite's check is 2", [| "bench"; "check" |], dup, 2);
   ]
 
-(* Every subcommand starts by removing the corrected file an earlier run
-   left, so [list] shows which baseline [run] was given. *)
+(* [check] reads the baseline before it measures, and stops on one that names
+   another suite, so its exit code shows which file [run] was given. *)
 let the_baseline_reaches_the_command_line () =
   state_env ();
   let baseline = Filename.concat (temp_dir ()) "facade.thumper" in
-  let corrected = baseline ^ ".corrected" in
-  Out_channel.with_open_bin corrected ignore;
-  equal int 0 (Thumper.run ~baseline ~argv:[| "bench"; "list" |] "facade" suite);
-  is_false (Sys.file_exists corrected)
+  Out_channel.with_open_bin baseline (fun oc ->
+      output_string oc "# thumper baseline v1\n# suite: other\n");
+  equal int 2
+    (Thumper.run ~baseline ~argv:[| "bench"; "check" |] "facade" suite)
 
 let running_benchmarks =
   group "Running benchmarks"
@@ -225,7 +225,7 @@ let running_benchmarks =
           state_env ();
           let baseline = Filename.concat (temp_dir ()) "facade.thumper" in
           equal int code (Thumper.run ~baseline ~argv "facade" benches));
-      test "run's baseline names the file whose corrected file list removes"
+      test ~timeout:30. "run's baseline names the file check reads"
         the_baseline_reaches_the_command_line;
     ]
 
@@ -271,9 +271,71 @@ let measuring =
 
 (* Baselines *)
 
+(* A file of the suite [facade] holding another machine's section. *)
+let other_machine_file () =
+  let path = temp_file ~suffix:".thumper" () in
+  Out_channel.with_open_bin path (fun oc ->
+      output_string oc
+        "# thumper baseline v1\n\
+         # suite: facade\n\n\
+         # machine: otherkey\n\
+         # host: other-host\n\
+         # ocaml: 5.4.0 64-bit release\n\n\
+         facade/ref\talloc_words\texact\t2\n");
+  require_some (Thumper.Baseline.read_exn path)
+
+(* [record] is [Baseline.record] under this machine's identity, and each of
+   its refusals names it as the facade does. Recording "noop" into the
+   section that holds "ref" keeps its row. *)
+let record_adds_this_machine_s_section () =
+  state_env ();
+  let config = Thumper.Config.(default |> samples 3) in
+  let run = Thumper.measure ~config ~filter:(`Tag "lab") suite in
+  let baseline = other_machine_file () in
+  equal (list string) [ "otherkey"; machine ]
+    (Thumper.Baseline.machines (Thumper.Baseline.record ~baseline "facade" run));
+  equal (option string) (Some "facade")
+    (Thumper.Baseline.suite (Thumper.Baseline.record "facade" run));
+  let noop = Thumper.measure ~config ~filter:(`Id "noop") suite in
+  let both =
+    Thumper.Baseline.record
+      ~baseline:(Thumper.Baseline.record "facade" run)
+      "facade" noop
+  in
+  let rows =
+    List.filter_map
+      (fun line ->
+        match String.split_on_char '\t' line with
+        | id :: metric :: _ :: _ -> Some (id ^ " " ^ metric)
+        | _ -> None)
+      (let path = temp_file ~suffix:".thumper" () in
+       Thumper.Baseline.write path both;
+       String.split_on_char '\n'
+         (In_channel.with_open_bin path In_channel.input_all))
+  in
+  equal (list string)
+    [
+      "facade/noop alloc_words";
+      "facade/noop wall_time";
+      "facade/ref alloc_words";
+      "facade/ref wall_time";
+    ]
+    rows;
+  List.iter
+    (fun (name, record) ->
+      starts_with ~msg:name ~affix:"Thumper.Baseline.record: " (refusal record))
+    [
+      ("an empty name", fun () -> ignore (Thumper.Baseline.record "" run));
+      ( "another suite's baseline",
+        fun () -> ignore (Thumper.Baseline.record ~baseline "other" run) );
+    ]
+
 let baselines =
   group "Baselines"
     [
+      slow ~timeout:30.
+        "record adds this machine's section and refuses as the facade names it"
+        record_adds_this_machine_s_section;
       test "machine_key is Env's" (fun () ->
           is_true
             (Thumper.Baseline.machine_key == Thumper.Private.Env.machine_key));
@@ -353,14 +415,12 @@ module Facade_examples = struct
     let baseline = Baseline.read_exn file in
     let v = Check.run ?baseline "programmatic" suite in
     print_endline (Verdict.to_json v);
-    Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
     exit (Verdict.exit_code v)
 end
 
 (* The file holds another machine's section only, so this machine's is
-   missing: the check passes and its corrected file adds this machine's
-   section beside the other. *)
-let the_check_example_writes_a_corrected_file () =
+   missing: the check passes and changes no file. *)
+let the_check_example_passes_a_new_section () =
   state_env ();
   let file = Filename.concat (temp_dir ()) "programmatic.thumper" in
   Out_channel.with_open_bin file (fun oc ->
@@ -377,18 +437,17 @@ let the_check_example_writes_a_corrected_file () =
       ~exit:Fun.id
   in
   equal int 0 code;
-  let corrected =
-    require_some (Thumper.Baseline.read_exn (file ^ ".corrected"))
-  in
-  equal (list string) [ "otherkey"; machine ]
-    (Thumper.Baseline.machines corrected)
+  equal (list string) [ "programmatic.thumper" ]
+    (Array.to_list (Sys.readdir (Filename.dirname file)));
+  equal (list string) [ "otherkey" ]
+    (Thumper.Baseline.machines (require_some (Thumper.Baseline.read_exn file)))
 
 let examples =
   group "Examples"
     [
       slow ~timeout:30.
-        "Check.run's example passes a new section and writes it corrected"
-        the_check_example_writes_a_corrected_file;
+        "Check.run's example passes a new section and changes no file"
+        the_check_example_passes_a_new_section;
     ]
 
 let () =

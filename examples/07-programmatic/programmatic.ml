@@ -36,9 +36,16 @@ let check () =
   let baseline = Baseline.read_exn file in
   let v = Check.run ?baseline "programmatic" suite in
   print_endline (Verdict.to_json v);
-  Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
   exit (Verdict.exit_code v)
 
+let bless () =
+  let baseline = Baseline.read_exn file in
+  let run = measure suite in
+  Baseline.write file (Baseline.record ?baseline "programmatic" run)
+
 let () =
-  print_evidence ();
-  check ()
+  match Sys.argv with
+  | [| _; "bless" |] -> bless ()
+  | _ ->
+      print_evidence ();
+      check ()

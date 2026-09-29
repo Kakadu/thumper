@@ -380,19 +380,17 @@ val run :
 
     The first argument names the subcommand, [check] when it names none:
     - [check] measures the selected cases, judges them against the baseline as
-      {!Check.run} does, prints the {{!report}report}, and writes
-      [<baseline>.corrected] when {!Verdict.corrected} is [Some]. It never
-      writes the baseline. [--strict] makes the exit code
-      [Verdict.exit_code ~strict:true], and [--json PATH] writes
-      {!Verdict.to_json}'s document and a newline to [PATH] ([--json -] is a
-      usage error).
-    - [bless] measures the selected cases once, judging nothing, prints the
-      report, and writes [<baseline>.corrected] with them re-recorded in this
-      machine's section, or with this machine's section replaced by their rows
-      when every case is selected or the section is missing or stale. It refuses
-      a loaded host unless [--force], which records the load in a [# forced:]
-      line of the section's header, naming the re-recorded cases when the
-      selection is partial.
+      {!Check.run} does and prints the {{!report}report}. It writes no baseline.
+      [--strict] makes the exit code [Verdict.exit_code ~strict:true], and
+      [--json PATH] writes {!Verdict.to_json}'s document and a newline to [PATH]
+      ([--json -] is a usage error).
+    - [bless] measures the selected cases once, judging nothing, records them in
+      this machine's section of the baseline ({!Baseline.record}), writes the
+      baseline and prints the report. When every case is selected, or the
+      section is missing or stale, the section is replaced by their rows, so the
+      rows of cases the suite no longer has are removed. It refuses a loaded
+      host unless [--force], which records the load in a [# forced:] line of the
+      section's header, naming the recorded cases when the selection is partial.
     - [list] prints the selected case ids, one per line, and measures nothing.
 
     [-f PAT] and bare arguments select the cases whose id contains [PAT], and
@@ -416,8 +414,9 @@ val run :
       selection; a malformed [THUMPER_MACHINE] under [check] or [bless]; a
       baseline that cannot be read, is corrupt or names another suite; a
       measurement lock that timed out or is unusable; a case that cannot be
-      measured; [bless] on a loaded host without [--force]; or a
-      [<baseline>.corrected] or [--json] file that cannot be removed or written.
+      measured; [bless] on a loaded host without [--force]; or a [--json] file
+      that cannot be removed or written, or a baseline that [bless] cannot
+      write.
 
     Raises [Invalid_argument], before reading [argv], if [name] is empty or not
     single-line, or if [budgets] holds two budgets for one metric. [run] returns
@@ -427,29 +426,32 @@ val run :
 (** {2:report The report}
 
     [check] and [bless] print one report on stdout once measurement completes
-    and, for [bless], the corrected file is written; a run that stops earlier
-    prints none. Its blocks are a header, a table of one row per case followed
-    by the warnings, the actions and, for [check] against a current section, a
-    summary. The warnings include each case's {!Run.warnings}, its second
-    trial's too.
+    and, for [bless], the baseline is written; a run that stops earlier prints
+    none. Its blocks are a header, a table of one row per case followed by the
+    warnings, the actions and, for [check] against a current section, a summary.
+    The warnings include each case's {!Run.warnings}, its second trial's too.
 
     A row's time is the median of the case's first time metric, followed after
     [±] by the half-width of that median's 95% confidence interval, as a
     percentage of the median. [REGRESSED] marks a metric that fails its case and
     is the report's only capitalised word. An allocation marked [~] is sampled.
-    In [bless]'s report, and in [check]'s against a missing or stale section,
-    every row reads [proposed] unless it fails.
+    In [check]'s report against a missing or stale section every row reads
+    [proposed] unless it fails, and in [bless]'s every row reads [blessed].
 
-    The actions are:
-    - [rerun:], when some case fails and the run is not a dune rule action: a
-      command that measures the failing cases again. It names the executable
-      relative to the working directory when it lies under it, and absolute
-      otherwise. It repeats the run's [--quick] or [--precise], a [--baseline]
-      given on the command line, and its [--tag]s. Its [-f <id>] patterns are
-      substrings and may select other cases too.
-    - [accept:], when a corrected file was written: [dune promote] in a dune
-      rule action and [mv <corrected> <baseline>] otherwise. [bless] always
-      prints it.
+    The actions are commands to paste where the run was started, or from the
+    workspace root in a dune rule action:
+    - [rerun:], when some case fails: a command that measures the failing cases
+      again.
+    - [accept:], when a case that does not fail has a proposed or an improved
+      metric: the [bless] command that records those cases.
+
+    Both name the executable relative to that directory when it lies under it,
+    and absolute otherwise. They repeat the run's [--quick] or [--precise], a
+    [--baseline] given on the command line, and its [--tag]s. They select their
+    cases with [-f <id>] patterns, or with the run's own patterns: [rerun:] when
+    more than 10 cases fail, and [accept:] when it records every case of the
+    run. A [-f] pattern selects every case whose id contains it, so it may
+    select more cases than the one it names.
 
     The summary counts each case once, by its outcome: [regressed] when it
     fails, [inconclusive] when a metric is inconclusive, and among the passing
@@ -473,23 +475,24 @@ val run :
       whatever the build directory is called;
     + the working directory.
 
-    Under dune the build and source directories are the ones its environment
-    names ([INSIDE_DUNE] and [DUNE_SOURCEROOT]). A run by hand, with neither
-    set, recognises a build directory named [_build].
+    A dune rule action finds the baseline in its working directory when the rule
+    depends on the file, as [(deps (glob_files *.thumper))] makes it. Under dune
+    the build and source directories are the ones its environment names
+    ([INSIDE_DUNE] and [DUNE_SOURCEROOT]). A run by hand, with neither set,
+    recognises a build directory named [_build].
 
     The report prints an explicit path as typed, less its [.] segments. It
     prints the default path as a bare file name in a dune rule action, relative
     to the working directory when the file is in a subdirectory of it, and
     absolute otherwise.
 
-    Every subcommand, [list] included, starts by removing the
-    [<baseline>.corrected] and [--json] files an earlier run left; [-h], [-V]
-    and a usage error remove nothing. Both files are written atomically, the
-    [--json] file first. Before measuring, [bless], a [check] with no baseline
-    file and [--json] check that the directory they will write to exists and is
-    writable. When [check]'s corrected file cannot be written after measurement,
-    the report prints without its [accept:] line and the run exits 2; [bless]
-    then prints no report. *)
+    Only [bless] writes the baseline, atomically. Every subcommand, [list]
+    included, starts by removing the [--json] file an earlier run left; [-h],
+    [-V] and a usage error remove nothing. [check] writes the [--json] file
+    atomically once measurement completes. Before measuring, [bless] and
+    [--json] check that the directory they will write to exists and is writable.
+    When [bless] cannot write the baseline after measurement, the run exits 2
+    and prints no report. *)
 
 (** {2:environment Streams and environment}
 
@@ -519,10 +522,10 @@ val run :
     - [GITHUB_ACTIONS], which, set to any value, ends the report with one
       [::error::] line for each metric that fails its case.
     - [INSIDE_DUNE], which marks a dune rule action when the working directory
-      lies inside dune's build directory: the [accept:] line reads
-      [dune promote], there is no [rerun:] line, and [auto] colours. Under
-      [dune exec], which sets [INSIDE_DUNE] but keeps the shell's working
-      directory, the run is not a rule action.
+      lies inside dune's build directory: [auto] colours, and the actions paste
+      from the workspace root, [DUNE_SOURCEROOT], or name absolute paths when it
+      is unset. Under [dune exec], which sets [INSIDE_DUNE] but keeps the
+      shell's working directory, the run is not a rule action.
     - [INSIDE_DUNE] and [DUNE_SOURCEROOT] together, which name dune's build
       context and workspace root for the default baseline path
       ({{!files}files}). *)
@@ -667,6 +670,22 @@ module Baseline : sig
 
       Raises [Invalid_argument] naming the variable if [THUMPER_MACHINE] is set
       and empty or has a character outside [[A-Za-z0-9._-]]. *)
+
+  (** {2:recording Recording} *)
+
+  val record : ?baseline:t -> string -> Run.t -> t
+  (** [record ?baseline name run] is [baseline] with [run]'s trials recorded in
+      this machine's section ({!machine_key}), as [bless] records a selection of
+      the cases of the suite [name]. Each case's rows become its trial's and its
+      rows for metrics the trial did not measure are removed; every other row
+      and section keeps its bytes. A missing or stale section is replaced by
+      [run]'s rows alone, under this host's header. [baseline] defaults to the
+      empty file. Every trial is recorded as measured, whatever the host's load
+      was; only [bless] refuses a loaded host.
+
+      Raises [Invalid_argument] if [name] is empty or not single-line, if
+      [baseline]'s header names another suite, or if [THUMPER_MACHINE] is
+      malformed. *)
 end
 
 (** {1:verdicts Verdicts} *)
@@ -677,9 +696,8 @@ end
     relation ([improved], [regressed], [equivalent], [within budget], or
     [inconclusive] with a reason), as {!Budget} defines them. A metric with no
     baseline row to compare with on this machine is {e proposed} and has no
-    relation. {!Verdict.overall} and {!Verdict.exit_code} are its outcome,
-    {!Verdict.to_json} its document, and {!Verdict.corrected} the corrected
-    file. *)
+    relation. {!Verdict.overall} and {!Verdict.exit_code} are its outcome, and
+    {!Verdict.to_json} its document. *)
 module Verdict : sig
   type t
   (** The type for verdicts. *)
@@ -702,22 +720,6 @@ module Verdict : sig
       it fails its case, ["inconclusive"] when its relation is inconclusive, and
       ["pass"] otherwise. A proposed metric has a [null] [relation] and the
       [reason] ["missing_baseline"]. *)
-
-  val corrected : t -> Baseline.t option
-  (** [corrected t] is the corrected file: the baseline [t] was judged against,
-      with this machine's section updated, or [None] when that changes no byte.
-      Against a current section:
-      - an improved metric's row advances, to the samples of both trials, which
-        share one batch size, or to the new exact count;
-      - a proposed metric's row is added;
-      - when {!Thumper.run}'s [check] selects every case, the rows of cases the
-        suite no longer has are removed; {!Check.run} removes none;
-      - every other row and byte stays, other machines' sections included.
-
-      Against a missing or stale section, the section is recorded from this
-      run's trials of the selected cases, whatever their relations and the
-      host's load, and replaces the old section, its annotations included. A
-      baseline with no suite header gets the suite's name. *)
 end
 
 (** {1:checking Checking} *)
@@ -725,7 +727,8 @@ end
 (** Checks as functions.
 
     {!Check.run} is what {!run}'s [check] subcommand does, without printing
-    anything or writing any file but the measurement lock's. *)
+    anything or writing any file but the measurement lock's. {!Baseline.record}
+    is what [bless] records. *)
 module Check : sig
   type error
   (** The type for the failures that stop a run:
@@ -767,10 +770,7 @@ module Check : sig
       - [baseline] is the baseline judged against. Without it, or when its
         section for this machine is missing or stale, every metric is proposed.
 
-      [name] is the suite's name.
-
-      [benches] need not be the whole suite: in a current section, the corrected
-      file ({!Verdict.corrected}) keeps every row the run did not judge.
+      [name] is the suite's name, and [benches] need not be the whole suite.
 
       The run measures every selected case once, then judges. A sampled
       improvement or regression is measured again in a second trial, after every
@@ -792,7 +792,6 @@ module Check : sig
       let baseline = Baseline.read_exn file in
       let v = Check.run ?baseline "programmatic" suite in
       print_endline (Verdict.to_json v);
-      Option.iter (Baseline.write (file ^ ".corrected")) (Verdict.corrected v);
       exit (Verdict.exit_code v)
       ]}
 

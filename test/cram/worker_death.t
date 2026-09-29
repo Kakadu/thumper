@@ -5,7 +5,7 @@ line naming the case, and no file left behind.
   $ FIX=./fixture/bench_fixture.exe
 
 kill9 mode kills the measuring worker with SIGKILL. The run publishes
-nothing: no corrected file, no JSON document, no temporary file.
+nothing: no JSON document, no temporary file.
 
   $ THUMPER_FIXTURE_MODE=kill9 $FIX check --quick -f err/kill9 --json out.json 2> err.log
   [2]

@@ -35,8 +35,8 @@ worker that stops itself as a traced child.
 A cram session pins what only a process shows: exit codes, which stream
 a line goes to, the files a run leaves, two processes contending for the
 measurement lock, a worker killed by a signal, the environment dune
-gives a rule action, and `dune promote` and the rule cache in a nested
-workspace. Every session drives the fixture executable
+gives a rule action, and the taught rule's dependency on the baseline and
+its cache in a nested workspace. Every session drives the fixture executable
 `test/cram/fixture/bench_fixture.exe`.
 
 ## Running the tests
@@ -76,10 +76,9 @@ asserts the exit code, the stream and the line it owns, never the
 report's layout.
 
 The laws of [`architecture.md`](architecture.md) are the test
-obligations. The pure-core laws are windtrap properties, among them the
-monotone write rule over random verdicts and files (the corrected file
-advances a compared row only when it improved), relation totality for
-every (L ≤ U, r, e) including r = 0, and the codec round trips
+obligations. The pure-core laws are windtrap properties, among them
+relation totality for every (L ≤ U, r, e) including r = 0, and the codec
+round trips
 (`parse ∘ print = id` byte-for-byte). The measurement lock is held and
 released against a second process that `test_env` forks, since
 exclusion shows only from another process. The other operational laws
@@ -107,9 +106,10 @@ reads.
 One level up, `Check.run_with` adds the load as a second seam.
 `test_check` drives the loop in process with scripted instruments and a
 scripted load, whose second sample also marks the point between the two
-sweeps. It pins a regression confirmed, an improvement pooled at the
+sweeps. It pins a regression confirmed, an improvement confirmed at the
 frozen batch size, the two load samples, the batch size each trial is
-frozen at, and pruning. Scripted clocks must advance across batches,
+frozen at, and the cases a filter judges. Scripted clocks must advance
+across batches,
 since a stuck scripted clock hangs the warmup by contract
 (`measure.mli`).
 
@@ -238,8 +238,8 @@ environment, usage). The rules that keep them deterministic:
 Only a quiet host earns a timing verdict; under load the check reads it
 inconclusive and exits 0, by contract. The sessions that need one are in
 `test/cram/quiet/`, on the `@quiet` alias outside `@runtest`.
-`regression.t` pins a confirmed regression failing the build and an
-improvement pooled across both sweeps, and `pass.t` an unchanged suite
+`regression.t` pins a confirmed regression failing the build beside an
+improvement that `bless` records, and `pass.t` an unchanged suite
 passing and noise staying inconclusive. Each run, the recording of the
 baseline too, waits up to 60 s for a quiet host (`--wait-quiet 60`), and
 the judged runs then assert the quiet-host outcome alone. `test_check`
@@ -355,4 +355,4 @@ compiles every OCaml snippet in the manual and runs none of them; a
 snippet that rots breaks the build.
 `test_thumper` holds the facade's two examples verbatim: the module
 doc's compiles, and `Check.run`'s, the check of `07-programmatic`, runs
-against a synthetic baseline.
+against a synthetic baseline and changes no file.

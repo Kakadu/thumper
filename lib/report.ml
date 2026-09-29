@@ -124,13 +124,11 @@ let shell_arg s =
 
 type render = {
   color : bool;
-  accept : string;
-  exe : string option;
+  exe : string;
   github : bool;
   baseline_path : string;
-  wrote_corrected : bool;
-  rerun_flags : string list;
-  rerun_patterns : string list;
+  flags : string list;
+  patterns : string list;
   strict : bool;
   cpu_model : string;
 }
@@ -465,8 +463,9 @@ let check_cell (c : Verdict.case_report) =
 
 (* The report *)
 
-(* The rerun hint names at most this many failing cases; past it, the
-   command re-measures the run's own selection. *)
+(* The rerun line names at most this many failing cases; past it, it repeats
+   the run's own patterns and measures more than failed. The accept line
+   records, so it names every case it records. *)
 let rerun_cap = 10
 
 (* Display columns of a UTF-8 string: its bytes that start a code point. *)
@@ -537,13 +536,11 @@ let check r v =
   (* The load the verdict was judged under, never a reading taken before
      the wait for the lock, which can last minutes. *)
   let load = Verdict.load v in
-  let acceptance =
+  let uncompared =
     match comparison with
     | Verdict.No_baseline | Verdict.Stale _ -> true
     | Verdict.Compared -> false
   in
-  (* A compared run's load warning sits under the header; a missing or stale
-     section's sits beside the accept line instead. *)
   let header =
     let head =
       match comparison with
@@ -582,7 +579,7 @@ let check r v =
     List.map
       (fun c ->
         (* A proposed case whose count breaks its cap fails even here. *)
-        if acceptance && not (case_fails c) then (c, [ frag "proposed" "" ])
+        if uncompared && not (case_fails c) then (c, [ frag "proposed" "" ])
         else (c, check_cell c))
       cases
   in
@@ -604,43 +601,41 @@ let check r v =
           (fun w -> styled ~color `Yellow (strf "  warning: %s: %s" c.id w))
           c.warnings)
       cases
-    @ List.map
-        (fun w -> styled ~color `Yellow ("  warning: " ^ w))
-        (Verdict.warnings v)
   in
   let table = table_lines ~color rows @ warnings in
-  (* Actions: the rerun for failures, the accept line for a written
-     corrected file, the acceptance-state load message beside it. *)
+  (* Actions: the rerun of the failing cases, and the bless of the passing
+     cases with a proposed or improved metric. *)
   let actions =
-    let failing = List.filter case_fails cases in
-    let rerun =
-      match (failing, r.exe) with
-      | [], _ | _, None -> []
-      | _, Some exe ->
+    let exe = shell_arg r.exe in
+    let hint ~label head ~own = function
+      | [] -> []
+      | selected ->
           let selection =
-            if List.length failing <= rerun_cap then
-              List.map (fun (c : Verdict.case_report) -> "-f " ^ c.id) failing
-            else List.map (fun p -> "-f " ^ shell_arg p) r.rerun_patterns
+            if own then List.map (fun p -> "-f " ^ shell_arg p) r.patterns
+            else
+              List.map (fun (c : Verdict.case_report) -> "-f " ^ c.id) selected
           in
-          wrap_command ~label:"  rerun:   " (shell_arg exe)
-            (r.rerun_flags @ selection)
+          wrap_command ~label head (r.flags @ selection)
     in
-    let prompt =
-      if r.wrote_corrected then [ strf "  accept:  %s" r.accept ] else []
+    let recordable (c : Verdict.case_report) =
+      (not (case_fails c))
+      && List.exists
+           (fun (mr : Verdict.metric_report) ->
+             match mr.verdict with
+             | Verdict.Proposed | Verdict.Judged (Verdict.Improved _) -> true
+             | Verdict.Judged
+                 ( Verdict.Regressed _ | Verdict.Equivalent _
+                 | Verdict.Changed_within_budget _ | Verdict.Within_budget _
+                 | Verdict.Inconclusive _ ) ->
+                 false)
+           c.reports
     in
-    let load_warning =
-      match (acceptance && r.wrote_corrected, load) with
-      | true, Env.Loaded { load; cores } ->
-          [
-            styled ~color `Yellow
-              (strf
-                 "  warning: load %.1f on %d cores; prefer a quiet host before \
-                  accepting"
-                 load cores);
-          ]
-      | true, Env.Quiet | false, _ -> []
-    in
-    rerun @ prompt @ load_warning
+    let failing = List.filter case_fails cases in
+    let recorded = List.filter recordable cases in
+    hint ~label:"  rerun:   " exe ~own:(List.length failing > rerun_cap) failing
+    @ hint ~label:"  accept:  " (exe ^ " bless")
+        ~own:(List.length recorded = n_cases)
+        recorded
   in
   (* Summary, compared runs only. Its color is the outcome's: red iff the run
      exits 1, so a [--strict] run that fails on inconclusive cases does not
@@ -710,12 +705,13 @@ let check r v =
   in
   report_of_blocks [ header; table; actions; summary; annotations ]
 
-(* The blocks of check's report less the summary, every row [proposed]. *)
-let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
+(* The blocks of check's report less the summary, every row [blessed]. *)
+let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load run =
   let header =
     [
       header_line ~color ~suite
-        (strf " — blessed %d case%s for machine %s" n (plural n) machine);
+        (strf " — blessed %d case%s into %s for machine %s" n (plural n)
+           baseline_path machine);
     ]
   in
   let table =
@@ -726,7 +722,7 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
              row_id = id;
              time = time_of_trial trial;
              alloc = alloc_of_trial trial;
-             cell = [ frag "proposed" "" ];
+             cell = [ frag "blessed" "" ];
            })
          (Run.trials run))
     @ List.concat_map
@@ -737,19 +733,15 @@ let bless ~color ~suite ~machine ~cases:n ~load ~notices ~accept run =
         (Run.trials run)
   in
   let actions =
-    (match load with
-      | Env.Loaded { load; cores } ->
-          [
-            styled ~color `Yellow
-              (strf
-                 "  warning: blessed under load %.1f on %d cores (--force \
-                  recorded)"
-                 load cores);
-          ]
-      | Env.Quiet -> [])
-    (* A notice of what the corrected file drops sits beside the accept line,
-       where the file is reviewed. *)
-    @ List.map (fun w -> styled ~color `Yellow ("  warning: " ^ w)) notices
-    @ [ strf "  accept:  %s" accept ]
+    match load with
+    | Env.Loaded { load; cores } ->
+        [
+          styled ~color `Yellow
+            (strf
+               "  warning: blessed under load %.1f on %d cores (--force \
+                recorded)"
+               load cores);
+        ]
+    | Env.Quiet -> []
   in
   report_of_blocks [ header; table; actions ]

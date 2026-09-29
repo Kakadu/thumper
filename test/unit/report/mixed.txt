@@ -7,6 +7,6 @@ thumper: digest — 3 cases vs digest.thumper for machine testkey
   equivalent  1.00 us  ±0.0%  3,000 w  gamma
 
   rerun:   bench.exe -f alpha
-  accept:  dune promote
+  accept:  bench.exe bless -f beta
 
   3 cases: 1 passed, 1 improved, 1 regressed.

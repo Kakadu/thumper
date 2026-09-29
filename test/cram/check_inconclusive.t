@@ -1,13 +1,12 @@
-An inconclusive case cannot fail the build and never enters the corrected
-file. Under alloc_grow, alloc/list allocates more on each call than on the
+An inconclusive case cannot fail the build, and the baseline is left as it
+was. Under alloc_grow, alloc/list allocates more on each call than on the
 one before, so the exactness probe fails and the run's sampled count cannot
 be compared with the baseline's exact one: exactness lost, whatever the load.
 
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f alloc/list > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
+  $ $FIX bless --quick --force -f alloc/list > /dev/null 2>&1
   $ cp fixture.thumper before.thumper
 
 Inconclusive exits 0, the reason is named, and the summary counts it.
@@ -17,8 +16,6 @@ Inconclusive exits 0, the reason is named, and the summary counts it.
   exactness lost
   $ grep -o '1 case: .*' out.log
   1 case: 0 passed, 1 inconclusive.
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
   $ cmp fixture.thumper before.thumper
 
 --strict turns inconclusive into failure.

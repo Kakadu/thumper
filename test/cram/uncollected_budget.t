@@ -23,10 +23,10 @@ the waiting line and wait until the holder gives up, after 60 s.
   thumper: 'cpu' has a budget on wall_time but does not collect it (add it to ~metrics or drop the budget)
   [2]
 
-Nothing was measured and no corrected file was written.
+Nothing was measured and no baseline was written.
 
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
+  $ test ! -e fixture.thumper && echo no-baseline
+  no-baseline
 
   $ touch release
   $ wait $HOLDER

@@ -4,6 +4,5 @@ thumper: digest — no baseline for machine testkey (Test CPU)
       alloc 71 w, over its 64 w cap (exact); proposed
 
   rerun:   bench.exe -f alpha
-  accept:  dune promote
 
 ::error::alpha regressed: alloc_words 71 w, over its 64 w cap (exact)

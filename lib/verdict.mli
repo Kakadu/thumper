@@ -4,14 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (** Judgment: the relations between a run's evidence and this machine's baseline
-    section, and the files that follow from them.
+    section.
 
     Judging takes two passes, because a relation is confirmed by a second
     measurement. {!judge} compares every first trial and holds each strong
     sampled relation pending; {!confirmations} lists the cases to measure again;
     {!decide} folds their confirmation trials in and is the verdict.
-    {!Check.run_with} is the library's one caller of the three. The write paths
-    {!corrected} and {!bless} compute a {!Baseline.t} and write nothing.
+    {!Check.run_with} is the library's one caller of the three. A verdict
+    changes no file: {!Baseline.record} records a run.
 
     Every function here is pure: no I/O, no clock, no environment variable. The
     host's load arrives as an {!Env.type-load} value. In a verdict {!decide}
@@ -74,10 +74,6 @@ type strong =
       confirmation : shift;
           (** The confirmation trial's shift against the same baseline samples,
               at α = 0.05 per side. *)
-      pooled : float array;
-          (** Both trials' samples, sorted ascending, which an advanced row
-              stores. *)
-      k : int;  (** The batch size of both trials. *)
     }
 
 (** The type for relations. A relation compares this run's evidence with a
@@ -130,9 +126,8 @@ type relation =
 type metric_verdict =
   | Proposed
       (** The section has no row for this case and metric, or no section is
-          compared ({!type-comparison}). This run's evidence is proposed for the
-          corrected file. An exact count over an [at_most] cap still fails its
-          case ({!report_fails}). *)
+          compared ({!type-comparison}). An exact count over an [at_most] cap
+          still fails its case ({!report_fails}). *)
   | Judged of relation  (** The relation with the section's row. *)
 
 (** {1:reports Reports} *)
@@ -148,8 +143,8 @@ type case_report = {
   id : string;  (** The case id. *)
   full_name : string;  (** The case's {!Bench.full_name}. *)
   trial : Run.Trial.t;
-      (** The first trial: the evidence a proposed row or a replaced section
-          records. The confirmation trial is not kept. *)
+      (** The first trial, the evidence the report shows. The confirmation trial
+          is not kept. *)
   reports : metric_report list;
       (** One report per metric the trial measured, in the trial's order. *)
   warnings : string list;
@@ -172,9 +167,7 @@ type comparison =
   | No_baseline
       (** The file has no section for this machine; the empty-file baseline has
           none. Every metric is [Proposed]. *)
-  | Stale of staleness
-      (** The section is stale. Every metric is [Proposed], and {!corrected}
-          replaces the section. *)
+  | Stale of staleness  (** The section is stale. Every metric is [Proposed]. *)
   | Compared  (** The section's identity is the running program's. *)
 
 val compared_section :
@@ -188,8 +181,7 @@ val compared_section :
 (** {1:judging Judging} *)
 
 type t
-(** The type for decided verdicts. A verdict keeps the baseline file it was
-    judged against, the input of {!corrected}. *)
+(** The type for decided verdicts. *)
 
 type provisional
 (** The type for first-pass verdicts: every metric is settled or waits for its
@@ -199,25 +191,20 @@ val judge :
   identity:Baseline.identity ->
   suite:string ->
   load:Env.load ->
-  selection:[ `Full | `Partial ] ->
   budgets:Budget.t list ->
   file:Baseline.t ->
   cases:(Bench.case * Run.Trial.t) list ->
   provisional
-(** [judge ~identity ~suite ~load ~selection ~budgets ~file ~cases] is the first
-    pass over [cases], each a case and its first trial, against the section of
-    [file] for [identity.machine]. The section is found here, so evidence is
-    never judged against another machine's section.
+(** [judge ~identity ~suite ~load ~budgets ~file ~cases] is the first pass over
+    [cases], each a case and its first trial, against the section of [file] for
+    [identity.machine]. The section is found here, so evidence is never judged
+    against another machine's section.
     - [identity] is this machine's identity; its [ocaml] decides staleness.
-    - [suite] heads the file {!corrected} builds over the empty-file baseline.
+    - [suite] is the suite's name, which {!val-suite} returns.
     - [load] is the load the first pass is judged under.
-    - [selection] may be [`Full] only when [cases] is every case of the suite.
-      On a compared section, [`Full] lets {!corrected} prune the rows of absent
-      cases and adds one warning per pruned case id ({!val-warnings}).
     - [budgets] are the suite's budgets. Each metric the trial measured is bound
       by the case's own budget for it, else by the one in [budgets], else by
       {!Budget.default}.
-    - [file] is kept for {!corrected}.
 
     A sampled comparison tests a non-positive sample ([Non_positive]) first. It
     then computes the shift at α = 0.005 per side and tests, in order, a loaded
@@ -243,19 +230,18 @@ val decide :
   load:Env.load -> confirmations:(string * Run.Trial.t) list -> provisional -> t
 (** [decide ~load ~confirmations p] is the verdict, each pending relation
     resolved with its case's confirmation trial from [confirmations]. The
-    relation is [Confirmed], with both shifts and the pooled samples, when the
-    confirmation alone reproduces it against the same baseline samples at α =
-    0.05 per side ([U < -e] for an improvement, [L > r] for a regression). It is
-    unconfirmed when the confirmation does not, and when the trial is missing,
-    lacks the metric, measured it as exact, is drifted, holds a non-positive
-    sample, ran at another batch size than the first trial, or shows severe
-    outlier variance inflation with an estimate within [2e] of zero. An
-    unconfirmed improvement is [Within_budget] with the first shift, since its
-    [U < -e] is within any budget; an unconfirmed regression is
-    [Inconclusive Unconfirmed]. When [load] is [Loaded], every pending relation
-    is [Inconclusive Environment] instead, whatever the trials. An inconclusive
-    relation keeps the first shift. Settled metrics are unchanged, and [load] is
-    recorded as {!load}.
+    relation is [Confirmed], with both shifts, when the confirmation alone
+    reproduces it against the same baseline samples at α = 0.05 per side
+    ([U < -e] for an improvement, [L > r] for a regression). It is unconfirmed
+    when the confirmation does not, and when the trial is missing, lacks the
+    metric, measured it as exact, is drifted, holds a non-positive sample, ran
+    at another batch size than the first trial, or shows severe outlier variance
+    inflation with an estimate within [2e] of zero. An unconfirmed improvement
+    is [Within_budget] with the first shift, since its [U < -e] is within any
+    budget; an unconfirmed regression is [Inconclusive Unconfirmed]. When [load]
+    is [Loaded], every pending relation is [Inconclusive Environment] instead,
+    whatever the trials. An inconclusive relation keeps the first shift. Settled
+    metrics are unchanged, and [load] is recorded as {!load}.
 
     Raises [Invalid_argument] if [confirmations] names a case twice or names a
     case {!confirmations} did not list. *)
@@ -285,17 +271,6 @@ val case_overall : case_report -> [ `Pass | `Fail | `Inconclusive ]
 (** [case_overall c] is [`Fail] if one of [c]'s reports fails it
     ({!report_fails}), else [`Inconclusive] if one of its reports is
     [Inconclusive], else [`Pass]. *)
-
-val warnings : t -> string list
-(** [warnings t] is the run's warnings about rows the corrected file drops:
-    - under a [`Full] selection of a compared section, one per row id of the
-      section that no judged case has, in ascending order, saying its rows are
-      pruned;
-    - under a [`Partial] selection of a stale section, one counting the
-      section's row ids outside the selection, when there are any, saying the
-      corrected file drops their rows. {!bless} returns the same one.
-
-    A case's own warnings are in its {!case_report}. *)
 
 val suite : t -> string
 (** [suite t] is {!judge}'s [suite]. *)
@@ -353,67 +328,3 @@ val to_json : t -> string
     and the backslash with a backslash, newline, carriage return and tab by
     name, and other bytes below [0x20] as [\u00XX]; every other byte is copied,
     so a [full_name] that is not UTF-8 makes an invalid document. *)
-
-(** {1:write Write paths} *)
-
-val corrected : t -> Baseline.t option
-(** [corrected t] is the corrected file: the baseline [t] was judged against,
-    with this machine's section updated. It is [None] when that changes no byte.
-
-    On a compared section ({!Baseline.update_rows}), each [Improved] row
-    advances, to the pooled samples at the batch size [k] for [Confirmed] and to
-    this run's count for [Exact_change]. Each [Proposed] metric adds this run's
-    evidence as a row, one that fails its cap included. Under a [`Full]
-    selection the rows of case ids no judged case has are pruned. Every other
-    row, the section's header and its annotations keep their bytes, so
-    [Regressed], [Equivalent], [Changed_within_budget], [Within_budget] and
-    [Inconclusive] rows keep their old evidence.
-
-    On a missing or stale section ({!Baseline.set_section}), the section is
-    replaced by one with [identity t]'s header, no annotation and the rows of
-    every first trial. The result starts from a new file headed [suite t] when
-    the judged file has no header.
-
-    Other machines' sections keep their bytes. The result never replaces a
-    compared row with unconfirmed evidence. A proposed row or a replaced section
-    records this run's trials as measured, loaded host, drift flag and
-    instability included.
-
-    Raises [Invalid_argument] if the judged file has no header and
-    {!Baseline.check_suite} refuses [suite t], or if a trial holds evidence the
-    file refuses ({!Baseline.sampled_row}, {!Baseline.exact_row}). *)
-
-val bless :
-  ?annotations:string list ->
-  identity:Baseline.identity ->
-  suite:string ->
-  selection:[ `Full | `Partial ] ->
-  run:Run.t ->
-  Baseline.t ->
-  Baseline.t * string list
-(** [bless ?annotations ~identity ~suite ~selection ~run file] is [file] with
-    [run]'s trials recorded in the section of [identity.machine], and the
-    warnings of that re-record. [selection] must describe [run], [`Full] iff
-    [run] holds every case of the suite.
-
-    Under a [`Partial] selection of a compared section
-    ({!Baseline.update_rows}), only the rows of [run]'s cases change: each
-    case's rows become its trial's, and its rows for metrics the trial did not
-    measure are removed. The header lines, [# host:] included, and every other
-    row keep their bytes, [annotations] are appended to the section's, and there
-    is no warning.
-
-    Otherwise, under a [`Full] selection or on a missing or stale section
-    ({!Baseline.set_section}), the section is replaced by one with [identity]'s
-    header, [annotations] as its only annotations and the rows of [run]'s
-    trials, starting from a new file headed [suite] when [file] has no header. A
-    [`Partial] selection of a stale section returns {!val-warnings}'s warning
-    about the dropped rows.
-
-    [annotations] defaults to [[]]. Other sections keep their bytes. [bless]
-    records every trial, regressions included; refusing to record on a loaded
-    host is the caller's decision.
-
-    Raises [Invalid_argument] if [identity], an annotation or a trial breaks the
-    file grammar, or if [file] has no header and {!Baseline.check_suite} refuses
-    [suite] ({!Baseline.set_section}, {!Baseline.update_rows}). *)

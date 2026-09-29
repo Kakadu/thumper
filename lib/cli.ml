@@ -318,9 +318,9 @@ let build_layout_dir ~dir_exists ~exe ~cwd =
             if dir_exists dir then dir else cwd
         | _ -> cwd)
 
-(* A rule action resolves in its cwd, because the rule's [diff?] names files
-   there and an action never writes to the source tree; any other run under
-   dune resolves beside the executable's source, the committable location. *)
+(* A rule action resolves in its cwd, where the rule's dependencies copy the
+   baseline; any other run under dune resolves beside the executable's
+   source, the committable location. *)
 let default_baseline_dir ~dir_exists ~inside_dune ~source_root ~exe ~cwd =
   (* [dune exec --root ../..] and a hand run of [../_build/default/b.exe]
      reach the executable through [..]; the prefix tests compare paths as
@@ -355,44 +355,89 @@ let without_dot_segments path =
   | [] -> if absolute then "/" else if path = "" then "" else "."
   | segs -> (if absolute then "/" else "") ^ String.concat "/" segs
 
-(* [dune promote] applies only when this process is a dune rule action: the
-   rule's [diff?] stages the corrected file, and an action's cwd, sandboxed or
-   not, lies under the build root. [dune exec] also sets [INSIDE_DUNE] but
-   keeps the invoker's cwd in the source tree, where nothing is staged and
-   [dune promote] would silently do nothing. [INSIDE_DUNE] holds the build
-   context's directory; older dunes set ["1"]. *)
-let promotion_staged ~inside_dune ~cwd =
+(* A dune rule action's cwd, sandboxed or not, lies under the build root.
+   [dune exec] also sets [INSIDE_DUNE] but keeps the invoker's cwd in the
+   source tree. [INSIDE_DUNE] holds the build context's directory; older
+   dunes set ["1"]. *)
+let is_rule_action ~inside_dune ~cwd =
   match inside_dune with
   | None -> false
   | Some v ->
       if Filename.is_relative v then has_build_component cwd
       else under_dir (Filename.dirname v) cwd || has_build_component cwd
 
-(* The [rerun:] line's executable: a bare name, found on [PATH], as typed;
-   a path relative to [cwd] when it lies under it, absolute otherwise, so
-   the line pastes from where the command ran whatever [argv.(0)] was. Its
-   directory is resolved as [cwd] is, symbolic links included ([/tmp] is
-   [/private/tmp] on macOS); the file name is kept, so an executable reached
+(* [path] with its symbolic links resolved, as [Sys.getcwd]'s result is
+   ([/tmp] is [/private/tmp] on macOS), or as it is when it cannot be. *)
+let realpath path = try Unix.realpath path with Unix.Unix_error _ -> path
+
+(* [abs] relative to [base] when it lies under it, [None] otherwise. *)
+let relative_to base abs =
+  if under_dir base abs then
+    let n = String.length base in
+    Some (String.sub abs (n + 1) (String.length abs - n - 1))
+  else None
+
+(* The directory the hints paste from: the cwd, or in a rule action, whose
+   cwd is dune's, the workspace root. [None] for a rule action whose root
+   dune does not name: its hints spell absolute paths. *)
+let hint_base ~rule_action ~source_root ~cwd =
+  if rule_action then Option.map realpath source_root else Some cwd
+
+(* A sandboxed action runs in [<build>/.sandbox/<hash>/<context>/...], which
+   dune removes after the action, so a hint names the file at its place in
+   [<build>/<context>/...], the context [INSIDE_DUNE] names. *)
+let unsandboxed ~inside_dune abs =
+  match inside_dune with
+  | Some context when not (Filename.is_relative context) -> (
+      let build = realpath (Filename.dirname context) in
+      match relative_to (Filename.concat build ".sandbox") abs with
+      | Some rest -> (
+          match String.index_opt rest '/' with
+          | Some i ->
+              Filename.concat build
+                (String.sub rest (i + 1) (String.length rest - i - 1))
+          | None -> abs)
+      | None -> abs)
+  | Some _ | None -> abs
+
+(* The hints' executable: a bare name, found on [PATH], as typed; a path
+   relative to [base] when it lies under it, absolute otherwise, so the
+   line pastes from [base] whatever [argv.(0)] was. Its directory is
+   resolved as [cwd] is; the file name is kept, so an executable reached
    through a link keeps its name. *)
-let rerun_exe ~cwd exe =
+let hint_exe ~base ~inside_dune ~cwd exe =
   if not (String.contains exe '/') then exe
   else
     let abs =
       if Filename.is_relative exe then Filename.concat cwd exe else exe
     in
-    let dir =
-      try Unix.realpath (Filename.dirname abs)
-      with Unix.Unix_error _ -> Filename.dirname abs
+    let abs =
+      unsandboxed ~inside_dune
+        (Filename.concat
+           (realpath (Filename.dirname abs))
+           (Filename.basename abs))
     in
-    let abs = Filename.concat dir (Filename.basename abs) in
-    if under_dir cwd abs then
-      let n = String.length cwd in
-      "./" ^ String.sub abs (n + 1) (String.length abs - n - 1)
-    else abs
+    match Option.bind base (fun base -> relative_to base abs) with
+    | Some rel -> "./" ^ rel
+    | None -> abs
 
-let accept_command ~promotion_staged ~corrected ~baseline =
-  if promotion_staged then "dune promote"
-  else strf "mv %s %s" (Report.shell_arg corrected) (Report.shell_arg baseline)
+(* An explicit baseline path as the hints spell it: as typed, except that
+   in a rule action a relative path names a file of the build context,
+   which the hints name by its source file, relative to the workspace
+   root. *)
+let hint_baseline ~rule_action ~inside_dune ~source_root ~cwd path =
+  match (inside_dune, source_root) with
+  | Some context, Some root
+    when rule_action && Filename.is_relative path
+         && not (Filename.is_relative context) -> (
+      let abs =
+        unsandboxed ~inside_dune
+          (without_dot_dot_segments (Filename.concat (realpath cwd) path))
+      in
+      match relative_to (realpath context) abs with
+      | Some rel -> rel
+      | None -> Option.value (relative_to (realpath root) abs) ~default:abs)
+  | (Some _ | None), (Some _ | None) -> path
 
 (* The effectful adapter *)
 
@@ -407,20 +452,20 @@ let fail2 fmt =
 
 let pp_str pp v = Format.asprintf "%a" pp v
 
-(* A corrected file or JSON document left by an earlier run must not survive
-   into this one, where a reader would take it for this run's. A path under a
-   regular file ([ENOTDIR]) cannot exist either; the pre-flight names it. *)
+(* A JSON document left by an earlier run must not survive into this one,
+   where a reader would take it for this run's. A path under a regular file
+   ([ENOTDIR]) cannot exist either; the pre-flight names it. *)
 let unlink_owned path =
   try Unix.unlink path with
   | Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> ()
   | Unix.Unix_error (e, _, _) ->
       fail2 "cannot remove stale artifact %s: %s" path (Unix.error_message e)
 
-(* Measurement writes the [--json] document and bless's corrected file
-   whatever it finds, so their directory is checked before minutes are spent
-   measuring. The check is advisory, since the directory can change before the
-   write, which handles its own failure; it catches a mistyped or missing
-   directory while exit 2 costs nothing. *)
+(* Measurement writes the [--json] document and bless's baseline whatever it
+   finds, so their directory is checked before minutes are spent measuring.
+   The check is advisory, since the directory can change before the write,
+   which handles its own failure; it catches a mistyped or missing directory
+   while exit 2 costs nothing. *)
 let preflight_target path =
   let dir = Filename.dirname path in
   match (Unix.stat dir).Unix.st_kind with
@@ -572,7 +617,7 @@ let run_list ~(o : options) ~config ~filter ~budgets benches =
   0
 
 let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
-    ~corrected_path ~color ~accept ~staged ~exe benches =
+    ~color ~exe ~flags benches =
   (* [Check.run_with] reads the key before its own lock acquisition, but it
      runs inside this module's [with_lock_progress], so a malformed override
      would raise [Invalid_argument] only after the lock wait: validate it
@@ -582,71 +627,32 @@ let run_check ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
     (selection ~patterns:o.patterns ~tags:o.tags ~config ~budgets ?filter
        benches);
   let file = read_baseline ~suite:name baseline_path in
-  (* Without a baseline the corrected file is certain, every row proposed, so
-     its directory is pre-flighted as bless's is. With one, a passing run writes
-     nothing and needs no writable directory. *)
-  if Option.is_none file then preflight_target corrected_path;
   warn_expired (wait_for_quiet o.wait_quiet);
   let verdict =
     checked (fun () ->
         with_status (fun tick ->
             with_lock_progress (fun () ->
-                Check.run_with ~on_progress:tick ~config ?budgets ~prune:true
-                  ?filter ?baseline:file name benches)))
+                Check.run_with ~on_progress:tick ~config ?budgets ?filter
+                  ?baseline:file name benches)))
   in
-  (* The JSON document first: it is present iff measurement completed, which it
-     has, so a corrected-file write that fails (a full disk, or an unwritable
-     directory no pre-flight covered) must not take it down too. *)
   Option.iter (fun p -> write_json p (Verdict.to_json verdict ^ "\n")) o.json;
-  (* A late write failure (a full disk) still prints the report, without
-     the accept line of a file that does not exist, then the error. *)
-  let written =
-    match Verdict.corrected verdict with
-    | None -> Ok false
-    | Some cand -> (
-        match Baseline.write corrected_path cand with
-        | () -> Ok true
-        | exception Baseline.Error e -> Error e)
-  in
   let r =
     {
       Report.color;
-      accept;
-      (* Under a rule action the hint cannot be pasted: [exe] is relative to
-         the action's cwd inside [_build], and the dune user's next step is
-         the alias they ran. *)
-      exe = (if staged then None else Some exe);
+      exe;
       github = Sys.getenv_opt "GITHUB_ACTIONS" <> None;
       baseline_path;
-      wrote_corrected = Result.value written ~default:false;
-      (* The rerun hint reproduces the invocation, not just the selection: the
-         preset, an explicit --baseline and every --tag are carried
-         (getting-started's "the exact command"); the default baseline
-         re-resolves identically from the exe path, so it stays unspelled. *)
-      rerun_flags =
-        (match o.preset with
-          | `Default -> []
-          | `Quick -> [ "--quick" ]
-          | `Precise -> [ "--precise" ])
-        @ (match o.baseline with
-          | Some _ -> [ "--baseline " ^ Report.shell_arg baseline_path ]
-          | None -> [])
-        @ List.map (fun t -> "--tag " ^ Report.shell_arg t) o.tags;
-      rerun_patterns = o.patterns;
+      flags;
+      patterns = o.patterns;
       strict = o.strict;
       cpu_model = Env.cpu_model ();
     }
   in
   print_string (Report.check r verdict);
-  match written with
-  | Ok _ -> Verdict.exit_code ~strict:o.strict verdict
-  | Error e ->
-      (* The report first, on a terminal too, where stderr is unbuffered. *)
-      flush stdout;
-      fail2 "%s" (baseline_error corrected_path e)
+  Verdict.exit_code ~strict:o.strict verdict
 
 let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
-    ~corrected_path ~color ~accept benches =
+    ~color benches =
   (* The run's budgets are not bless's business, but a suite [check] refuses is
      refused here too (the selection checks the whole suite): blessing it would
      record a baseline nothing can judge against. *)
@@ -708,13 +714,12 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
         ]
   in
   let file = Option.value file ~default:(Baseline.empty ~suite:name) in
-  let corrected, notices =
-    Verdict.bless ~annotations ~identity ~suite:name ~selection:scope ~run file
-  in
-  write_baseline corrected_path corrected;
+  write_baseline baseline_path
+    (Baseline.record ~annotations ~identity ~suite:name ~selection:scope ~run
+       file);
   print_string
-    (Report.bless ~color ~suite:name ~machine ~cases:(List.length sel) ~load
-       ~notices ~accept run);
+    (Report.bless ~color ~suite:name ~machine ~baseline_path
+       ~cases:(List.length sel) ~load run);
   0
 
 (* Help and entry *)
@@ -731,7 +736,7 @@ let help_text exe =
       "";
       "subcommands:";
       "  check      measure, compare against the baseline (default)";
-      "  bless      propose a re-record of the selected cases for this machine";
+      "  bless      record the selected cases in the baseline for this machine";
       "  list       print the selected case ids; no measurement";
       "";
       "options:";
@@ -752,7 +757,8 @@ let help_text exe =
       "";
       "environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock";
       "directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);";
-      "INSIDE_DUNE selects the dune hints and, in a rule action, colour.";
+      "INSIDE_DUNE marks a dune rule action, whose report is coloured and whose";
+      "hints paste from DUNE_SOURCEROOT.";
       "";
     ]
 
@@ -774,18 +780,19 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
         let exe = exe_of argv in
         let cwd = Sys.getcwd () in
         let inside_dune = Sys.getenv_opt "INSIDE_DUNE" in
-        let staged = promotion_staged ~inside_dune ~cwd in
+        let source_root = Sys.getenv_opt "DUNE_SOURCEROOT" in
+        let rule_action = is_rule_action ~inside_dune ~cwd in
         let baseline_path =
           without_dot_segments
           @@
           match (o.baseline, baseline) with
           | Some p, _ | None, Some p ->
-              (* An explicit path resolves and prints as typed: the hints are
-                 pasted where the command ran, so the header, the rerun line
-                 and the accept line spell the file one way. In a rule action
-                 a relative path names the same file as the rule's [diff?]. *)
+              (* An explicit path resolves and prints as typed. In a rule
+                 action a relative path names the copy the rule's dependencies
+                 put in its cwd, which the hints name by its source
+                 ([hint_baseline]). *)
               p
-          | None, None ->
+          | None, None -> (
               (* The default prints bare in a rule action's cwd, relative
                  when it lies below the cwd, and absolute otherwise. *)
               let dir =
@@ -794,53 +801,62 @@ let main ?baseline ?config ?budgets ~argv ~name benches =
                   | b -> b
                   | exception Sys_error _ -> false
                 in
-                default_baseline_dir ~dir_exists ~inside_dune
-                  ~source_root:(Sys.getenv_opt "DUNE_SOURCEROOT")
+                default_baseline_dir ~dir_exists ~inside_dune ~source_root
                   ~exe:Sys.executable_name ~cwd
               in
               let file = name ^ ".thumper" in
               if String.equal dir cwd then
-                if staged then file else Filename.concat cwd file
-              else if under_dir cwd dir then
-                let rel =
-                  let n = String.length cwd in
-                  String.sub dir (n + 1) (String.length dir - n - 1)
-                in
-                Filename.concat rel file
-              else Filename.concat dir file
+                if rule_action then file else Filename.concat cwd file
+              else
+                match relative_to cwd dir with
+                | Some rel -> Filename.concat rel file
+                | None -> Filename.concat dir file)
         in
-        let corrected_path = baseline_path ^ ".corrected" in
         (* Before anything else can fail, whatever the subcommand, so no run
-           leaves a stale file to be read. *)
-        unlink_owned corrected_path;
+           leaves a stale document to be read. *)
         Option.iter unlink_owned o.json;
-        (* The files a run always writes, before any measurement; check's
-           corrected file waits for [run_check] to find no baseline. *)
+        (* The files a run writes, before any measurement. *)
         Option.iter preflight_target o.json;
         (match o.subcommand with
-        | `Bless -> preflight_target corrected_path
+        | `Bless -> preflight_target baseline_path
         | `Check | `List -> ());
         let filter = filter_of ~patterns:o.patterns ~tags:o.tags in
         let config = config_of ?config o in
         let color =
-          use_color o.color ~is_tty:(Unix.isatty Unix.stdout)
-            ~rule_action:staged
+          use_color o.color ~is_tty:(Unix.isatty Unix.stdout) ~rule_action
             ~no_color:
               (match Sys.getenv_opt "NO_COLOR" with
               | Some s when s <> "" -> true
               | Some _ | None -> false)
         in
-        let accept =
-          accept_command ~promotion_staged:staged ~corrected:corrected_path
-            ~baseline:baseline_path
-        in
         match o.subcommand with
         | `List -> run_list ~o ~config ~filter ~budgets benches
         | `Check ->
-            run_check ~o ~name ~config ~filter ~budgets ~baseline_path
-              ~corrected_path ~color ~accept ~staged ~exe:(rerun_exe ~cwd exe)
-              benches
+            let base = hint_base ~rule_action ~source_root ~cwd in
+            (* The hints reproduce the invocation, not just the selection:
+               the preset, an explicit --baseline and every --tag are
+               carried; the default baseline re-resolves from the
+               executable's path, so it stays unspelled. *)
+            let flags =
+              (match o.preset with
+                | `Default -> []
+                | `Quick -> [ "--quick" ]
+                | `Precise -> [ "--precise" ])
+              @ (match o.baseline with
+                | Some _ ->
+                    [
+                      "--baseline "
+                      ^ Report.shell_arg
+                          (hint_baseline ~rule_action ~inside_dune ~source_root
+                             ~cwd baseline_path);
+                    ]
+                | None -> [])
+              @ List.map (fun t -> "--tag " ^ Report.shell_arg t) o.tags
+            in
+            run_check ~o ~name ~config ~filter ~budgets ~baseline_path ~color
+              ~exe:(hint_exe ~base ~inside_dune ~cwd exe)
+              ~flags benches
         | `Bless ->
-            run_bless ~o ~name ~config ~filter ~budgets ~baseline_path
-              ~corrected_path ~color ~accept benches
+            run_bless ~o ~name ~config ~filter ~budgets ~baseline_path ~color
+              benches
       with Exit_with code -> code)

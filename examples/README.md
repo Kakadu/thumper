@@ -19,7 +19,7 @@ to a build-failing regression gate, to the library underneath the CLI.
 - `06-protocol` — the protocol as a value: a preset refined by setters,
   the metrics a suite collects, and a case that collects fewer.
 - `07-programmatic` — the library without the CLI: `measure`, `Run`
-  projections, `Baseline`, `Check.run`, and `Verdict.corrected` / `to_json` /
+  projections, `Baseline.record`, `Check.run`, and `Verdict.to_json` /
   `exit_code` — the CI gate as a program.
 
 Everything compiles under plain `dune build`; nothing here runs under
@@ -188,5 +188,5 @@ comparisons stayed earned and visible while the timing side degraded.
 `dune exec examples/07-programmatic/programmatic.exe` measures the suite and
 prints each case's median time and exact allocation, then checks it against
 `programmatic.thumper` in the working directory, prints the JSON document,
-writes `programmatic.thumper.corrected` when it proposes a change, and exits
-with the verdict's exit code.
+and exits with the verdict's exit code. `programmatic.exe bless` records the
+suite in `programmatic.thumper`.

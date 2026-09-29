@@ -18,7 +18,7 @@
     codes. What it states is stable, and so is the summary's colour, which
     follows the exit code ({!Report.val-check}). What it leaves unstated may
     change: the text of each message, the report's column widths, its other
-    colours, and the wrapping of its [rerun:] line. *)
+    colours, and the wrapping of its [rerun:] and [accept:] lines. *)
 
 (** {1:paths The default baseline's directory} *)
 
@@ -103,20 +103,17 @@ val main :
     + It resolves the baseline path: [--baseline], else [baseline], else
       [<name>.thumper] in {!default_baseline_dir}'s directory. It passes that
       function [INSIDE_DUNE], [DUNE_SOURCEROOT] and [Sys.executable_name], not
-      [argv.(0)]. The corrected file's path is the baseline path followed by
-      [.corrected].
-    + It removes the corrected file and the [--json] file, whatever the
-      subcommand; a file it cannot remove stops the run. It stops when the
-      directory of the [--json] file, or under [bless] that of the corrected
-      file, is not a writable directory.
+      [argv.(0)].
+    + It removes the [--json] file; a file it cannot remove stops the run. It
+      stops when the directory of the [--json] file, or under [bless] that of
+      the baseline, is not a writable directory.
     + It decides once whether the report is coloured: always under
       [--color always], never under [--color never], and under [--color auto],
       the default, when stdout is a terminal or the process is a dune rule
       action, unless [NO_COLOR] is set and non-empty. The process is a dune rule
-      action, where the rule's [diff?] stages the corrected file for
-      [dune promote], iff [INSIDE_DUNE] is set to some [v] and the working
-      directory has a [_build] segment or, when [v] is absolute, lies strictly
-      under [Filename.dirname v]. Nothing [main] prints on stderr is coloured.
+      action iff [INSIDE_DUNE] is set to some [v] and the working directory has
+      a [_build] segment or, when [v] is absolute, lies strictly under
+      [Filename.dirname v]. Nothing [main] prints on stderr is coloured.
     + It runs the subcommand, whose exit code it returns.
 
     [check] and [bless] measure with [config], {!Config.default} by default,
@@ -132,28 +129,32 @@ val main :
     It reads neither the baseline nor [THUMPER_MACHINE] and takes no lock.
 
     [check] validates [THUMPER_MACHINE], selects the cases as [list] does, and
-    reads the baseline. When there is no baseline file, it stops unless the
-    corrected file's directory is a writable directory. It waits for a quiet
-    host under [--wait-quiet]. It then holds the measurement lock
-    ({!Env.Lock.with_lock}) around {!Check.run_with}, whose own acquisition
-    nests. It writes the [--json] file, then the corrected file when
-    {!Verdict.corrected} is [Some], prints {!Report.val-check}'s report on
-    stdout and returns [Verdict.exit_code ~strict]. Its {!type:Report.render}
-    has [exe] set to [argv.(0)], or [None] in a dune rule action; a path
-    [argv.(0)] is made absolute against the working directory, its directory is
-    resolved with [Unix.realpath], and it is written [./<rel>] when it lies
-    under the working directory, absolute otherwise. Its [accept] is
-    [dune promote] in a dune rule action and [mv <corrected> <baseline>]
-    otherwise, each path written with {!Report.shell_arg}. Its [rerun_flags]
-    hold [--quick] or [--precise] when given, [--baseline] when [argv] gave one,
-    and one [--tag] per tag. When the corrected file cannot be written, the
-    report prints without its [accept:] line before the stop.
+    reads the baseline. It waits for a quiet host under [--wait-quiet]. It then
+    holds the measurement lock ({!Env.Lock.with_lock}) around {!Check.run_with},
+    whose own acquisition nests. It writes the [--json] file, prints
+    {!Report.val-check}'s report on stdout and returns
+    [Verdict.exit_code ~strict]. It writes no baseline.
+
+    The hints of the report paste from the {e hint directory}: the working
+    directory, or in a dune rule action the real path of [DUNE_SOURCEROOT], and
+    none when it is unset. The {!type:Report.render}'s [exe] is [argv.(0)]: a
+    bare name as it is, and a path made absolute against the working directory,
+    its directory resolved with [Unix.realpath], then written [./<rel>] when it
+    lies under the hint directory and absolute otherwise. Its [flags] hold
+    [--quick] or [--precise] when given, [--baseline] when [argv] gave one, and
+    one [--tag] per tag, each argument written with {!Report.shell_arg}. The
+    [--baseline] argument is as typed, except in a dune rule action whose
+    [INSIDE_DUNE] is absolute and [DUNE_SOURCEROOT] set, where a relative path
+    is made absolute against the working directory and written relative to the
+    build context when it lies under it, which names its source file relative to
+    the workspace root, else relative to the workspace root when it lies under
+    it, else absolute.
 
     [bless] selects the cases as [list] does, validates [THUMPER_MACHINE], reads
     the baseline and waits under [--wait-quiet]. An expired wait stops the run
     unless [--force] is given or the host is quiet by then. It then holds the
     lock, samples the load, and stops on a loaded host unless [--force] is
-    given, and then records the load through {!Verdict.bless}'s [annotations].
-    It measures with {!Check.measure}, writes {!Verdict.bless}'s file as the
-    corrected file, prints {!Report.val-bless}'s report on stdout, and returns
-    [0]. *)
+    given, and then records the load through {!Baseline.record}'s [annotations].
+    It measures with {!Check.measure}, writes {!Baseline.record}'s file over the
+    baseline, with {!Check.select}'s selection, prints {!Report.val-bless}'s
+    report on stdout, and returns [0]. *)

@@ -78,10 +78,10 @@ let scripted_config =
   Config.(default |> fork false |> warmup 0. |> metrics [ Metric.wall_time ])
 
 let check ?(load = quiet) ?on_progress ?(config = scripted_config) ?budgets
-    ?prune ?filter ?baseline ?(name = "digest") w benches =
+    ?filter ?baseline ?(name = "digest") w benches =
   state_env ();
   Check.run_with ~instruments:(scripted w) ~load ?on_progress ~config ?budgets
-    ?prune ?filter ?baseline name benches
+    ?filter ?baseline name benches
 
 (* A load that counts its samples and answers [answer n] to the nth. *)
 let counted answer =
@@ -108,11 +108,6 @@ let baseline_of rows =
 let wall_row ?(k = 8) id per_call =
   Baseline.sampled_row ~id ~metric:"wall_time" ~k
     ~samples:(Array.make 5 per_call)
-
-let corrected_ids v =
-  let file = require_some (Verdict.corrected v) in
-  let section = require_some (Baseline.section file "testmachine") in
-  List.map Baseline.row_id (Baseline.rows section)
 
 (* Verdicts *)
 
@@ -371,28 +366,16 @@ let the_verdict_carries_the_suite_name () =
   let v = check ~name:"digest" w [ bench w "a" ms_ns ] in
   equal string "digest" (Verdict.suite v)
 
-let confirmed_improvement (r : Verdict.metric_report) =
-  match r.verdict with
-  | Verdict.Judged (Verdict.Improved (Verdict.Confirmed { pooled; k; _ })) ->
-      Some (pooled, k)
-  | _ -> None
-
 (* The baseline row holds 4 ms per call at a batch of 8 and the case takes
-   1 ms: the first sweep queues an improvement, the confirmation sweep
-   measures the case again at the same batch size, and the decided relation
-   pools both sweeps' samples. *)
+   1 ms: the first sweep queues an improvement at the row's batch size, and
+   the confirmation sweep measures the case again at the same one, which a
+   confirmed relation requires. *)
 let an_improvement_is_confirmed_at_the_frozen_batch_size () =
   let w = world () in
   let baseline = baseline_of [ wall_row ~k:8 "a" 4.0e-3 ] in
   let v = check ~baseline w [ bench w "a" ms_ns ] in
-  let pooled, k =
-    require_match confirmed_improvement (report v ~case:"a" Metric.wall_time)
-  in
-  equal int 8 k;
-  equal
-    (array (float 1e-12))
-    (Array.make (2 * Config.default.Config.n) 1.0e-3)
-    pooled
+  equal int 8 (trial_k v ~case:"a");
+  equal string "improved, confirmed" (relation v ~case:"a" Metric.wall_time)
 
 let without_a_section_every_metric_is_proposed () =
   let w = world () in
@@ -506,18 +489,13 @@ let slowed_between_the_sweeps w slow =
     w
     [ Bench.bench "a" (stepper w step) ]
 
-let confirmed_regression (r : Verdict.metric_report) =
-  match r.verdict with
-  | Verdict.Judged (Verdict.Regressed (Verdict.Confirmed { pooled; k; _ })) ->
-      Some (Array.length pooled, k)
-  | _ -> None
-
+(* A confirmed relation requires the confirmation at the first trial's batch
+   size. *)
 let the_confirmation_runs_at_the_first_trial_k () =
   let w = world () in
   let v = slowed_between_the_sweeps w 750_000 in
-  equal (pair int int)
-    (2 * Config.default.Config.n, 32)
-    (require_match confirmed_regression (report v ~case:"a" Metric.wall_time))
+  equal int 32 (trial_k v ~case:"a");
+  equal string "regressed, confirmed" (relation v ~case:"a" Metric.wall_time)
 
 let a_recalibrated_confirmation_is_unconfirmed () =
   let w = world () in
@@ -561,26 +539,12 @@ let exact_rows =
       "inconclusive, batch drifted" );
   ]
 
-(* "b" is new, so the corrected file exists; "dead" is a row of a case the
-   suite no longer has. *)
-let pruned ?prune ?filter () =
+let a_filter_judges_the_selected_cases_alone () =
   let w = world () in
-  let baseline = baseline_of [ wall_row "a" 1e-3; wall_row "dead" 1e-3 ] in
-  check ?prune ?filter ~baseline w [ bench w "a" ms_ns; bench w "b" ms_ns ]
-
-let without_prune_absent_rows_stay () =
-  let v = pruned () in
-  equal (list string) [ "a"; "b"; "dead" ] (corrected_ids v);
-  equal (list string) [] (Verdict.warnings v)
-
-let with_prune_a_full_selection_prunes () =
-  let v = pruned ~prune:true () in
-  equal (list string) [ "a"; "b" ] (corrected_ids v);
-  contains ~sub:"dead" (String.concat "\n" (Verdict.warnings v))
-
-let with_prune_a_partial_selection_keeps () =
-  let v = pruned ~prune:true ~filter:(`Id "b") () in
-  equal (list string) [ "a"; "b"; "dead" ] (corrected_ids v);
+  let baseline = baseline_of [ wall_row "a" 1e-3 ] in
+  let v =
+    check ~filter:(`Id "b") ~baseline w [ bench w "a" ms_ns; bench w "b" ms_ns ]
+  in
   equal (list string) [ "b" ]
     (List.map (fun c -> c.Verdict.id) (Verdict.cases v))
 
@@ -632,8 +596,7 @@ let default_seams_config =
     quick |> warmup 0. |> batch_floor 1e-4 |> metrics [ Metric.wall_time ])
 
 (* The default seams: the real clock, a forked worker, the real load and the
-   lock. "noop" has no row, so it is proposed whatever the host's load, and
-   the corrected file keeps the absent case's row. *)
+   lock. "noop" has no row, so it is proposed whatever the host's load. *)
 let run_on_its_default_seams () =
   state_env ();
   let baseline = baseline_of [ wall_row "dead" 1e-3 ] in
@@ -641,8 +604,7 @@ let run_on_its_default_seams () =
     Check.run ~config:default_seams_config ~baseline "digest"
       [ Bench.bench "noop" ignore ]
   in
-  equal string "proposed" (relation v ~case:"noop" Metric.wall_time);
-  equal (list string) [ "dead"; "noop" ] (corrected_ids v)
+  equal string "proposed" (relation v ~case:"noop" Metric.wall_time)
 
 let checking =
   group "Checking"
@@ -673,12 +635,8 @@ let checking =
         exact_rows
         (fun (_, row_k, expected) ->
           equal string expected (exact_count_under_a_recalibration ~row_k));
-      test "without prune the rows of absent cases stay"
-        without_prune_absent_rows_stay;
-      test "with prune a full selection prunes absent cases"
-        with_prune_a_full_selection_prunes;
-      test "with prune a partial selection prunes nothing"
-        with_prune_a_partial_selection_keeps;
+      test "a filter judges the selected cases alone"
+        a_filter_judges_the_selected_cases_alone;
       cases "refused before measuring"
         ~name:(fun (name, _, _) -> name)
         refused_before_measuring
@@ -686,8 +644,7 @@ let checking =
           let w = world () in
           raises e (fun () -> run w);
           equal ~msg:"calls" int 0 w.calls);
-      slow ~timeout:30.
-        "run on its default seams proposes a new case and keeps absent rows"
+      slow ~timeout:30. "run on its default seams proposes a new case"
         run_on_its_default_seams;
     ]
 

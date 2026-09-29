@@ -1,21 +1,14 @@
-A matching baseline passes: exit 0 and no corrected file, since an
-equivalent run changes nothing. The alloc cases are judged on exact counts,
-so the outcome holds under any load.
+A matching baseline passes: exit 0, and the baseline is left as it was.
+The alloc cases are judged on exact counts, so the outcome holds under any
+load.
 
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f alloc > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
+  $ $FIX bless --quick --force -f alloc > /dev/null 2>&1
   $ cp fixture.thumper before.thumper
 
-A corrected file left by an interrupted run is removed at startup, so no
-stale file survives a run that proposes nothing.
-
-  $ echo stale > fixture.thumper.corrected
   $ $FIX check --quick -f alloc > out.log 2>&1
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
   $ cmp fixture.thumper before.thumper
 
 Outside a rule action the header names the baseline by its absolute path,
@@ -32,13 +25,12 @@ The status line is for a terminal: a redirected run carries none of it.
   0
   [1]
 
---baseline PATH replaces the default file: the run judges PATH and writes
-PATH.corrected, and an absent PATH is a first run.
+--baseline PATH replaces the default file: the run judges PATH, and an
+absent PATH is a first run, which writes nothing.
 
   $ $FIX check --quick -f alloc --baseline alt.thumper > alt.log 2>&1
-  $ test -f alt.thumper.corrected && echo alt-corrected-file
-  alt-corrected-file
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
   $ grep -o 'no baseline for machine testkey' alt.log
   no baseline for machine testkey
+  $ test ! -e alt.thumper && echo no-file
+  no-file
+  $ cmp fixture.thumper before.thumper

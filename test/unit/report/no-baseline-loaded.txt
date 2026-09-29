@@ -2,5 +2,4 @@ thumper: digest — no baseline for machine testkey (Test CPU)
 
   proposed  1.00 us  ±0.0%  54 w  alpha
 
-  accept:  dune promote
-  warning: load 7.9 on 8 cores; prefer a quiet host before accepting
+  accept:  bench.exe bless

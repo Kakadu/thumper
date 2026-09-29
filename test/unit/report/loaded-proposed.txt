@@ -4,6 +4,6 @@ warning: load 7.9 on 8 cores; timing verdicts degraded
   inconclusive  2.00 us  ±0.0%  54 w  alpha
       environment  +100.0% [+100.0, +100.0]; proposed alloc
 
-  accept:  dune promote
+  accept:  bench.exe bless
 
   1 case: 0 passed, 1 inconclusive.

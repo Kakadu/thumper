@@ -21,5 +21,5 @@ refused where is test_cli's; this session pins the streams and the codes.
 No usage error leaves a file: the command line is read before anything
 touches the filesystem.
 
-  $ test ! -e fixture.thumper && test ! -e fixture.thumper.corrected && echo no-files
-  no-files
+  $ test ! -e fixture.thumper && echo no-baseline
+  no-baseline

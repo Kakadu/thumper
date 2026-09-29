@@ -514,7 +514,7 @@ def build() -> str:
         (0.005, b20, c20),
         (0.05, b20, c20),
         (0.025, b20, c20),
-        (0.005, b40, c20),  # pooled-2n shape of an advanced row: m = 40 vs n = 20
+        (0.005, b40, c20),  # a row recorded at twice this run's n: m = 40 vs n = 20
         (0.005, b20, c40),
         (0.005, b11, c11),
         (0.05, b11, c11),

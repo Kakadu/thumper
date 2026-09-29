@@ -137,12 +137,10 @@
    (diff? report/over-cap-new-row.txt report/over-cap-new-row.txt.corrected)
    (diff? report/over-cap-sampled.txt report/over-cap-sampled.txt.corrected)
    (diff? report/proposed-metric.txt report/proposed-metric.txt.corrected)
-   (diff? report/pruned.txt report/pruned.txt.corrected)
    (diff? report/sampled-alloc.txt report/sampled-alloc.txt.corrected)
    (diff?
     report/sampled-alloc-small.txt
     report/sampled-alloc-small.txt.corrected)
-   (diff? report/stale-partial.txt report/stale-partial.txt.corrected)
    (diff? report/time-units.txt report/time-units.txt.corrected)
    (diff? report/unconfirmed.txt report/unconfirmed.txt.corrected)
    (diff? report/within-budget.txt report/within-budget.txt.corrected))))

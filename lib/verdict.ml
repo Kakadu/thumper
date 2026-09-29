@@ -25,12 +25,7 @@ type reason =
 
 type strong =
   | Exact_change of { baseline : int; candidate : int }
-  | Confirmed of {
-      first : shift;
-      confirmation : shift;
-      pooled : float array;
-      k : int;
-    }
+  | Confirmed of { first : shift; confirmation : shift }
 
 type relation =
   | Improved of strong
@@ -84,9 +79,8 @@ let band r = Float.min band_cap (r /. 2.)
 type pending = {
   p_dir : [ `Improved | `Regressed ];
   p_first : shift;
-  p_first_sorted : float array;
-      (* first-pass candidate samples; never mutated *)
-  p_first_k : int; (* their batch size, which the confirmation must match *)
+  p_first_k : int;
+      (* the first trial's batch size, which the confirmation must match *)
   p_baseline_log : float array;
   p_e : float;
   p_r : float;
@@ -105,10 +99,7 @@ type pcase = {
 type core = {
   cr_identity : Baseline.identity;
   cr_suite : string;
-  cr_file : Baseline.t; (* the baseline judged against; [corrected]'s input *)
-  cr_selection : [ `Full | `Partial ];
   cr_comparison : comparison;
-  cr_warnings : string list;
 }
 
 type provisional = { p_core : core; p_cases : pcase list }
@@ -233,7 +224,6 @@ let judge_sampled ~load ~r ~row_k ~baseline ~cand ~trial_k =
             {
               p_dir = dir;
               p_first = sh;
-              p_first_sorted = cand.Run.sorted;
               p_first_k = trial_k;
               p_baseline_log = baseline_log;
               p_e = e;
@@ -337,47 +327,9 @@ let judge_metric ~load ~section ~id ~trial ~budget metric measurement =
           | Budget.Relative r ->
               judge_sampled ~load ~r ~row_k ~baseline:samples ~cand ~trial_k))
 
-let absent_ids s ~case_ids =
-  List.sort_uniq String.compare
-    (List.filter_map
-       (fun row ->
-         let id = Baseline.row_id row in
-         if List.mem id case_ids then None else Some id)
-       (Baseline.rows s))
-
-(* A stale section is replaced whole, so under a partial selection the
-   corrected file loses the unselected cases' rows; [bless] prints the same
-   notice. *)
-let stale_partial_notice ~selection ~comparison ~section ~case_ids =
-  match (selection, comparison, section) with
-  | `Partial, Stale _, Some s ->
-      let dropped = absent_ids s ~case_ids in
-      let n = List.length dropped in
-      if n = 0 then []
-      else
-        [
-          strf
-            "partial selection on a stale section: the corrected file \
-             re-records this machine's whole section and drops the rows of the \
-             %d unselected case%s"
-            n
-            (if n = 1 then "" else "s");
-        ]
-  | _ -> []
-
-let prune_notices ~selection ~comparison ~section ~case_ids =
-  match (selection, comparison, section) with
-  | `Full, Compared, Some s ->
-      List.map
-        (strf
-           "case %s no longer exists in this binary; its rows will be pruned \
-            from the corrected file")
-        (absent_ids s ~case_ids)
-  | _ -> []
-
-let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
-  let case_ids = List.map (fun (c, _) -> Bench.id c) cases in
-  check_distinct ~fname:"Verdict.judge" ~what:"case id" ~ids:case_ids;
+let judge ~identity ~suite ~load ~budgets ~file ~cases =
+  check_distinct ~fname:"Verdict.judge" ~what:"case id"
+    ~ids:(List.map (fun (c, _) -> Bench.id c) cases);
   let section = Baseline.section file identity.Baseline.machine in
   let comparison = classify_comparison identity section in
   let comparable =
@@ -411,20 +363,9 @@ let judge ~identity ~suite ~load ~selection ~budgets ~file ~cases =
         })
       cases
   in
-  let cr_warnings =
-    prune_notices ~selection ~comparison ~section ~case_ids
-    @ stale_partial_notice ~selection ~comparison ~section ~case_ids
-  in
   {
     p_core =
-      {
-        cr_identity = identity;
-        cr_suite = suite;
-        cr_file = file;
-        cr_selection = selection;
-        cr_comparison = comparison;
-        cr_warnings;
-      };
+      { cr_identity = identity; cr_suite = suite; cr_comparison = comparison };
     p_cases;
   }
 
@@ -454,8 +395,8 @@ let resolve_pending ~load ~conf metric pd =
     match conf with
     | None -> unconfirmed pd
     | Some trial -> (
-        (* A confirmation that recalibrated measured at another batch size:
-           two batch sizes are never pooled into one row. *)
+        (* A confirmation that recalibrated measured at another batch size,
+           which the first trial's shift does not describe. *)
         match Run.Trial.measurement trial metric with
         | Some (Run.Samples s)
           when (not s.Run.drifted) && all_positive s.Run.sorted
@@ -478,20 +419,7 @@ let resolve_pending ~load ~conf metric pd =
                  && bias_comparable ~e:pd.p_e confirmation
             then unconfirmed pd
             else
-              (* Pool both trials, which an improved row advances to;
-                 [Array.append] is a fresh array, so neither trial's evidence
-                 is sorted in place. *)
-              let pooled = Array.append pd.p_first_sorted s.Run.sorted in
-              let () = Array.sort Float.compare pooled in
-              let strong =
-                Confirmed
-                  {
-                    first = pd.p_first;
-                    confirmation;
-                    pooled;
-                    k = Run.Trial.k trial;
-                  }
-              in
+              let strong = Confirmed { first = pd.p_first; confirmation } in
               match pd.p_dir with
               | `Improved -> Improved strong
               | `Regressed -> Regressed strong)
@@ -520,9 +448,8 @@ let decide ~load ~confirmations:confs p =
               { metric; verdict; budget })
             pc.c_states
         in
-        (* The confirmation's samples are judged and pooled, so its
-           warnings are the case's too; one the first trial raised already
-           is not repeated. *)
+        (* The confirmation's samples are judged, so its warnings are the
+           case's too; one the first trial raised already is not repeated. *)
         let conf_warnings =
           match conf with
           | None -> []
@@ -546,7 +473,6 @@ let decide ~load ~confirmations:confs p =
 
 let comparison t = t.core.cr_comparison
 let cases t = t.v_cases
-let warnings t = t.core.cr_warnings
 let suite t = t.core.cr_suite
 let identity t = t.core.cr_identity
 let load t = t.v_load
@@ -814,118 +740,3 @@ let to_json t =
     t.v_cases;
   Buffer.add_string buf "]}";
   Buffer.contents buf
-
-(* Write paths *)
-
-let row_of_measurement ~id ~k metric measurement =
-  match measurement with
-  | Run.Exact n -> Baseline.exact_row ~id ~metric:(Metric.id metric) n
-  | Run.Samples s ->
-      Baseline.sampled_row ~id ~metric:(Metric.id metric) ~k
-        ~samples:s.Run.sorted
-
-let rows_of_trial id trial =
-  List.map
-    (fun (metric, measurement) ->
-      row_of_measurement ~id ~k:(Run.Trial.k trial) metric measurement)
-    (Run.Trial.measurements trial)
-
-let with_suite_header ~suite file =
-  match Baseline.suite file with
-  | None -> Baseline.empty ~suite
-  | Some _ -> file
-
-let corrected t =
-  let file = t.core.cr_file in
-  let machine = t.core.cr_identity.Baseline.machine in
-  let result =
-    match t.core.cr_comparison with
-    | No_baseline | Stale _ ->
-        (* A missing or stale section is replaced by this run's evidence. *)
-        let rows =
-          List.concat_map (fun c -> rows_of_trial c.id c.trial) t.v_cases
-        in
-        Baseline.set_section
-          (with_suite_header ~suite:t.core.cr_suite file)
-          t.core.cr_identity rows
-    | Compared ->
-        let advance =
-          List.concat_map
-            (fun c ->
-              List.filter_map
-                (fun r ->
-                  match r.verdict with
-                  | Judged (Improved (Confirmed { pooled; k; _ })) ->
-                      Some
-                        (Baseline.sampled_row ~id:c.id
-                           ~metric:(Metric.id r.metric) ~k ~samples:pooled)
-                  | Judged (Improved (Exact_change { candidate = value; _ })) ->
-                      Some
-                        (Baseline.exact_row ~id:c.id
-                           ~metric:(Metric.id r.metric) value)
-                  | Proposed ->
-                      Option.map
-                        (row_of_measurement ~id:c.id ~k:(Run.Trial.k c.trial)
-                           r.metric)
-                        (Run.Trial.measurement c.trial r.metric)
-                  | Judged
-                      ( Regressed _ | Equivalent _ | Changed_within_budget _
-                      | Within_budget _ | Inconclusive _ ) ->
-                      None)
-                c.reports)
-            t.v_cases
-        in
-        let prune =
-          match t.core.cr_selection with
-          | `Partial -> []
-          | `Full -> (
-              match Baseline.section file machine with
-              | None -> []
-              | Some s ->
-                  let live = List.map (fun c -> c.id) t.v_cases in
-                  List.filter_map
-                    (fun row ->
-                      let id = Baseline.row_id row in
-                      if List.mem id live then None
-                      else Some (id, Baseline.row_metric row))
-                    (Baseline.rows s))
-        in
-        if advance = [] && prune = [] then file
-        else Baseline.update_rows file ~machine ~advance ~prune
-  in
-  if String.equal (Baseline.to_string result) (Baseline.to_string file) then
-    None
-  else Some result
-
-let bless ?(annotations = []) ~identity ~suite ~selection ~run file =
-  let trials = Run.trials run in
-  let ids = List.map fst trials in
-  let rows =
-    List.concat_map (fun (id, trial) -> rows_of_trial id trial) trials
-  in
-  let machine = identity.Baseline.machine in
-  let section = Baseline.section file machine in
-  let comparison = classify_comparison identity section in
-  match (selection, comparison, section) with
-  | `Partial, Compared, Some s ->
-      (* A current section keeps its header and every unselected row. The
-         selected cases' rows are replaced by case id: a metric a selected
-         case no longer collects loses its row too. *)
-      let key r = (Baseline.row_id r, Baseline.row_metric r) in
-      let recorded = List.map key rows in
-      let prune =
-        List.filter_map
-          (fun row ->
-            let k = key row in
-            if List.mem (fst k) ids && not (List.mem k recorded) then Some k
-            else None)
-          (Baseline.rows s)
-      in
-      (Baseline.update_rows ~annotations file ~machine ~advance:rows ~prune, [])
-  | _ ->
-      (* A full selection, or a missing or stale section: the section is
-         re-recorded whole, and a partial one says what it drops. *)
-      ( Baseline.set_section ~annotations
-          (with_suite_header ~suite file)
-          identity rows,
-        stale_partial_notice ~selection ~comparison ~section ~case_ids:ids )

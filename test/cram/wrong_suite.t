@@ -6,10 +6,10 @@ and no '# suite:' header breaks the format and is corrupt.
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f busy/spin > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
+  $ $FIX bless --quick --force -f busy/spin > /dev/null 2>&1
   $ sed 's/^# suite: fixture$/# suite: other/' fixture.thumper > renamed
   $ mv renamed fixture.thumper
+  $ cp fixture.thumper before.thumper
 
 check stops before measuring, names both suites and the remedy, and writes
 nothing. bless stops the same way: recording the section under the wrong
@@ -19,14 +19,11 @@ name would commit the wrong file.
   [2]
   $ cat err.log
   thumper: $TESTCASE_ROOT/fixture.thumper: baseline is for suite 'other', not 'fixture'; pass this suite's file with --baseline, or update the '# suite:' header if the suite was renamed
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
   $ $FIX bless --force --quick 2> err.log
   [2]
   $ cat err.log
   thumper: $TESTCASE_ROOT/fixture.thumper: baseline is for suite 'other', not 'fixture'; pass this suite's file with --baseline, or update the '# suite:' header if the suite was renamed
-  $ test ! -e fixture.thumper.corrected && echo no-corrected-file
-  no-corrected-file
+  $ cmp fixture.thumper before.thumper
 
 Without its '# suite:' header the file is corrupt at its second line.
 

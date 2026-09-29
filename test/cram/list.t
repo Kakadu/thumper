@@ -14,5 +14,5 @@ nothing measures, the lock is never taken and its directory stays empty.
   err/kill9
   nondet/flip
   $ ls locks
-  $ test ! -e fixture.thumper && test ! -e fixture.thumper.corrected && echo no-files
-  no-files
+  $ test ! -e fixture.thumper && echo no-baseline
+  no-baseline

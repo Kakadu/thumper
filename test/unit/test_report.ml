@@ -75,12 +75,11 @@ let bcase ?budgets id =
 
 (* [cases] judged against [file], each pending case confirmed with the trial
    [confirm] gives for its id, decided under [decide_load]. *)
-let verdict_of_cases ?(load = Env.Quiet) ?(decide_load = Env.Quiet)
-    ?(selection = `Full) ?file ?(confirm = fun _ -> None) cases =
+let verdict_of_cases ?(load = Env.Quiet) ?(decide_load = Env.Quiet) ?file
+    ?(confirm = fun _ -> None) cases =
   let file = match file with Some f -> f | None -> empty_file () in
   let p =
-    Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets:[]
-      ~file ~cases
+    Verdict.judge ~identity:ident ~suite:"digest" ~load ~budgets:[] ~file ~cases
   in
   let confirmations =
     List.filter_map
@@ -94,18 +93,15 @@ let verdict_of ?load ?decide_load ?file ?confirm case_trial =
 
 let loaded = Env.Loaded { load = 7.9; cores = 8 }
 
-let render ?(color = false) ?(accept = "dune promote") ?(exe = Some "bench.exe")
-    ?(github = false) ?(wrote = false) ?(rerun_flags = [])
-    ?(rerun_patterns = []) ?(strict = false) () =
+let render ?(color = false) ?(exe = "bench.exe") ?(github = false) ?(flags = [])
+    ?(patterns = []) ?(strict = false) () =
   {
     Report.color;
-    accept;
     exe;
     github;
     baseline_path = "digest.thumper";
-    wrote_corrected = wrote;
-    rerun_flags;
-    rerun_patterns;
+    flags;
+    patterns;
     strict;
     cpu_model = "Test CPU";
   }
@@ -128,6 +124,20 @@ let failing_cases n =
          ids)
   in
   verdict_of_cases ~file (List.map exact_regression_case ids)
+
+(* [n] cases whose exact allocation improves (54 w to 50 w), ids [case-01]...,
+   and [case-99] failing on its exact allocation. *)
+let improved_cases n =
+  let ids = List.init n (fun i -> strf "case-%02d" (i + 1)) in
+  let file =
+    file_of
+      (List.concat_map
+         (fun id -> [ wall_row id (ties 5 1e-6); alloc_row id 54 ])
+         ("case-99" :: ids))
+  in
+  verdict_of_cases ~file
+    (List.map (fun id -> (bcase id, trial ~alloc:(Some 50) (ties 5 1e-6))) ids
+    @ [ exact_regression_case "case-99" ])
 
 (* A 71-word exact count under a [cap]-word cap, with no baseline row for the
    count: on a first run ([file] empty), or beside a compared time row. *)
@@ -179,7 +189,7 @@ let loaded_regression () =
     (bcase "alpha", trial (ties 5 2e-6))
 
 (* Under load, a doubled time beside an allocation the section has no row
-   for, so the corrected file is written. *)
+   for. *)
 let loaded_proposed () =
   verdict_of ~load:loaded ~decide_load:loaded ~file:(time_row_only ())
     (bcase "alpha", trial (ties 5 2e-6))
@@ -366,33 +376,6 @@ let growth_from_zero () =
     ( bcase ~budgets:[ Budget.at_most ~metric:m_alloc 10. ] "alpha",
       trial ~alloc:(Some 5) (ties 5 1e-6) )
 
-(* A full run of a suite that no longer has the case [gone]. *)
-let pruned () =
-  let file =
-    file_of
-      [
-        wall_row "alpha" (ties 5 1e-6);
-        alloc_row "alpha" 54;
-        wall_row "gone" (ties 5 1e-6);
-        alloc_row "gone" 54;
-      ]
-  in
-  verdict_of ~file (bcase "alpha", trial (ties 5 1e-6))
-
-(* A partial run against a section another compiler recorded. *)
-let stale_partial () =
-  let file =
-    file_of ~identity:stale_ident
-      [
-        wall_row "alpha" (ties 5 1e-6);
-        alloc_row "alpha" 54;
-        wall_row "beta" (ties 5 1e-6);
-        alloc_row "beta" 54;
-      ]
-  in
-  verdict_of_cases ~selection:`Partial ~file
-    [ (bcase "alpha", trial (ties 5 1e-6)) ]
-
 let github () =
   let file =
     file_of
@@ -420,60 +403,50 @@ let blessed_run () =
           ] );
     ]
 
-(* The notices of a partial bless over a stale section. *)
-let stale_partial_notices run =
-  let file = file_of ~identity:stale_ident [ wall_row "gamma" (ties 5 1e-6) ] in
-  snd
-    (Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial ~run file)
-
 (* The gallery *)
 
 (* A report state: the claim it shows, its golden's name and the report in
    either style. *)
 type state = { claim : string; golden : string; report : color:bool -> string }
 
-let check ?github ?wrote golden claim verdict =
-  let report ~color =
-    Report.check (render ~color ?github ?wrote ()) (verdict ())
-  in
+let check ?github golden claim verdict =
+  let report ~color = Report.check (render ~color ?github ()) (verdict ()) in
   { claim; golden; report }
 
-let bless ?(load = Env.Quiet) ?(notices = fun _ -> []) golden claim =
+let bless ?(load = Env.Quiet) golden claim =
   let report ~color =
-    let run = blessed_run () in
-    Report.bless ~color ~suite:"digest" ~machine:"testkey" ~cases:2 ~load
-      ~notices:(notices run) ~accept:"dune promote" run
+    Report.bless ~color ~suite:"digest" ~machine:"testkey"
+      ~baseline_path:"digest.thumper" ~cases:2 ~load (blessed_run ())
   in
   { claim; golden; report }
 
 let check_states =
   [
-    check ~wrote:true "mixed"
+    check "mixed"
       "a mixed run prints the header, the table, the actions and the summary"
       mixed;
     check "equivalent"
       "a passing run prints the header, the table and the summary" equivalent;
-    check ~wrote:true "no-baseline"
+    check "no-baseline"
       "a run with no baseline proposes every row above the accept line"
       no_baseline;
-    check ~wrote:true "no-baseline-loaded"
-      "a loaded run with no baseline warns beside the accept line"
+    check "no-baseline-loaded"
+      "a loaded run with no baseline compares nothing and warns of nothing"
       no_baseline_loaded;
-    check ~wrote:true "proposed-metric"
+    check "proposed-metric"
       "a metric without a row reads proposed beside a compared one"
       proposed_metric;
     check "loaded"
       "a loaded run warns under the header and prints the estimate it withheld"
       loaded_regression;
-    check ~wrote:true "loaded-proposed"
-      "a loaded run that writes the corrected file warns once, under the header"
+    check "loaded-proposed"
+      "a loaded run with a proposed metric warns under the header alone"
       loaded_proposed;
     check "failing-first" "the failing metric opens the row" failing_first;
     check "default-budget"
       "a metric no scope budgets fails or is inconclusive under the default"
       default_budget;
-    check ~wrote:true "improved" "an improvement prints its interval"
-      improvement;
+    check "improved" "an improvement prints its interval" improvement;
     check "within-budget"
       "within budget prints the interval, or the estimate of a change, and the \
        budget"
@@ -485,29 +458,24 @@ let check_states =
       every_reason;
     check "time-units" "the time column takes the unit of its smallest value"
       time_units;
-    check ~wrote:true "exact-alloc"
+    check "exact-alloc"
       "an exact count prints whole words beside a scaled sampled one"
       exact_alloc;
-    check ~wrote:true "sampled-alloc"
+    check "sampled-alloc"
       "a large sampled count prints a grouped integer in the column's unit"
       sampled_alloc_large;
-    check ~wrote:true "sampled-alloc-small"
+    check "sampled-alloc-small"
       "a small sampled count keeps three significant digits" sampled_alloc_small;
     check "case-warning" "a case's warnings print after the table" case_warning;
-    check ~wrote:true ~github:true "over-cap-first-run"
+    check ~github:true "over-cap-first-run"
       "an exact count over its cap fails a first run" over_cap;
-    check ~wrote:true "over-cap-new-row"
-      "an exact count over its cap fails without a row" (fun () ->
-        over_cap ~file:(time_row_only ()) ());
+    check "over-cap-new-row" "an exact count over its cap fails without a row"
+      (fun () -> over_cap ~file:(time_row_only ()) ());
     check ~github:true "over-cap-sampled"
       "a sampled count under a cap reads inconclusive: exactness lost"
       over_cap_sampled;
     check "growth-from-zero"
       "growth from zero within a cap prints +inf% and the cap" growth_from_zero;
-    check ~wrote:true "pruned" "a full run warns of each pruned row" pruned;
-    check ~wrote:true "stale-partial"
-      "a partial run against a stale section warns of the dropped rows"
-      stale_partial;
     check ~github:true "github" "each failing metric has its ::error:: line"
       github;
   ]
@@ -515,9 +483,9 @@ let check_states =
 let bless_states =
   [
     bless "bless"
-      "the header heads proposed rows, their warnings and the accept line";
-    bless ~load:loaded ~notices:stale_partial_notices "bless-forced"
-      "a forced bless warns that the load was recorded, beside the notices";
+      "the header names the file, above the blessed rows and their warnings";
+    bless ~load:loaded "bless-forced"
+      "a forced bless warns that the load was recorded";
   ]
 
 let golden_path name = strf "test/unit/report/%s.txt" name
@@ -609,8 +577,8 @@ let rerun_line report =
 let the_rerun_line_carries_the_flags () =
   let report =
     Report.check
-      (render ~exe:(Some "my dir/bench.exe")
-         ~rerun_flags:[ "--quick"; "--baseline alt/base.thumper"; "--tag lab" ]
+      (render ~exe:"my dir/bench.exe"
+         ~flags:[ "--quick"; "--baseline alt/base.thumper"; "--tag lab" ]
          ())
       (exact_regression ())
   in
@@ -621,16 +589,11 @@ let the_rerun_line_carries_the_flags () =
       \           -f alpha\n"
     report
 
-let without_an_executable_no_rerun_line () =
-  let report = Report.check (render ~exe:None ()) (exact_regression ()) in
-  not_contains ~sub:"rerun:" report;
-  contains ~sub:"\n  REGRESSED  1.00 us  \xc2\xb10.0%  71 w  alpha\n" report
-
 let the_rerun_line_wraps_within_80_columns () =
   let report =
     Report.check
-      (render ~exe:(Some "./_build/default/bench/bench_digest.exe")
-         ~rerun_flags:[ "--quick"; "--baseline bench/digest.thumper" ]
+      (render ~exe:"./_build/default/bench/bench_digest.exe"
+         ~flags:[ "--quick"; "--baseline bench/digest.thumper" ]
          ())
       (failing_cases 4)
   in
@@ -654,9 +617,7 @@ let column_80 =
 
 let past_ten_cases_the_patterns_select () =
   let report =
-    Report.check
-      (render ~rerun_patterns:[ "case"; "my case" ] ())
-      (failing_cases 11)
+    Report.check (render ~patterns:[ "case"; "my case" ] ()) (failing_cases 11)
   in
   contains ~sub:"  rerun:   bench.exe -f case -f 'my case'\n" report;
   not_contains ~sub:"-f case-01" report
@@ -774,6 +735,52 @@ let recorded_identities =
        release)" );
   ]
 
+(* The accept line of each verdict, [None] for none. *)
+let accept_lines =
+  [
+    ( "every case proposed: the run's own selection",
+      [],
+      no_baseline,
+      Some "\n  accept:  bench.exe bless\n" );
+    ( "the run's flags come first",
+      [ "--quick"; "--tag lab" ],
+      no_baseline,
+      Some "\n  accept:  bench.exe bless --quick --tag lab\n" );
+    ( "a case with a proposed metric beside a passing one",
+      [],
+      one_proposed,
+      Some "\n  accept:  bench.exe bless -f beta\n" );
+    ( "an improved case beside a failing one",
+      [],
+      mixed,
+      Some "\n  accept:  bench.exe bless -f beta\n" );
+    ("a failing proposed case", [], (fun () -> over_cap ()), None);
+    ("a passing run with no news", [], equivalent, None);
+  ]
+
+(* The accept line, its continuation lines joined. *)
+let accept_line report =
+  let rec from = function
+    | [] -> []
+    | l :: rest when String.starts_with ~prefix:"  accept:" l -> l :: cont rest
+    | _ :: rest -> from rest
+  and cont = function
+    | l :: rest when String.starts_with ~prefix:"          " l -> l :: cont rest
+    | _ -> []
+  in
+  String.concat "\n" (from (String.split_on_char '\n' report))
+
+let past_ten_cases_the_accept_line_names_each () =
+  let line =
+    accept_line
+      (Report.check (render ~patterns:[ "case" ] ()) (improved_cases 11))
+  in
+  List.iter
+    (fun i -> contains ~sub:(strf "-f case-%02d" i) line)
+    (List.init 11 (fun i -> i + 1));
+  not_contains ~sub:"case-99" line;
+  not_contains ~sub:"-f case " line
+
 let first (name, _, _) = name
 let first4 (name, _, _, _) = name
 let first5 (name, _, _, _, _) = name
@@ -784,28 +791,25 @@ let check_report =
     @ [
         test "a styled report prints its escapes" (fun () ->
             expect_file
-              (Report.check (render ~color:true ~wrote:true ()) (mixed ()))
+              (Report.check (render ~color:true ()) (mixed ()))
               (golden_path "mixed-styled"));
-        test "the accept line prints the accept command" (fun () ->
-            contains
-              ~sub:"\n  accept:  mv digest.thumper.corrected digest.thumper\n"
-              (Report.check
-                 (render ~wrote:true
-                    ~accept:"mv digest.thumper.corrected digest.thumper" ())
-                 (no_baseline ())));
+        cases "the accept line blesses the passing cases with news" ~name:first4
+          accept_lines (fun (_, flags, verdict, line) ->
+            let report = Report.check (render ~flags ()) (verdict ()) in
+            match line with
+            | Some sub -> contains ~sub report
+            | None -> not_contains ~sub:"accept:" report);
+        test "past ten cases the accept line names each, never a failing one"
+          past_ten_cases_the_accept_line_names_each;
         test "the rerun line carries the run's flags and quotes the executable"
           the_rerun_line_carries_the_flags;
-        test "without an executable there is no rerun line"
-          without_an_executable_no_rerun_line;
         test "the rerun line wraps within 80 columns under the executable"
           the_rerun_line_wraps_within_80_columns;
         cases "an item joins the line while its backslash fits in 80 columns"
           ~name:first column_80 (fun (_, n, expected) ->
             equal string expected
               (rerun_line
-                 (Report.check
-                    (render ~exe:(Some (exe n)) ())
-                    (failing_cases 2))));
+                 (Report.check (render ~exe:(exe n) ()) (failing_cases 2))));
         test "the rerun line names ten failing cases" (fun () ->
             contains ~sub:" -f case-10\n"
               (Report.check (render ()) (failing_cases 10)));

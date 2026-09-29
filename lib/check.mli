@@ -71,12 +71,10 @@ val select :
 (** [select ?filter ~metrics ~budgets benches] is the cases of [benches] that
     [filter] selects, all of them without a filter, in the order of
     {!Bench.resolve}, and [`Full] iff they are every case of the suite, else
-    [`Partial]. A [`Full] selection lets {!Verdict.corrected} prune the rows of
-    cases the suite no longer has, when the caller holds the whole suite
-    ({!run_with}'s [prune]). [metrics] and [budgets] are the run's, for
-    {!Bench.check_collected}. It measures nothing and takes no lock, so a caller
-    that takes the lock itself can select first, and a broken suite or filter
-    then fails without waiting.
+    [`Partial], as {!Baseline.record} takes it. [metrics] and [budgets] are the
+    run's, for {!Bench.check_collected}. It measures nothing and takes no lock,
+    so a caller that takes the lock itself can select first, and a broken suite
+    or filter then fails without waiting.
 
     Raises [Error (Invalid_suite _)] if {!Bench.resolve} or
     {!Bench.check_collected} refuses [benches], and [Error Empty_selection] if
@@ -107,10 +105,7 @@ val run :
       section, or a case without a sampled row, freezes nothing. {!Measure.case}
       reuses a frozen batch size only while its batch time stays within [0.2] to
       [5] times the batch floor, and recalibrates otherwise.
-    + judges the trials ({!Verdict.judge}) under the first load sample, as a
-      [`Partial] selection whatever it covers: [benches] need not be the whole
-      suite, so in a current section {!Verdict.corrected} keeps every row the
-      run did not judge.
+    + judges the trials ({!Verdict.judge}) under the first load sample.
     + when {!Verdict.confirmations} is not empty, samples the load again. On a
       quiet host it measures each queued case once more, in queue order, at the
       batch size of its first trial. On a loaded host it measures nothing, since
@@ -122,8 +117,7 @@ val run :
     in a fresh worker process, else in this process. [budgets] are the suite's
     budgets and default to [[]] (per-case resolution is {!Verdict.judge}'s).
     [baseline] defaults to the empty-file baseline, against which every metric
-    is proposed. [name] heads the file {!Verdict.corrected} proposes over the
-    empty-file baseline.
+    is proposed. [name] is the suite's name, which the verdict carries.
 
     Raises [Invalid_argument] if [name] is empty or not single-line, if
     [budgets] holds two budgets for one metric, if [THUMPER_MACHINE] is set to
@@ -137,24 +131,19 @@ val run_with :
   ?on_progress:(progress -> unit) ->
   ?config:Config.t ->
   ?budgets:Budget.t list ->
-  ?prune:bool ->
   ?filter:Bench.filter ->
   ?baseline:Baseline.t ->
   string ->
   Bench.t list ->
   Verdict.t
-(** [run_with ?instruments ?load ?on_progress ?prune name benches] is {!run}
-    with its host seams exposed, and its pruning:
+(** [run_with ?instruments ?load ?on_progress name benches] is {!run} with its
+    host seams exposed:
     - [instruments] reads every clock and counter of both sweeps
       ({!Measure.case}), {!Measure.default_instruments} by default.
     - [load] samples the load at the start and before a non-empty confirmation
       queue, {!Env.val-load} by default.
     - [on_progress] receives the ticks of both sweeps, and of none for a queue
-      left unmeasured on a loaded host. It ignores them by default.
-    - [prune], [false] by default, judges a selection of every case of [benches]
-      as {!select}'s [`Full], so that {!Verdict.corrected} prunes the rows of
-      cases [benches] lacks. Only a caller that holds the whole suite passes
-      [true], as {!Cli.main} does. *)
+      left unmeasured on a loaded host. It ignores them by default. *)
 
 (** {1:measuring Measuring} *)
 

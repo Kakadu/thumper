@@ -61,10 +61,9 @@ let select ?filter ~metrics ~budgets benches =
 let frozen_k section ~id =
   Option.bind section (fun s -> Baseline.case_frozen_k s ~id)
 
-(* A failure ends the run in either sweep. In the first, a verdict over fewer
-   cases than were selected would, under a full selection, prune the failed
-   cases' rows from the corrected file. In the second, [Verdict.decide] reads a
-   missing trial as unconfirmed, which exits 0: a dead worker must not pass. *)
+(* A failure ends the run in either sweep. In the first, a verdict would omit
+   the failed case. In the second, [Verdict.decide] reads a missing trial as
+   unconfirmed, which exits 0: a dead worker must not pass. *)
 let measured ?instruments ~config ~frozen_k case =
   match Measure.case ?instruments ~config ~frozen_k case with
   | Ok trial -> trial
@@ -78,8 +77,8 @@ let tick on_progress ~phase ~total ~index case =
 
 let measure ?instruments ?(on_progress = ignore) ?(config = Config.default)
     ?filter benches =
-  let selected, _selection =
-    select ?filter ~metrics:config.Config.metrics ~budgets:[] benches
+  let selected =
+    fst (select ?filter ~metrics:config.Config.metrics ~budgets:[] benches)
   in
   let total = List.length selected in
   under_lock (fun () ->
@@ -95,16 +94,13 @@ let empty_file =
   match Baseline.of_string "" with Ok f -> f | Error _ -> assert false
 
 let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
-    ?(config = Config.default) ?(budgets = []) ?(prune = false) ?filter
+    ?(config = Config.default) ?(budgets = []) ?filter
     ?baseline:(file = empty_file) name benches =
   Baseline.check_suite ~fname:"Thumper.Check.run" name;
   Budget.check_distinct ~fname:"Thumper.Check.run" budgets;
-  let selected, selection =
-    select ?filter ~metrics:config.Config.metrics ~budgets benches
+  let selected =
+    fst (select ?filter ~metrics:config.Config.metrics ~budgets benches)
   in
-  (* Only a caller that holds the whole suite may judge a selection of every
-     case as full, which prunes the rows of cases [benches] lacks. *)
-  let selection = if prune then selection else `Partial in
   let identity =
     {
       Baseline.machine = Env.machine_key ();
@@ -124,7 +120,7 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
            (Baseline.quote s) (Baseline.quote name))
   | _ -> ());
   (* Batch sizes are frozen from the section judgment compares against: a
-     stale one is re-recorded from this run, so it pins nothing. *)
+     stale one is compared with nothing, so it pins nothing. *)
   let section = Verdict.compared_section ~identity file in
   under_lock (fun () ->
       let start_load = sample_load () in
@@ -138,8 +134,8 @@ let run_with ?instruments ?load:(sample_load = Env.load) ?(on_progress = ignore)
           selected
       in
       let provisional =
-        Verdict.judge ~identity ~suite:name ~load:start_load ~selection ~budgets
-          ~file ~cases
+        Verdict.judge ~identity ~suite:name ~load:start_load ~budgets ~file
+          ~cases
       in
       match Verdict.confirmations provisional with
       | [] ->

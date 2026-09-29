@@ -40,8 +40,20 @@ module Run = Run
 module Baseline = struct
   include Baseline
 
-  (* The key is computed by [Env]; [Baseline] itself is a pure codec. *)
+  (* The host's identity is computed by [Env]; [Baseline] itself is pure. *)
   let machine_key = Env.machine_key
+
+  let record ?baseline name run =
+    check_suite ~fname:"Thumper.Baseline.record" name;
+    let identity =
+      {
+        machine = Env.machine_key ();
+        host = Env.host_description ();
+        ocaml = Env.ocaml_identity ();
+      }
+    in
+    let file = Option.value baseline ~default:(empty ~suite:name) in
+    record ~identity ~suite:name ~selection:`Partial ~run file
 end
 
 module Verdict = Verdict

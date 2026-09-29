@@ -82,16 +82,15 @@ let empty_file () = require_ok (Baseline.of_string "")
 
 (* Verdicts *)
 
-let judge ?(load = Env.Quiet) ?(selection = `Full) ?(budgets = []) ?file cases =
+let judge ?(load = Env.Quiet) ?(budgets = []) ?file cases =
   let file = match file with Some f -> f | None -> empty_file () in
-  Verdict.judge ~identity:ident ~suite:"digest" ~load ~selection ~budgets ~file
-    ~cases
+  Verdict.judge ~identity:ident ~suite:"digest" ~load ~budgets ~file ~cases
 
 (* The first pass, then [confirm id] as the confirmation of each case it
    asks for. *)
-let decided ?load ?selection ?budgets ?file ?(decide_load = Env.Quiet)
+let decided ?load ?budgets ?file ?(decide_load = Env.Quiet)
     ?(confirm = fun _ -> None) cases =
-  let p = judge ?load ?selection ?budgets ?file cases in
+  let p = judge ?load ?budgets ?file cases in
   let confirmations =
     List.filter_map
       (fun id -> Option.map (fun t -> (id, t)) (confirm id))
@@ -151,21 +150,6 @@ let outcome_name = function
   | `Pass -> "pass"
   | `Fail -> "fail"
   | `Inconclusive -> "inconclusive"
-
-(* The file's lines, and a diff of two files as the lines each lacks. *)
-let lines f = String.split_on_char '\n' (Baseline.to_string f)
-
-let diff before after =
-  let without l l' = List.filter (fun x -> not (List.mem x l')) l in
-  (without (lines before) (lines after), without (lines after) (lines before))
-
-let text_diff = pair (list string) (list string)
-
-(* The line of row [id] in [f]. *)
-let row_line f id =
-  List.find_opt (String.starts_with ~prefix:(id ^ "\t")) (lines f)
-
-let row_text row = Option.get (row_line (file_of [ row ]) (Baseline.row_id row))
 
 (* Relations *)
 
@@ -725,8 +709,8 @@ let budgets_resolve (_, run_budgets, case_budgets, metrics, expected) =
        (fun r -> (Metric.id r.Verdict.metric, budget_name r.Verdict.budget))
        (case_report t).Verdict.reports)
 
-(* The confirmation's samples are judged and pooled, so a warning about them
-   is the case's; one the first trial raised already is not repeated. *)
+(* The confirmation's samples are judged, so a warning about them is the
+   case's; one the first trial raised already is not repeated. *)
 let a_confirmation_s_warnings_follow_the_first_trial_s () =
   let with_warnings warnings =
     trial ~warnings [ (wall_time, sampled (ties 5 2.)) ]
@@ -1025,37 +1009,17 @@ let the_confirmation_is_judged_at_0_05_per_side () =
 
 let confirmed (r : Verdict.metric_report) =
   match r.verdict with
-  | Judged (Regressed (Confirmed { first; confirmation; pooled; k }))
-  | Judged (Improved (Confirmed { first; confirmation; pooled; k })) ->
-      Some (first, confirmation, pooled, k)
+  | Judged (Regressed (Confirmed { first; confirmation }))
+  | Judged (Improved (Confirmed { first; confirmation })) ->
+      Some (first, confirmation)
   | _ -> None
 
-let a_confirmed_relation_carries_both_shifts_and_the_pooled_samples () =
-  let first, confirmation, pooled, k =
+let a_confirmed_relation_carries_both_shifts () =
+  let first, confirmation =
     require_match confirmed (report (one (wall (ties 5 2.))))
   in
   equal ~msg:"first" shift (1., 1., 1.) (shift_triple first);
-  equal ~msg:"confirmation" shift (1., 1., 1.) (shift_triple confirmation);
-  equal (pair (array float_exact) int) (ties 10 2., 8) (pooled, k)
-
-let pooling_leaves_both_trials_unchanged () =
-  let samples tr =
-    require_match
-      (function Some (Run.Samples s) -> Some s.Run.sorted | _ -> None)
-      (Run.Trial.measurement tr wall_time)
-  in
-  let first = wall [| 0.4; 0.45; 0.5; 0.55; 0.6 |]
-  and again = wall [| 0.42; 0.47; 0.52; 0.57; 0.62 |] in
-  let t = one ~confirm:(Some again) first in
-  let _, _, pooled, _ = require_match confirmed (report t) in
-  ignore (Verdict.corrected t);
-  equal ~msg:"pooled" (array float_exact)
-    [| 0.4; 0.42; 0.45; 0.47; 0.5; 0.52; 0.55; 0.57; 0.6; 0.62 |]
-    pooled;
-  equal
-    (pair (array float_exact) (array float_exact))
-    ([| 0.4; 0.45; 0.5; 0.55; 0.6 |], [| 0.42; 0.47; 0.52; 0.57; 0.62 |])
-    (samples first, samples again)
+  equal ~msg:"confirmation" shift (1., 1., 1.) (shift_triple confirmation)
 
 (* The first trial improves by half against tied 1s, under the budget [r].
    Only an improvement's confirmation can reproduce it within 2e of zero. *)
@@ -1106,8 +1070,7 @@ let an_unconfirmed_improvement_keeps_its_first_shift () =
         match r.verdict with Judged (Within_budget sh) -> Some sh | _ -> None)
       (report t)
   in
-  equal shift (-0.5, -0.5, -0.5) (shift_triple sh);
-  is_none (Verdict.corrected t)
+  equal shift (-0.5, -0.5, -0.5) (shift_triple sh)
 
 let inconclusive_shift (r : Verdict.metric_report) =
   match r.verdict with
@@ -1228,10 +1191,8 @@ let judging =
         a_confirmation_measured_as_exact_is_unconfirmed;
       test "decide judges the confirmation at 0.05 per side"
         the_confirmation_is_judged_at_0_05_per_side;
-      test "a confirmed relation carries both shifts and the pooled samples"
-        a_confirmed_relation_carries_both_shifts_and_the_pooled_samples;
-      test "pooling leaves both trials' samples unchanged"
-        pooling_leaves_both_trials_unchanged;
+      test "a confirmed relation carries both shifts"
+        a_confirmed_relation_carries_both_shifts;
       cases "decide, on a pending improvement"
         ~name:(fun (name, _, _, _, _) -> name)
         improvements
@@ -1242,7 +1203,7 @@ let judging =
                   ~budgets:[ Budget.no_slower_than r ]
                   ~confirm:(confirm ())
                   (wall (ties 5 0.5)))));
-      test "an unconfirmed improvement keeps its first shift and no row"
+      test "an unconfirmed improvement keeps its first shift"
         an_unconfirmed_improvement_keeps_its_first_shift;
       cases "an inconclusive relation's shift"
         ~name:(fun (name, _, _) -> name)
@@ -1458,66 +1419,6 @@ let exit_codes =
       (0, 1) );
   ]
 
-(* The row ids of the section are "a", "b-dead" and "a-dead"; the run judges
-   the cases of [ids]. *)
-let warned =
-  let section identity () =
-    file_of ~identity
-      [
-        wall_row "a" (ties 5 1.);
-        wall_row "b-dead" (ties 5 1.);
-        wall_row "a-dead" (ties 5 1.);
-      ]
-  in
-  [
-    ( "a full selection of a compared section names each absent case",
-      section ident,
-      `Full,
-      [ "a" ],
-      __POS_OF__
-        {|
-        case a-dead no longer exists in this binary; its rows will be pruned from the corrected file
-        case b-dead no longer exists in this binary; its rows will be pruned from the corrected file
-        |}
-    );
-    ( "a partial selection of a compared section",
-      section ident,
-      `Partial,
-      [ "a" ],
-      __POS_OF__ {||} );
-    ( "a partial selection of a stale section counts the dropped cases",
-      section stale_ident,
-      `Partial,
-      [ "a" ],
-      __POS_OF__
-        {| partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 2 unselected cases |}
-    );
-    ( "a partial selection of a stale section with one dropped case",
-      section stale_ident,
-      `Partial,
-      [ "a"; "a-dead" ],
-      __POS_OF__
-        {| partial selection on a stale section: the corrected file re-records this machine's whole section and drops the rows of the 1 unselected case |}
-    );
-    ( "a partial selection of a stale section that drops nothing",
-      section stale_ident,
-      `Partial,
-      [ "a"; "a-dead"; "b-dead" ],
-      __POS_OF__ {||} );
-    ( "a full selection of a stale section",
-      section stale_ident,
-      `Full,
-      [ "a" ],
-      __POS_OF__ {||} );
-  ]
-
-let warnings_of (_, file, selection, ids, expected) =
-  let t =
-    decided ~selection ~file:(file ())
-      (List.map (fun id -> (case id, wall (ties 5 1.))) ids)
-  in
-  expect (String.concat "\n" (Verdict.warnings t)) expected
-
 (* The JSON document *)
 
 let wall_rows ids = List.map (fun id -> wall_row id (ties 5 1.)) ids
@@ -1648,7 +1549,6 @@ let observers =
       cases "case_overall"
         ~name:(fun (name, _, _, _, _) -> name)
         case_outcomes case_outcome;
-      cases "warnings" ~name:(fun (name, _, _, _, _) -> name) warned warnings_of;
       cases "exit_code, then under strict"
         ~name:(fun (name, _, _) -> name)
         exit_codes
@@ -1659,437 +1559,7 @@ let observers =
       to_json;
     ]
 
-(* Write paths *)
-
-let an_equivalent_run_changes_no_byte () =
-  is_none (Verdict.corrected (one (wall (ties 5 1.))))
-
-(* The diff of case "a"'s rows and the corrected file. *)
-let corrected_diff ?budgets ~rows first =
-  diff (file_of rows)
-    (require_some (Verdict.corrected (one ?budgets ~rows first)))
-
-(* "b" is judged equivalent and keeps its bytes. *)
-let a_confirmed_improvement_advances_its_row () =
-  let file = file_of (wall_rows [ "a"; "b" ]) in
-  let t =
-    decided ~file
-      ~confirm:(fun _ -> Some (wall (ties 5 0.5)))
-      [ (case "a", wall (ties 5 0.5)); (case "b", wall (ties 5 1.)) ]
-  in
-  equal text_diff
-    ( [ row_text (wall_row "a" (ties 5 1.)) ],
-      [ row_text (wall_row "a" (ties 10 0.5)) ] )
-    (diff file (require_some (Verdict.corrected t)))
-
-let the_advanced_row_takes_the_confirmation_s_batch_size () =
-  equal text_diff
-    ( [ row_text (wall_row ~k:8 "a" (ties 5 1.)) ],
-      [ row_text (wall_row ~k:16 "a" (ties 10 0.5)) ] )
-    (corrected_diff
-       ~rows:[ wall_row ~k:8 "a" (ties 5 1.) ]
-       (wall ~k:16 (ties 5 0.5)))
-
-let an_exact_improvement_advances_to_the_count () =
-  equal text_diff
-    ([ row_text (alloc_row "a" 54) ], [ row_text (alloc_row "a" 50) ])
-    (corrected_diff
-       ~budgets:[ Budget.no_more_alloc_than 0. ]
-       ~rows:[ alloc_row "a" 54 ]
-       (alloc 50))
-
-let proposals =
-  [
-    ( "a metric without a row",
-      (fun () -> []),
-      (fun () ->
-        trial [ (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact 54) ]),
-      fun () -> alloc_row "a" 54 );
-    ( "a count over its cap",
-      (fun () -> [ Budget.at_most ~metric:alloc_words 100. ]),
-      (fun () ->
-        trial [ (wall_time, sampled (ties 5 1.)); (alloc_words, Run.Exact 120) ]),
-      fun () -> alloc_row "a" 120 );
-    ( "a drifted trial's samples",
-      (fun () -> []),
-      (fun () ->
-        trial
-          [
-            (wall_time, sampled (ties 5 1.));
-            (cpu_time, sampled ~drifted:true (ties 5 1.));
-          ]),
-      fun () ->
-        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-          ~samples:(ties 5 1.) );
-  ]
-
-(* The wall_time row regresses and keeps its bytes while alloc_words
-   improves and advances. *)
-let a_regression_keeps_its_row_beside_an_advance () =
-  equal text_diff
-    ([ row_text (alloc_row "a" 54) ], [ row_text (alloc_row "a" 50) ])
-    (corrected_diff
-       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0. ]
-       ~rows:[ wall_row "a" (ties 5 1.); alloc_row "a" 54 ]
-       (trial [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 50) ]))
-
-(* "b" is new, so the corrected file exists; "dead" has no case. *)
-let absent_cases selection =
-  let file = file_of (wall_rows [ "a"; "dead" ]) in
-  let t =
-    decided ~selection ~file
-      [ (case "a", wall (ties 5 1.)); (case "b", wall (ties 5 1.)) ]
-  in
-  diff file (require_some (Verdict.corrected t))
-
-(* [file] with this machine's section recorded from the first trials. *)
-let recorded_section file =
-  Baseline.set_section
-    (match Baseline.suite file with
-    | Some _ -> file
-    | None -> Baseline.empty ~suite:"digest")
-    ident
-    [ wall_row "a" (ties 5 2.); alloc_row "a" 100 ]
-
-let replacements =
-  [
-    ("a missing section, under a new suite header", fun () -> empty_file ());
-    ( "a stale section, with no annotation",
-      fun () ->
-        Baseline.set_section
-          (file_of ~identity:stale_ident ~annotations:[ "forced: earlier" ]
-             [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ])
-          other_ident
-          [ wall_row "z" (ties 5 1.) ] );
-  ]
-
-(* The host is loaded and the trial drifted: a replaced section records the
-   trial as measured. *)
-let a_section_is_replaced_by_the_first_trials (_, file) =
-  let file = file () in
-  let t =
-    decided ~load:loaded ~file
-      [
-        ( case "a",
-          trial
-            [
-              (wall_time, sampled ~drifted:true (ties 5 2.));
-              (alloc_words, Run.Exact 100);
-            ] );
-      ]
-  in
-  equal string
-    (Baseline.to_string (recorded_section file))
-    (Baseline.to_string (require_some (Verdict.corrected t)))
-
-let corrected_refuses_a_suite_it_cannot_head () =
-  let t =
-    Verdict.decide ~load:Env.Quiet ~confirmations:[]
-      (Verdict.judge ~identity:ident ~suite:"" ~load:Env.Quiet ~selection:`Full
-         ~budgets:[] ~file:(empty_file ())
-         ~cases:[ (case "a", alloc 1) ])
-  in
-  raises
-    (Invalid_argument
-       "Baseline.empty: suite name must be non-empty and single-line (it heads \
-        fresh baselines)") (fun () -> Verdict.corrected t)
-
-(* The monotone-ratchet property *)
-
-type outcome =
-  | Improve_confirmed
-  | Improve_unconfirmed
-  | Regress_confirmed
-  | Regress_unconfirmed
-  | Equal
-  | Fresh
-  | Dead
-
-let outcome_label = function
-  | Improve_confirmed -> "improve+"
-  | Improve_unconfirmed -> "improve-"
-  | Regress_confirmed -> "regress+"
-  | Regress_unconfirmed -> "regress-"
-  | Equal -> "equal"
-  | Fresh -> "fresh"
-  | Dead -> "dead"
-
-type scenario = {
-  outcomes : (string * outcome) list;
-  full : bool;
-  other : bool;
-}
-
-let pp_scenario ppf s =
-  Format.fprintf ppf "{%s; %s; other=%b}"
-    (String.concat ", "
-       (List.map (fun (id, o) -> id ^ ":" ^ outcome_label o) s.outcomes))
-    (if s.full then "full" else "partial")
-    s.other
-
-let scenario =
-  let open Gen in
-  let outcome =
-    of_list
-      [
-        Improve_confirmed;
-        Improve_unconfirmed;
-        Regress_confirmed;
-        Regress_unconfirmed;
-        Equal;
-        Fresh;
-        Dead;
-      ]
-  in
-  with_pp pp_scenario
-    (let+ outcomes = list ~size:(int_range 1 6) outcome
-     and+ full = bool
-     and+ other = bool in
-     {
-       outcomes = List.mapi (fun i o -> (Printf.sprintf "c%d" i, o)) outcomes;
-       full;
-       other;
-     })
-
-(* What the corrected file did to row [id]: [advanced] is a row of both
-   trials' ten samples. *)
-let fate ~before ~after id =
-  match (row_line before id, row_line after id) with
-  | None, None -> "absent"
-  | None, Some _ -> "proposed"
-  | Some _, None -> "pruned"
-  | Some b, Some a when String.equal b a -> "kept"
-  | Some _, Some a ->
-      if String.starts_with ~prefix:(id ^ "\twall_time\tbatch=8\tn=10\t") a then
-        "advanced"
-      else "changed"
-
-let expected_fate s = function
-  | Improve_confirmed -> "advanced"
-  | Improve_unconfirmed | Regress_confirmed | Regress_unconfirmed | Equal ->
-      "kept"
-  | Fresh -> "proposed"
-  | Dead -> if s.full then "pruned" else "kept"
-
-(* Every outcome but [Fresh] has a row, and a sentinel case "keep" keeps the
-   section from being empty. *)
-let the_ratchet_is_monotone s =
-  let level = function
-    | Improve_confirmed | Improve_unconfirmed -> 0.5
-    | Regress_confirmed | Regress_unconfirmed -> 2.
-    | Equal | Fresh | Dead -> 1.
-  in
-  let file =
-    file_of
-      (List.filter_map
-         (fun (id, o) ->
-           if o = Fresh then None else Some (wall_row id (ties 5 1.)))
-         s.outcomes
-      @ [ wall_row "keep" (ties 5 1.) ])
-  in
-  let file =
-    if s.other then
-      Baseline.set_section file other_ident [ wall_row "z" (ties 5 1.) ]
-    else file
-  in
-  let confirm id =
-    match List.assoc_opt id s.outcomes with
-    | Some ((Improve_confirmed | Regress_confirmed) as o) ->
-        Some (wall (ties 5 (level o)))
-    | Some (Improve_unconfirmed | Regress_unconfirmed) ->
-        Some (wall (ties 5 1.))
-    | Some (Equal | Fresh | Dead) | None -> None
-  in
-  let t =
-    decided
-      ~selection:(if s.full then `Full else `Partial)
-      ~file ~confirm
-      (List.filter_map
-         (fun (id, o) ->
-           if o = Dead then None else Some (case id, wall (ties 5 (level o))))
-         s.outcomes
-      @ [ (case "keep", wall (ties 5 1.)) ])
-  in
-  let changes =
-    List.exists
-      (fun (_, o) -> o = Improve_confirmed || o = Fresh || (o = Dead && s.full))
-      s.outcomes
-  in
-  let after =
-    if changes then (
-      let after = require_some (Verdict.corrected t) in
-      not_equal string (Baseline.to_string file) (Baseline.to_string after);
-      after)
-    else (
-      is_none (Verdict.corrected t);
-      file)
-  in
-  let ids =
-    List.map fst s.outcomes @ [ "keep" ] @ if s.other then [ "z" ] else []
-  in
-  let expected id =
-    match List.assoc_opt id s.outcomes with
-    | Some o -> expected_fate s o
-    | None -> "kept"
-  in
-  equal
-    (list (pair string string))
-    (List.map (fun id -> (id, expected id)) ids)
-    (List.map (fun id -> (id, fate ~before:file ~after id)) ids)
-
-(* Bless *)
-
-let bless_run () =
-  Run.create
-    [
-      ( "a",
-        trial [ (wall_time, sampled (ties 5 2.)); (alloc_words, Run.Exact 100) ]
-      );
-    ]
-
-let blessed =
-  [
-    ( "a full selection of a stale section",
-      `Full,
-      fun () ->
-        Baseline.set_section
-          (file_of ~identity:stale_ident ~annotations:[ "forced: earlier" ]
-             [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ])
-          other_ident
-          [ wall_row "z" (ties 5 1.) ] );
-    ( "a full selection of a compared section",
-      `Full,
-      fun () -> file_of (wall_rows [ "a"; "old" ]) );
-    ( "the empty file, under a new suite header",
-      `Partial,
-      fun () -> empty_file () );
-  ]
-
-let bless_rerecords_the_section (_, selection, file) =
-  let file = file () in
-  let result, warnings =
-    Verdict.bless ~annotations:[ "forced: now" ] ~identity:ident ~suite:"digest"
-      ~selection ~run:(bless_run ()) file
-  in
-  let expected =
-    Baseline.set_section ~annotations:[ "forced: now" ]
-      (match Baseline.suite file with
-      | Some _ -> file
-      | None -> Baseline.empty ~suite:"digest")
-      ident
-      [ alloc_row "a" 100; wall_row "a" (ties 5 2.) ]
-  in
-  equal
-    (pair string (list string))
-    (Baseline.to_string expected, [])
-    (Baseline.to_string result, warnings)
-
-(* The header and its annotations stay, every unselected row keeps its
-   bytes, and the selected case's rows are replaced by case id: its new
-   metric is added and the metric it no longer collects is removed. *)
-let a_partial_bless_replaces_the_selected_cases_rows () =
-  let file =
-    file_of ~annotations:[ "forced: earlier" ]
-      [
-        wall_row "a" (ties 5 1.);
-        Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-          ~samples:(ties 5 1.);
-        wall_row "b" (ties 5 3.);
-      ]
-  in
-  let result, warnings =
-    Verdict.bless ~annotations:[ "forced: now" ]
-      ~identity:{ ident with Baseline.host = "renamed-host" }
-      ~suite:"digest" ~selection:`Partial ~run:(bless_run ()) file
-  in
-  equal (list string) [] warnings;
-  equal text_diff
-    ( [
-        row_text
-          (Baseline.sampled_row ~id:"a" ~metric:"cpu_time" ~k:8
-             ~samples:(ties 5 1.));
-        row_text (wall_row "a" (ties 5 1.));
-      ],
-      [
-        "# forced: now";
-        row_text (alloc_row "a" 100);
-        row_text (wall_row "a" (ties 5 2.));
-      ] )
-    (diff file result);
-  equal (list string)
-    [ "# forced: earlier"; "# forced: now" ]
-    (List.filter
-       (String.starts_with ~prefix:"# forced")
-       (String.split_on_char '\n' (Baseline.to_string result)))
-
-let a_partial_bless_of_a_stale_section_says_what_it_drops () =
-  let file =
-    file_of ~identity:stale_ident
-      [ wall_row "a" (ties 5 1.); wall_row "old" (ties 5 1.) ]
-  in
-  let result, warnings =
-    Verdict.bless ~identity:ident ~suite:"digest" ~selection:`Partial
-      ~run:(bless_run ()) file
-  in
-  equal
-    (pair string (list string))
-    ( Baseline.to_string
-        (Baseline.set_section file ident
-           [ alloc_row "a" 100; wall_row "a" (ties 5 2.) ]),
-      [
-        "partial selection on a stale section: the corrected file re-records \
-         this machine's whole section and drops the rows of the 1 unselected \
-         case";
-      ] )
-    (Baseline.to_string result, warnings)
-
-let write_paths =
-  group "Write paths"
-    [
-      test "an equivalent run changes no byte" an_equivalent_run_changes_no_byte;
-      test "a confirmed improvement advances its row alone"
-        a_confirmed_improvement_advances_its_row;
-      test "the advanced row takes the confirmation's batch size"
-        the_advanced_row_takes_the_confirmation_s_batch_size;
-      test "an exact improvement advances to this run's count"
-        an_exact_improvement_advances_to_the_count;
-      cases "a proposed row is added"
-        ~name:(fun (name, _, _, _) -> name)
-        proposals
-        (fun (_, budgets, first, row) ->
-          equal text_diff
-            ([], [ row_text (row ()) ])
-            (corrected_diff ~budgets:(budgets ())
-               ~rows:[ wall_row "a" (ties 5 1.) ]
-               (first ())));
-      test "a regression keeps its row beside an advance"
-        a_regression_keeps_its_row_beside_an_advance;
-      test "a full selection prunes the rows of absent cases" (fun () ->
-          equal text_diff
-            ( [ row_text (wall_row "dead" (ties 5 1.)) ],
-              [ row_text (wall_row "b" (ties 5 1.)) ] )
-            (absent_cases `Full));
-      test "a partial selection prunes nothing" (fun () ->
-          equal text_diff
-            ([], [ row_text (wall_row "b" (ties 5 1.)) ])
-            (absent_cases `Partial));
-      cases "a section is replaced by the first trials" ~name:fst replacements
-        a_section_is_replaced_by_the_first_trials;
-      test "corrected refuses a suite name it cannot write"
-        corrected_refuses_a_suite_it_cannot_head;
-      prop "the ratchet is monotone" scenario the_ratchet_is_monotone;
-      cases "bless re-records the section"
-        ~name:(fun (name, _, _) -> name)
-        blessed bless_rerecords_the_section;
-      test "a partial bless replaces the selected cases' rows alone"
-        a_partial_bless_replaces_the_selected_cases_rows;
-      test "a partial bless of a stale section says what it drops"
-        a_partial_bless_of_a_stale_section_says_what_it_drops;
-    ]
-
 let () =
   exit
     (run "verdict"
-       [
-         relations; reports; comparison_states; judging; observers; write_paths;
-       ])
+       [ relations; reports; comparison_states; judging; observers ])

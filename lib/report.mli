@@ -39,28 +39,24 @@ type render = {
   color : bool;
       (** Whether to style the report with ANSI escapes. Removing the escapes
           from a styled report gives the unstyled one. *)
-  accept : string;
-      (** The command of the [accept:] line ({!Cli.main} builds it). *)
-  exe : string option;
-      (** The program the [rerun:] line runs, which {!val-check} quotes with
-          {!shell_arg}; [None] for no [rerun:] line. *)
+  exe : string;
+      (** The program the [rerun:] and [accept:] lines run, which {!val-check}
+          quotes with {!shell_arg}. *)
   github : bool;
       (** Whether the report ends with one [::error::] line per metric that
           fails its case. *)
   baseline_path : string;
       (** The baseline's path, which the header of a run against a current
           section prints. *)
-  wrote_corrected : bool;
-      (** Whether the corrected file was written. The [accept:] line prints iff
-          it was. The load warning beside it prints when it was, the section is
-          missing or stale, and [Verdict.load] is loaded. *)
-  rerun_flags : string list;
-      (** The [rerun:] line's arguments before its selection, one item per flag
-          with its argument. {!val-check} prints them as given, so each argument
-          must already be quoted with {!shell_arg}. *)
-  rerun_patterns : string list;
-      (** The run's patterns. The [rerun:] line selects by them, quoted, in
-          place of the failing ids when more than 10 cases fail. *)
+  flags : string list;
+      (** The arguments the [rerun:] and [accept:] lines repeat before their
+          selection, one item per flag with its argument. {!val-check} prints
+          them as given, so each argument must already be quoted with
+          {!shell_arg}. *)
+  patterns : string list;
+      (** The run's patterns. A hint line selects by them, quoted, in place of
+          its cases' ids: the [rerun:] line when more than 10 cases fail, the
+          [accept:] line when it records every case of the run. *)
   strict : bool;
       (** Whether the run was given [--strict]. The summary's colour follows it,
           and the summary ends with [; failed under --strict] when [--strict]
@@ -85,8 +81,10 @@ val check : render -> Verdict.t -> string
     word ([improved], [within budget], [proposed] or [equivalent]); its other
     relations follow on the detail line. A regression and a relation within
     budget name their budget, [budget +5%] or [cap 64 w]. The [rerun:] line
-    prints iff [r.exe] is [Some _] and some case fails. The summary, which only
-    a run against a current section prints, is red iff
+    prints iff some case fails, and names the failing cases. The [accept:] line
+    prints iff some case that does not fail has a [Proposed] or [Improved]
+    metric, and is the [bless] command that records those cases. The summary,
+    which only a run against a current section prints, is red iff
     [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
 
 (** {1:bless The bless report} *)
@@ -95,18 +93,16 @@ val bless :
   color:bool ->
   suite:string ->
   machine:string ->
+  baseline_path:string ->
   cases:int ->
   load:Env.load ->
-  notices:string list ->
-  accept:string ->
   Run.t ->
   string
-(** [bless ~color ~suite ~machine ~cases ~load ~notices ~accept run] is the
-    report of the [bless] run [run], which measured [cases] selected cases of
-    [suite] for the machine key [machine], ending in a newline. Its table has
-    one [proposed] row per trial of [run], followed by the trials' warnings. Its
-    actions are a load warning when [load] is loaded, one warning per notice of
-    {!Verdict.bless}, and the [accept:] line of [accept]. [load] is the load the
-    run measured under: only [--force] measures on a loaded host, and the
-    warning says it was recorded. [color] styles the report as {!render}'s
-    [color] does. *)
+(** [bless ~color ~suite ~machine ~baseline_path ~cases ~load run] is the report
+    of the [bless] run [run], which measured [cases] selected cases of [suite]
+    and recorded them in [baseline_path] for the machine key [machine], ending
+    in a newline. Its table has one [blessed] row per trial of [run], followed
+    by the trials' warnings. Its actions are a load warning when [load] is
+    loaded. [load] is the load the run measured under: only [--force] measures
+    on a loaded host, and the warning says it was recorded. [color] styles the
+    report as {!render}'s [color] does. *)

@@ -7,4 +7,4 @@ thumper: digest — no baseline for machine testkey (Test CPU)
   proposed  1.00 us  ±0.0%           6 w  e
   proposed  1.00 us  ±0.0%     ~1,000 kw  g
 
-  accept:  dune promote
+  accept:  bench.exe bless

@@ -17,12 +17,13 @@ alone and is distributed under the ISC license.
 - A default baseline path beside the benchmark's source, which a dune rule
   and `dune exec` resolve to the same file through dune's environment,
   whatever the build directory is called.
-- A corrected file, `<baseline>.corrected`, that adds the run's proposed
-  rows, advances its improved ones and, after a `check` of every case,
-  drops the rows of cases the suite no longer has; a run never writes the
-  baseline itself.
-- An `accept:` line in the report that names the command accepting the
-  corrected file: `dune promote` in a dune rule action, `mv` otherwise.
+- `bless`, the one command that writes the baseline: the selected cases'
+  rows, or this machine's whole section, which drops the rows of cases the
+  suite no longer has. `check` never writes it.
+- An `accept:` line in the report that names the `bless` command recording
+  the proposed and improved cases, and a `rerun:` line for the failing ones,
+  both pasteable where the command ran, or from the workspace root in a dune
+  rule action.
 - Budgets per metric, bounding the change from the baseline
   (`no_slower_than`, `no_more_alloc_than`, `relative`) or the measured
   value (`at_most`).
@@ -47,5 +48,6 @@ alone and is distributed under the ISC license.
 - `--json` for a JSON document of the verdict, `--strict` to fail on
   inconclusive and proposed rows, and GitHub annotations under
   `GITHUB_ACTIONS`.
-- `measure`, which collects measurements without files, and `Check.run`,
-  `Verdict.corrected` and `Verdict.to_json`, which build a check in OCaml.
+- `measure`, which collects measurements without files, `Check.run` and
+  `Verdict.to_json`, which build a check in OCaml, and `Baseline.record`,
+  which records a measurement in a baseline.

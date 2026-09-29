@@ -7,8 +7,7 @@ run's.
   $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
-  $ $FIX check --quick -f alloc > /dev/null 2>&1
-  $ mv fixture.thumper.corrected fixture.thumper
+  $ $FIX bless --quick --force -f alloc > /dev/null 2>&1
 
 A passing run writes the document: one line, ended by a newline, published
 whole through a temporary file that does not survive.

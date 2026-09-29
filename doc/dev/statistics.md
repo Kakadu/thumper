@@ -45,8 +45,8 @@ diagnostics decide whether a trial can support a direction:
 ## The comparison
 
 Per case, per sampled metric: baseline samples b₁…b_m from the
-committed file (m is n, or 2n for a row an improvement advanced to
-the pooled samples), candidate samples c₁…c_n, all in log space. Form
+committed file (m is the n of the run that recorded the row),
+candidate samples c₁…c_n, all in log space. Form
 the m·n pairwise differences log cᵢ − log bⱼ; the shift estimate is
 their median (Hodges–Lehmann) and the CI [L, U] is the Moses
 order-statistic construction (valid for m ≠ n, conservative under
@@ -84,16 +84,13 @@ draws), re-measured with fresh warmup at its first trial's batch size
 (in a fresh worker where cases fork), and stands only if the
 confirmation alone reproduces the relation at α = 0.05 per side
 against the same baseline samples. A confirmed relation carries both
-shifts, the pooled 2n samples, and the confirmation's k: what an
-advanced row records. Anything else is unconfirmed, with no in-run
-retry: an unconfirmed regression is `inconclusive: unconfirmed`, and
-an unconfirmed improvement reads within budget; neither ever advances
-a row.
-That includes an unstable confirmation within 2e of zero, and a
-confirmation that recalibrated to another batch size, which is never
-pooled: one row never mixes two batch sizes under one `batch=`. On a
-host loaded at confirmation time every pending relation is
-`inconclusive: environment`.
+shifts. Anything else is unconfirmed, with no in-run retry: an
+unconfirmed regression is `inconclusive: unconfirmed`, and an
+unconfirmed improvement reads within budget. That includes an unstable
+confirmation within 2e of zero, and a confirmation that recalibrated
+to another batch size, which measured another protocol than the
+first trial. On a host loaded at confirmation time every pending
+relation is `inconclusive: environment`.
 
 **Exact metrics** compare as integers: over an `at_most` cap →
 regressed, whatever the baseline (a proposed row over its cap fails
@@ -119,13 +116,12 @@ baseline draws. The confirmation multiplies the rate down only for
 noise independent across the two passes (within-run sampling error).
 It does not defend against a lucky baseline draw or session-shared
 bias (thermal state, frequency regime, layout). Those are bounded
-instead by the load check, the pooled 2n samples of an advanced row,
-and, until U1 clears it, the consumer's spaced re-run of a failing
-check. Under a between-pass independence approximation the compound
-rate is ≈ 2.5 × 10⁻⁴ per case (≈ 1% per 40-case suite); quoting that
-number as a guarantee waits for U1. Exact metrics contribute zero
-either way. Errors fall toward `inconclusive`, never toward a failure
-caused by noise.
+instead by the load check and, until U1 clears it, the consumer's
+spaced re-run of a failing check. Under a between-pass independence
+approximation the compound rate is ≈ 2.5 × 10⁻⁴ per case (≈ 1% per
+40-case suite); quoting that number as a guarantee waits for U1. Exact
+metrics contribute zero either way. Errors fall toward `inconclusive`,
+never toward a failure caused by noise.
 
 ### U1: the validation plan and kill criterion
 

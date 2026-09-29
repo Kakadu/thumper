@@ -126,8 +126,8 @@ let fast_config =
 let allocates () = ignore (Sys.opaque_identity (ref 0))
 
 (* A case over its allocation cap and a case with no row: without a baseline,
-   the run fails, proposes both rows and writes the corrected file, so its
-   report has both actions. *)
+   the run fails on the first and proposes the second, so its report has both
+   actions, [rerun:] for [alloc] and [accept:] for [fresh]. *)
 let failing =
   [
     Bench.bench ~tags:[ "t" ]
@@ -346,7 +346,7 @@ let help_prints_every_flag () =
 
     subcommands:
       check      measure, compare against the baseline (default)
-      bless      propose a re-record of the selected cases for this machine
+      bless      record the selected cases in the baseline for this machine
       list       print the selected case ids; no measurement
 
     options:
@@ -367,7 +367,8 @@ let help_prints_every_flag () =
 
     environment: THUMPER_MACHINE (machine key), THUMPER_LOCK_DIR (lock
     directory), NO_COLOR, GITHUB_ACTIONS (adds ::error:: annotations);
-    INSIDE_DUNE selects the dune hints and, in a rule action, colour.
+    INSIDE_DUNE marks a dune rule action, whose report is coloured and whose
+    hints paste from DUNE_SOURCEROOT.
     |}
 
 let help = "bench.exe: thumper benchmark suite (thumper "
@@ -428,28 +429,27 @@ let rule_action d =
   enter (d ^ "/_b/default/bench")
 
 let esc = "\027["
-let rerun = "  rerun:   bench.exe"
-let mv = "  accept:  mv digest.thumper.corrected digest.thumper"
-let promote = "  accept:  dune promote"
+let rerun = "  rerun:   bench.exe -f alloc\n"
+let accept = "  accept:  bench.exe bless -f fresh\n"
 
 let variants =
   [
-    ( "outside dune: the rerun line and mv, unstyled",
+    ( "outside dune: both hints, unstyled",
       (fun _ -> []),
-      [ rerun; mv ],
-      [ esc; "::error::"; promote ] );
-    ( "a rule action: dune promote and no rerun line, styled",
+      [ rerun; accept ],
+      [ esc; "::error::" ] );
+    ( "a rule action: both hints, styled",
       (fun d ->
         rule_action d;
         []),
-      [ promote; esc ],
-      [ "rerun:"; mv ] );
+      [ rerun; accept; esc ],
+      [] );
     ( "NO_COLOR unstyles a rule action",
       (fun d ->
         rule_action d;
         setenv "NO_COLOR" (Some "1");
         []),
-      [ promote ],
+      [ accept ],
       [ esc ] );
     ( "an empty NO_COLOR does not",
       (fun d ->
@@ -462,7 +462,7 @@ let variants =
       (fun d ->
         rule_action d;
         [ "--color"; "never" ]),
-      [ promote ],
+      [ accept ],
       [ esc ] );
     ( "--color always styles a pipe",
       (fun _ -> [ "--color"; "always" ]),
@@ -489,9 +489,8 @@ let variants =
         mkdirs (d ^ "/My Projects");
         [ "--baseline"; "My Projects/d.thumper" ]),
       [
-        "  accept:  mv 'My Projects/d.thumper.corrected' 'My \
-         Projects/d.thumper'";
-        "--baseline 'My Projects/d.thumper'";
+        "  rerun:   bench.exe --baseline 'My Projects/d.thumper' -f alloc\n";
+        "  accept:  bench.exe bless --baseline 'My Projects/d.thumper' -f fresh\n";
       ],
       [] );
   ]
@@ -523,7 +522,7 @@ type place = {
 
 let place ?baseline name setup expected = (name, { setup; baseline; expected })
 
-(* Where [bless] resolves the corrected file of the suite [absent/digest]: its
+(* Where [bless] resolves the baseline of the suite [absent/digest]: its
    directory [absent] exists nowhere, so the pre-flight stop names the path
    before anything is measured or written. *)
 let places =
@@ -532,20 +531,20 @@ let places =
         rule_action d;
         [])
     @@ __POS_OF__
-         {| thumper: cannot write absent/digest.thumper.corrected: absent: No such file or directory |};
+         {| thumper: cannot write absent/digest.thumper: absent: No such file or directory |};
     place "a sandboxed rule action too" (fun d ->
         dune_env ~context:(d ^ "/_b/default") ~root:d;
         enter (d ^ "/_b/.sandbox/0f/default/bench");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write absent/digest.thumper.corrected: absent: No such file or directory |};
+         {| thumper: cannot write absent/digest.thumper: absent: No such file or directory |};
     place "dune exec maps the executable into the source tree" (fun d ->
         mkdirs (d ^ "/src/test/unit");
         dune_env ~context:exe_context ~root:(d ^ "/src");
         enter (d ^ "/elsewhere");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/src/test/unit/absent/digest.thumper.corrected: $D/src/test/unit/absent: No such file or directory |};
+         {| thumper: cannot write $D/src/test/unit/absent/digest.thumper: $D/src/test/unit/absent: No such file or directory |};
     place "a mapped directory under the working directory prints relative"
       (fun d ->
         mkdirs (d ^ "/src/test/unit");
@@ -553,71 +552,71 @@ let places =
         enter (d ^ "/src");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write test/unit/absent/digest.thumper.corrected: test/unit/absent: No such file or directory |};
+         {| thumper: cannot write test/unit/absent/digest.thumper: test/unit/absent: No such file or directory |};
     place "a mapped directory that does not exist is not used" (fun d ->
         dune_env ~context:exe_context ~root:(d ^ "/src");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/absent/digest.thumper.corrected: $D/absent: No such file or directory |};
+         {| thumper: cannot write $D/absent/digest.thumper: $D/absent: No such file or directory |};
     place "an executable outside the build context is not mapped" (fun d ->
         mkdirs (d ^ "/test/unit");
         dune_env ~context:(d ^ "/_b/default") ~root:d;
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/absent/digest.thumper.corrected: $D/absent: No such file or directory |};
+         {| thumper: cannot write $D/absent/digest.thumper: $D/absent: No such file or directory |};
     place "INSIDE_DUNE alone maps nothing" (fun _ ->
         setenv "INSIDE_DUNE" (Some exe_context);
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/absent/digest.thumper.corrected: $D/absent: No such file or directory |};
+         {| thumper: cannot write $D/absent/digest.thumper: $D/absent: No such file or directory |};
     place "DUNE_SOURCEROOT alone maps nothing" (fun d ->
         mkdirs (d ^ "/test/unit");
         setenv "DUNE_SOURCEROOT" (Some d);
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/absent/digest.thumper.corrected: $D/absent: No such file or directory |};
+         {| thumper: cannot write $D/absent/digest.thumper: $D/absent: No such file or directory |};
     place "an older dune's INSIDE_DUNE=1 maps nothing" (fun d ->
         mkdirs (d ^ "/test/unit");
         setenv "INSIDE_DUNE" (Some "1");
         setenv "DUNE_SOURCEROOT" (Some d);
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/absent/digest.thumper.corrected: $D/absent: No such file or directory |};
+         {| thumper: cannot write $D/absent/digest.thumper: $D/absent: No such file or directory |};
     place "an older dune's INSIDE_DUNE=1 in a build directory is a rule action"
       (fun d ->
         setenv "INSIDE_DUNE" (Some "1");
         enter (d ^ "/_build/default/bench");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write absent/digest.thumper.corrected: absent: No such file or directory |};
+         {| thumper: cannot write absent/digest.thumper: absent: No such file or directory |};
     place "by hand, a working directory in a build directory is used" (fun d ->
         enter (d ^ "/_build/default/bench");
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $D/_build/default/bench/absent/digest.thumper.corrected: $D/_build/default/bench/absent: No such file or directory |};
+         {| thumper: cannot write $D/_build/default/bench/absent/digest.thumper: $D/_build/default/bench/absent: No such file or directory |};
     place "by hand, the executable maps to its source directory" (fun _ ->
         if Option.is_none workspace then
           skip ~reason:"the executable was not built under _build" ();
         [])
     @@ __POS_OF__
-         {| thumper: cannot write $WS/test/unit/absent/digest.thumper.corrected: $WS/test/unit/absent: No such file or directory |};
+         {| thumper: cannot write $WS/test/unit/absent/digest.thumper: $WS/test/unit/absent: No such file or directory |};
     place "--baseline is read as typed, less its . segments" (fun d ->
         dune_env ~context:exe_context ~root:d;
         [ "--baseline"; "./x/./typed.thumper" ])
     @@ __POS_OF__
-         {| thumper: cannot write x/typed.thumper.corrected: x: No such file or directory |};
+         {| thumper: cannot write x/typed.thumper: x: No such file or directory |};
     place "--baseline=PATH reads as --baseline PATH" (fun _ ->
         [ "--baseline=x/typed.thumper" ])
     @@ __POS_OF__
-         {| thumper: cannot write x/typed.thumper.corrected: x: No such file or directory |};
+         {| thumper: cannot write x/typed.thumper: x: No such file or directory |};
     place ~baseline:"caller/d.thumper"
       "the baseline argument, without --baseline" (fun _ -> [])
     @@ __POS_OF__
-         {| thumper: cannot write caller/d.thumper.corrected: caller: No such file or directory |};
+         {| thumper: cannot write caller/d.thumper: caller: No such file or directory |};
     place ~baseline:"caller/d.thumper" "--baseline, over the baseline argument"
       (fun _ -> [ "--baseline"; "flag/d.thumper" ])
     @@ __POS_OF__
-         {| thumper: cannot write flag/d.thumper.corrected: flag: No such file or directory |};
+         {| thumper: cannot write flag/d.thumper: flag: No such file or directory |};
   ]
 
 let resolves (_, p) =
@@ -834,27 +833,15 @@ let stops =
         let (_ : string) = read_only d "ro" in
         [ "check"; "--json"; "ro/v.json" ])
     @@ __POS_OF__ {| thumper: cannot write ro/v.json: ro: Permission denied |};
-    stop "bless's corrected file in a directory that does not exist" (fun _ ->
+    stop "bless's baseline in a directory that does not exist" (fun _ ->
         [ "bless"; "--baseline"; "nope/d.thumper" ])
     @@ __POS_OF__
-         {| thumper: cannot write nope/d.thumper.corrected: nope: No such file or directory |};
-    stop "bless's corrected file in a read-only directory" (fun d ->
+         {| thumper: cannot write nope/d.thumper: nope: No such file or directory |};
+    stop "bless's baseline in a read-only directory" (fun d ->
         let (_ : string) = read_only d "ro" in
         [ "bless"; "--baseline"; "ro/d.thumper" ])
     @@ __POS_OF__
-         {| thumper: cannot write ro/d.thumper.corrected: ro: Permission denied |};
-    stop
-      "check without a baseline, its corrected file in a directory that does \
-       not exist" (fun _ -> [ "check"; "--baseline"; "nope/d.thumper" ])
-    @@ __POS_OF__
-         {| thumper: cannot write nope/d.thumper.corrected: nope: No such file or directory |};
-    stop "a stale corrected file that cannot be removed" (fun d ->
-        mkdirs (d ^ "/ro");
-        write_file "ro/d.thumper.corrected" "stale";
-        let (_ : string) = read_only d "ro" in
-        [ "check"; "--baseline"; "ro/d.thumper" ])
-    @@ __POS_OF__
-         {| thumper: cannot remove stale artifact ro/d.thumper.corrected: Permission denied |};
+         {| thumper: cannot write ro/d.thumper: ro: Permission denied |};
     stop "a stale --json file that cannot be removed" (fun d ->
         mkdirs (d ^ "/ro");
         write_file "ro/v.json" "stale";
@@ -909,43 +896,38 @@ let list_reads_no_baseline_and_no_key () =
   equal ~msg:"exit code" int 0 (main [ "list"; "alpha" ]);
   equal string "alpha\n" (output ())
 
-let stale = [ "digest.thumper.corrected"; "v.json" ]
-
 let first_removals =
   [
-    ("list", fun () -> [ "list"; "-f"; "zzz" ]);
-    ("check", fun () -> [ "check"; "--json"; "v.json"; "-f"; "zzz" ]);
-    ("bless", fun () -> [ "bless"; "-f"; "zzz" ]);
-    ( "check, before a corrupt baseline is read",
+    ( "a check that stops",
+      fun () -> [ "check"; "--json"; "v.json"; "-f"; "zzz" ] );
+    ( "a check, before a corrupt baseline is read",
       fun () ->
         write_file "digest.thumper" "not a thumper baseline\n";
         [ "check"; "--json"; "v.json" ] );
   ]
 
-let removes_the_stale_files (_, args) =
+let removes_the_stale_document (_, args) =
   let (_ : string) = state_env () in
-  List.iter (fun f -> write_file f "stale") stale;
-  let args = args () in
-  equal ~msg:"exit code" int 2 (main args);
-  let left = List.filter Sys.file_exists stale in
-  equal (list string) (if List.mem "--json" args then [] else [ "v.json" ]) left
+  write_file "v.json" "stale";
+  equal ~msg:"exit code" int 2 (main (args ()));
+  is_false (Sys.file_exists "v.json")
 
-let keeps_the_stale_files (_, args) =
+let keeps_the_stale_document (_, args) =
   let (_ : string) = state_env () in
-  List.iter (fun f -> write_file f "stale") stale;
+  write_file "v.json" "stale";
   let (_ : int) = main args in
-  equal (list string) stale (List.filter Sys.file_exists stale)
+  is_true (Sys.file_exists "v.json")
 
 let stops_before_the_lock () =
   let (_ : string) = state_env () in
   equal ~msg:"exit code" int 2
-    (main [ "check"; "--baseline"; "nope/d.thumper" ]);
+    (main [ "bless"; "--baseline"; "nope/d.thumper" ]);
   equal (list string) []
     (Array.to_list (Sys.readdir (Sys.getenv "THUMPER_LOCK_DIR")))
 
 (* Runs that measure *)
 
-let corrected_rows path =
+let baseline_rows path =
   let file = require_some (require_ok (Baseline.read path)) in
   let section = require_some (Baseline.section file "testkey") in
   List.map
@@ -968,11 +950,9 @@ let samples_of_a_preset (_, args, n) =
   equal ~msg:"exit code" int 0
     (main ~config
        ~benches:[ Bench.bench "alpha" (fun () -> incr calls) ]
-       ("check" :: args));
+       ("bless" :: "--force" :: args));
   at_least ~msg:"calls in this process" int ~than:1 !calls;
-  let file =
-    require_some (require_ok (Baseline.read "digest.thumper.corrected"))
-  in
+  let file = require_some (require_ok (Baseline.read "digest.thumper")) in
   let rows = Baseline.rows (require_some (Baseline.section file "testkey")) in
   equal
     (list (pair string int))
@@ -993,9 +973,11 @@ let without_a_baseline () =
   let (_ : string) = state_env () in
   equal ~msg:"exit code" int 0
     (main ~config:fast_config ~benches:alpha [ "check"; "--json"; "v.json" ]);
-  contains ~sub:"testkey" (output ());
-  equal ~msg:"the corrected file" (list string) [ "alpha alloc_words" ]
-    (corrected_rows "digest.thumper.corrected");
+  let out = output () in
+  contains ~sub:"testkey" out;
+  contains ~sub:"\n  accept:  bench.exe bless\n" out;
+  equal ~msg:"no baseline" (list string) [ "v.json" ]
+    (Array.to_list (Sys.readdir "."));
   ends_with ~msg:"the --json document" ~affix:"}\n" (read_file "v.json")
 
 let strict_fails_a_proposal () =
@@ -1015,7 +997,7 @@ let wait_quiet_zero () =
        [ "bless"; "--force"; "--wait-quiet"; "0" ])
 
 (* A case that removes its baseline's directory while it is measured, so the
-   corrected file cannot be written after the measurement. *)
+   baseline cannot be written after the measurement. *)
 let vanishing dir =
   [
     Bench.bench "alpha" (fun () ->
@@ -1026,26 +1008,6 @@ let vanishing dir =
         end);
   ]
 
-let a_late_write_failure_under_check () =
-  let dir = state_env () in
-  let gone = Filename.concat dir "gone" in
-  mkdirs gone;
-  write_baseline
-    ~identity:{ (current_identity ()) with Baseline.machine = "otherkey" }
-    "gone/digest.thumper" [];
-  equal ~msg:"exit code" int 2
-    (main ~config:fast_config ~benches:(vanishing gone)
-       [ "check"; "--baseline"; "gone/digest.thumper" ]);
-  let out = printed dir in
-  contains ~msg:"the report" ~sub:"proposed" out;
-  not_contains ~msg:"no accept line" ~sub:"accept:" out;
-  ends_with ~msg:"the stop, after the report"
-    ~affix:
-      "\n\
-       thumper: cannot write gone/digest.thumper.corrected: No such file or \
-       directory\n"
-    out
-
 let a_late_write_failure_under_bless () =
   let dir = state_env () in
   let gone = Filename.concat dir "gone" in
@@ -1055,7 +1017,7 @@ let a_late_write_failure_under_bless () =
        [ "bless"; "--force"; "--baseline"; "gone/digest.thumper" ]);
   expect (printed dir)
   @@ __POS_OF__
-       {| thumper: cannot write gone/digest.thumper.corrected: No such file or directory |}
+       {| thumper: cannot write gone/digest.thumper: No such file or directory |}
 
 let a_partial_bless () =
   let (_ : string) = state_env () in
@@ -1063,12 +1025,11 @@ let a_partial_bless () =
   equal ~msg:"exit code" int 0
     (main ~config:fast_config [ "bless"; "-f"; "alpha"; "--force" ]);
   let out = output () in
-  contains ~sub:"blessed 1 case for machine testkey" out;
-  contains ~sub:"\n  accept:  mv digest.thumper.corrected digest.thumper\n" out;
-  not_contains ~msg:"nothing dropped" ~sub:"unselected" out;
+  contains ~sub:"blessed 1 case into digest.thumper for machine testkey" out;
+  not_contains ~sub:"accept:" out;
   equal ~msg:"the selected case's rows beside the others" (list string)
     [ "alpha alloc_words"; "g/beta alloc_words" ]
-    (corrected_rows "digest.thumper.corrected")
+    (baseline_rows "digest.thumper")
 
 let a_partial_bless_of_a_stale_section () =
   let (_ : string) = state_env () in
@@ -1078,40 +1039,31 @@ let a_partial_bless_of_a_stale_section () =
     [ alloc_row "g/beta" 54 ];
   equal ~msg:"exit code" int 0
     (main ~config:fast_config [ "bless"; "-f"; "alpha"; "--force" ]);
-  contains
-    ~sub:
-      "partial selection on a stale section: the corrected file re-records \
-       this machine's whole section and drops the rows of the 1 unselected \
-       case"
-    (output ())
+  equal (list string) [ "alpha alloc_words" ] (baseline_rows "digest.thumper")
 
-let pruned =
-  "case dead no longer exists in this binary; its rows will be pruned from the \
-   corrected file"
-
-let a_full_check_prunes () =
+let a_full_bless_prunes () =
   let (_ : string) = state_env () in
   write_baseline "digest.thumper" [ alloc_row "alpha" 0; alloc_row "dead" 0 ];
+  equal ~msg:"exit code" int 0
+    (main ~config:fast_config ~benches:alpha [ "bless"; "--force" ]);
+  equal (list string) [ "alpha alloc_words" ] (baseline_rows "digest.thumper")
+
+(* "alpha" allocates nothing, so its row of 5 words reads improved; "dead" is
+   a case the suite lost. *)
+let check_writes_no_baseline () =
+  let (_ : string) = state_env () in
+  write_baseline "digest.thumper" [ alloc_row "alpha" 5; alloc_row "dead" 0 ];
+  let before = read_file "digest.thumper" in
   equal ~msg:"exit code" int 0
     (main ~config:fast_config ~benches:alpha [ "check" ]);
-  contains ~sub:pruned (output ());
-  equal (list string) [ "alpha alloc_words" ]
-    (corrected_rows "digest.thumper.corrected")
+  contains ~sub:"\n  accept:  bench.exe bless\n" (output ());
+  equal ~msg:"the baseline" string before (read_file "digest.thumper");
+  equal ~msg:"no other file" (list string) [ "digest.thumper" ]
+    (Array.to_list (Sys.readdir "."))
 
-let a_partial_check_prunes_nothing () =
-  let (_ : string) = state_env () in
-  write_baseline "digest.thumper" [ alloc_row "alpha" 0; alloc_row "dead" 0 ];
-  equal ~msg:"exit code" int 0
-    (main ~config:fast_config
-       ~benches:(alpha @ [ Bench.bench "beta" ignore ])
-       [ "check"; "-f"; "alpha" ]);
-  not_contains ~sub:"no longer exists" (output ());
-  equal ~msg:"no corrected file" bool false
-    (Sys.file_exists "digest.thumper.corrected")
-
-(* The first word of the rerun line: the executable as [argv.(0)] names it,
-   seen from the working directory. *)
-let rerun_exe dir =
+(* The first word of the rerun line of [out]: the executable as [argv.(0)]
+   names it, seen from the working directory. *)
+let rerun_exe out =
   let label = "  rerun:   " in
   require_match
     (fun l ->
@@ -1124,7 +1076,7 @@ let rerun_exe dir =
       else None)
     (List.find_opt
        (String.starts_with ~prefix:label)
-       (String.split_on_char '\n' (printed dir))
+       (String.split_on_char '\n' out)
     |> Option.value ~default:"")
 
 let executables =
@@ -1148,6 +1100,68 @@ let executables =
       "$D/b.exe" );
   ]
 
+(* The hints of a rule action paste from the workspace root, [DUNE_SOURCEROOT],
+   and name absolute paths without one. A run under [dune exec] is not a rule
+   action. *)
+let roots =
+  [
+    ( "a rule action names the executable from the workspace root",
+      (fun d ->
+        rule_action d;
+        []),
+      "./_b/default/bench/bench.exe",
+      [] );
+    ( "a sandboxed rule action names the files outside its sandbox",
+      (fun d ->
+        dune_env ~context:(d ^ "/_b/default") ~root:d;
+        enter (d ^ "/_b/.sandbox/0f/default/bench");
+        [ "--baseline"; "x.thumper" ]),
+      "./_b/default/bench/bench.exe",
+      [ "--baseline bench/x.thumper" ] );
+    ( "a rule action without a workspace root names it absolute",
+      (fun d ->
+        rule_action d;
+        setenv "DUNE_SOURCEROOT" None;
+        []),
+      "$D/_b/default/bench/bench.exe",
+      [] );
+    ( "dune exec names it from the working directory",
+      (fun d ->
+        mkdirs (d ^ "/_b/default/bench");
+        dune_env ~context:(d ^ "/_b/default") ~root:d;
+        []),
+      "./bench.exe",
+      [] );
+    ( "a rule action names a relative --baseline by its source",
+      (fun d ->
+        rule_action d;
+        [ "--baseline"; "x.thumper" ]),
+      "./_b/default/bench/bench.exe",
+      [ "--baseline bench/x.thumper" ] );
+    ( "a rule action names a --baseline outside its context from the root",
+      (fun d ->
+        rule_action d;
+        [ "--baseline"; "../../../y.thumper" ]),
+      "./_b/default/bench/bench.exe",
+      [ "--baseline y.thumper" ] );
+    ( "a rule action keeps an absolute --baseline",
+      (fun d ->
+        rule_action d;
+        [ "--baseline"; d ^ "/z.thumper" ]),
+      "./_b/default/bench/bench.exe",
+      [ "--baseline $D/z.thumper" ] );
+  ]
+
+let pastes_from_the_root (_, setup, expected, flags) =
+  let dir = state_env () in
+  let args = setup dir in
+  equal ~msg:"exit code" int 1
+    (main ~exe:"./bench.exe" ~config:fast_config ~benches:failing
+       ("check" :: args));
+  let out = printed dir in
+  equal string expected (rerun_exe out);
+  List.iter (fun sub -> contains ~sub out) flags
+
 let names_the_executable (_, cwd, exe, expected) =
   let dir = state_env () in
   mkdirs (dir ^ "/sub");
@@ -1156,7 +1170,7 @@ let names_the_executable (_, cwd, exe, expected) =
     (main ~exe:(exe dir)
        ~baseline:(Some (dir ^ "/digest.thumper"))
        ~config:fast_config ~benches:failing [ "check" ]);
-  equal string expected (rerun_exe dir)
+  equal string expected (rerun_exe (printed dir))
 
 let the_rerun_line_repeats_the_flags () =
   let dir = state_env () in
@@ -1184,46 +1198,47 @@ let running =
         a_json_path_under_a_file;
       test "list reads neither the baseline nor THUMPER_MACHINE"
         list_reads_no_baseline_and_no_key;
-      cases "every subcommand first removes the stale files" ~name:fst
-        first_removals removes_the_stale_files;
-      cases "-h, -V and a usage error keep the stale files" ~name:fst
+      cases "check first removes the stale --json document" ~name:fst
+        first_removals removes_the_stale_document;
+      cases "the other runs keep the stale --json document" ~name:fst
         [
           ("-h", [ "-h" ]);
           ("-V", [ "-V" ]);
           ("a usage error", [ "--json"; "v.json"; "--bogus" ]);
+          ("list", [ "list"; "-f"; "zzz" ]);
+          ("bless", [ "bless"; "-f"; "zzz" ]);
         ]
-        keeps_the_stale_files;
-      test "check without a baseline stops before it takes the lock"
+        keeps_the_stale_document;
+      test "bless's pre-flight stops before it takes the lock"
         stops_before_the_lock;
       cases ~tags:[ "slow" ] ~timeout:60. "a preset sets the samples"
         ~name:(fun (n, _, _) -> n)
         presets samples_of_a_preset;
       slow ~timeout:60.
-        "check without a baseline writes the corrected file and --json"
+        "check without a baseline proposes and writes --json alone"
         without_a_baseline;
       slow ~timeout:60. "--strict fails a run that proposes"
         strict_fails_a_proposal;
       slow ~timeout:60. "check and bless --force measure after --wait-quiet 0"
         wait_quiet_zero;
-      slow ~timeout:60.
-        "a corrected file check cannot write stops after the report"
-        a_late_write_failure_under_check;
-      slow ~timeout:60.
-        "a corrected file bless cannot write stops before the report"
+      slow ~timeout:60. "a baseline bless cannot write stops before the report"
         a_late_write_failure_under_bless;
       slow ~timeout:60. "a partial bless re-records the selected cases"
         a_partial_bless;
-      slow ~timeout:60. "a partial bless of a stale section says what it drops"
+      slow ~timeout:60. "a partial bless of a stale section replaces it"
         a_partial_bless_of_a_stale_section;
-      slow ~timeout:60. "a full check prunes the rows of a case the suite lost"
-        a_full_check_prunes;
-      slow ~timeout:60. "a partial check prunes nothing"
-        a_partial_check_prunes_nothing;
+      slow ~timeout:60. "a full bless prunes the rows of a case the suite lost"
+        a_full_bless_prunes;
+      slow ~timeout:60. "check writes no baseline, an improvement included"
+        check_writes_no_baseline;
       cases ~tags:[ "slow" ] ~timeout:60. "the rerun line names the executable"
         ~name:(fun (n, _, _, _) -> n)
         executables names_the_executable;
       slow ~timeout:60. "the rerun line repeats --quick, --baseline and --tag"
         the_rerun_line_repeats_the_flags;
+      cases ~tags:[ "slow" ] ~timeout:60. "a rule action's hints"
+        ~name:(fun (n, _, _, _) -> n)
+        roots pastes_from_the_root;
     ]
 
 let () = exit (run "cli" [ command_lines; terminal; paths; running ])

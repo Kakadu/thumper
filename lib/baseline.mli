@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** The baseline file: the format-v1 codec, reading and the atomic write, and
-    the primitives the write paths build files with.
+    recording a run's evidence.
 
     A file holds evidence, sample vectors and exact counts, never conclusions.
     It has an optional suite header, then one section per machine key, each with
@@ -12,11 +12,11 @@
     [doc/manual/baseline-format.md], which tools may rely on, so a change to
     what this module reads or prints is a change to that specification. Read a
     file with {!read} or {!of_string}, observe it with {!val-section} and
-    {!val-rows}, and build a new one with {!set_section} or {!update_rows}.
-    Everything read prints back byte for byte, so a written file differs from
-    the one read only in the rows and sections the write paths add, replace or
-    remove, and in the annotations they append. Which rows change is
-    {!Verdict}'s decision; this module places rows and keeps their order. *)
+    {!val-rows}, build one with {!set_section} or {!update_rows}, and record a
+    run into it with {!record}, the write path of [bless]. Everything read
+    prints back byte for byte, so a written file differs from the one read only
+    in the rows and sections a write adds, replaces or removes, and in the
+    annotations it appends. *)
 
 (** {1:types Types, errors and quoting} *)
 
@@ -178,9 +178,8 @@ val case_frozen_k : section -> id:string -> int option
     [id] in [s]'s order, and [None] when the case has no sampled row.
     {!Check.run} freezes a case's first trial at it, and {!Verdict.judge}
     compares this run's batch size with it when it judges an exact row, so both
-    read one value. The rows of one case can hold different batch sizes, when a
-    row was advanced or re-recorded from a trial at another batch size; the
-    first sampled row then decides. *)
+    read one value. The rows of one case can hold different batch sizes, as a
+    file edited by hand may; the first sampled row then decides. *)
 
 (** {1:rows Row observers} *)
 
@@ -206,11 +205,10 @@ val row_evidence : row -> evidence
 
 (** {1:editing Building files}
 
-    The write paths build a file from these values. {!set_section} and
-    {!update_rows} return a new file that keeps the canonical order and every
-    byte they do not replace. Every function here refuses what the grammar
-    refuses, so a file built from them always prints to a text {!of_string}
-    accepts. *)
+    {!record} builds a file from these values. {!set_section} and {!update_rows}
+    return a new file that keeps the canonical order and every byte they do not
+    replace. Every function here refuses what the grammar refuses, so a file
+    built from them always prints to a text {!of_string} accepts. *)
 
 type identity = { machine : string; host : string; ocaml : string }
 (** The type for a section's identity header, which {!Env} computes. [machine]
@@ -255,14 +253,14 @@ val update_rows :
   ?annotations:string list ->
   t ->
   machine:string ->
-  advance:row list ->
-  prune:(string * string) list ->
+  replace:row list ->
+  remove:(string * string) list ->
   t
-(** [update_rows ?annotations t ~machine ~advance ~prune] is [t] with the
+(** [update_rows ?annotations t ~machine ~replace ~remove] is [t] with the
     section of [machine] edited in place:
-    - each row of [advance] replaces the row with its case id and metric, or is
+    - each row of [replace] replaces the row with its case id and metric, or is
       inserted in order;
-    - the row of each (id, metric) pair of [prune] is removed, and a pair
+    - the row of each (id, metric) pair of [remove] is removed, and a pair
       without a row is ignored;
     - [annotations], [[]] by default, are appended after the section's
       annotations.
@@ -271,5 +269,38 @@ val update_rows :
     every other section keep their bytes.
 
     Raises [Invalid_argument] if an annotation is refused as by {!set_section},
-    if [advance] holds two rows with one case id and metric, if a pair is in
-    both [advance] and [prune], or if [t] has no section for [machine]. *)
+    if [replace] holds two rows with one case id and metric, if a pair is in
+    both [replace] and [remove], or if [t] has no section for [machine]. *)
+
+(** {1:recording Recording} *)
+
+val record :
+  ?annotations:string list ->
+  identity:identity ->
+  suite:string ->
+  selection:[ `Full | `Partial ] ->
+  run:Run.t ->
+  t ->
+  t
+(** [record ?annotations ~identity ~suite ~selection ~run t] is [t] with [run]'s
+    trials recorded in the section of [identity.machine]. [selection] must
+    describe [run], [`Full] iff [run] holds every case of the suite.
+
+    Under a [`Partial] selection of a current section, one whose [# ocaml:] line
+    is [identity.ocaml], only the rows of [run]'s cases change ({!update_rows}):
+    each case's rows become its trial's, and its rows for metrics the trial did
+    not measure are removed. The header lines, [# host:] included, and every
+    other row keep their bytes, and [annotations] are appended to the section's.
+
+    Otherwise, under a [`Full] selection or on a missing or stale section, the
+    section is replaced ({!set_section}) by one with [identity]'s header,
+    [annotations] as its only annotations and the rows of [run]'s trials, so the
+    rows of the cases [run] lacks are removed. A [t] with no header is replaced
+    by [empty ~suite] first.
+
+    [annotations] defaults to [[]]. Other sections keep their bytes. Every trial
+    is recorded as measured, whatever the host's load was.
+
+    Raises [Invalid_argument] if [t]'s suite header is not [suite], if {!empty}
+    refuses [suite], or if [identity], an annotation or a trial breaks the file
+    grammar ({!set_section}, {!sampled_row}, {!exact_row}). *)
