@@ -79,9 +79,9 @@ A file that matches the grammar must also satisfy these rules:
 - A sampled row's median is the one its samples derive
   ([The median](#the-median)).
 
-A reader ignores one carriage return (CR, byte `0x0d`) before each LF, so
-a file with CRLF line endings reads as the same file with LF endings.
-Thumper writes LF endings only.
+Thumper reads and writes LF line endings only. A carriage return (CR,
+byte `0x0d`) is a byte of its line, so a file with CRLF line endings
+breaks the format at its first line.
 
 ## Sections
 
@@ -224,10 +224,9 @@ is lenient on counts and samples. It accepts leading zeros in a count,
 and any finite sample that OCaml's `float_of_string` reads.
 
 A write keeps every line it does not replace byte for byte, number
-spellings included, except that a CR before the line's LF is dropped. The
-diff between a baseline and its corrected file therefore shows only the
-rows and sections that changed. Which rows a check advances, adds or
-removes is `Verdict.corrected`'s contract in
+spellings included. The diff between a baseline and its corrected file
+therefore shows only the rows and sections that changed. Which rows a
+check advances, adds or removes is `Verdict.corrected`'s contract in
 [`lib/thumper.mli`](../../lib/thumper.mli).
 
 ## Reading outcomes
@@ -258,8 +257,7 @@ A tool may rely on:
 - the fields of the header lines, of which thumper reads only the
   machine key and `# ocaml:`;
 - the ascending order of samples, rows and sections, and the median rule;
-- a write keeping every line it does not replace byte for byte, less a
-  CR before its LF.
+- a write keeping every line it does not replace byte for byte.
 
 Which files thumper writes, and when, is under Files in
 [`lib/thumper.mli`](../../lib/thumper.mli).
