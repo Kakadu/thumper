@@ -441,17 +441,25 @@ val run :
     The actions are commands to paste where the run was started, or from the
     workspace root in a dune rule action:
     - [rerun:], when some case fails: a command that measures the failing cases
-      again.
+      again. With no failing case, a metric inconclusive for [environment],
+      [unconfirmed] or [drifted] makes it measure the run's selection again.
     - [accept:], when a case that does not fail has a proposed or an improved
-      metric: the [bless] command that records those cases.
+      metric, or one inconclusive for [batch drifted], or for [exactness lost]
+      when this run's count is exact and the row's sampled: the [bless] command
+      that records those cases.
 
-    Both name the executable relative to that directory when it lies under it,
-    and absolute otherwise. They repeat the run's [--quick] or [--precise], a
-    [--baseline] given on the command line, and its [--tag]s. They select their
-    cases with [-f <id>] patterns, or with the run's own patterns: [rerun:] when
-    more than 10 cases fail, and [accept:] when it records every case of the
-    run. A [-f] pattern selects every case whose id contains it, so it may
-    select more cases than the one it names.
+    The other reasons, [wide interval], [non-positive sample] and a sampled
+    count's [exactness lost], call for a change of protocol or budget and make
+    no hint. The loaded host's warning names the load average at which a host is
+    loaded, half a task per core.
+
+    Both hints name the executable relative to that directory when it lies under
+    it, and absolute otherwise. They repeat the run's [--quick] or [--precise],
+    a [--baseline] given on the command line, and its [--tag]s. They select
+    their cases with [-f <id>] patterns, or with the run's own patterns:
+    [rerun:] when no case or more than 10 cases fail, and [accept:] when it
+    records every case of the run. A [-f] pattern selects every case whose id
+    contains it, so it may select more cases than the one it names.
 
     The summary counts each case once, by its outcome: [regressed] when it
     fails, [inconclusive] when a metric is inconclusive, and among the passing

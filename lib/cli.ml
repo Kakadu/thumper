@@ -585,10 +585,9 @@ let wait_for_quiet = function
          when there is something to wait out). *)
       (match Env.load () with
       | Env.Loaded { load; cores } ->
-          Printf.eprintf
-            "thumper: waiting up to %gs for a quiet host (load %.1f on %d cores)\n\
-             %!"
-            secs load cores
+          Printf.eprintf "thumper: waiting up to %gs for a quiet host (%s)\n%!"
+            secs
+            (Report.loaded ~load ~cores)
       | Env.Quiet -> ());
       match Env.wait_quiet ~timeout_s:secs () with
       | Ok () -> None
@@ -674,9 +673,10 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
       match Env.load () with
       | Env.Loaded { load; cores } ->
           fail2
-            "bless refused: host still loaded after %gs (load %.1f on %d \
-             cores); rerun with --force to record it anyway"
-            secs load cores
+            "bless refused: host still loaded after %gs (%s); rerun with \
+             --force to record it anyway"
+            secs
+            (Report.loaded ~load ~cores)
       | Env.Quiet -> ())
   | expired -> warn_expired expired);
   (* The load is sampled under the lock, just before measuring, as check's is:
@@ -692,9 +692,9 @@ let run_bless ~(o : options) ~name ~config ~filter ~budgets ~baseline_path
                 (match load with
                 | Env.Loaded { load; cores } when not o.force ->
                     fail2
-                      "bless refused: load %.1f on %d cores; rerun with \
-                       --wait-quiet SECS, or with --force to record it anyway"
-                      load cores
+                      "bless refused: %s; rerun with --wait-quiet SECS, or \
+                       with --force to record it anyway"
+                      (Report.loaded ~load ~cores)
                 | Env.Loaded _ | Env.Quiet -> ());
                 (load, Check.measure ~on_progress:tick ~config ?filter benches))))
   in

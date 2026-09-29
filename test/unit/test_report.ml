@@ -325,6 +325,51 @@ let every_reason () =
       (bcase "drifted", trial ~drifted:true ~alloc:None flat);
     ]
 
+(* [id]'s case of [every_reason], judged alone against the same rows. *)
+let one_reason id =
+  let flat = ties 5 1e-6 in
+  let file = file_of [ wall_row id flat ] in
+  let case =
+    match id with
+    | "unconfirmed" -> (bcase id, trial ~alloc:None (ties 5 2e-6))
+    | "batch-drifted" -> (bcase id, trial ~k:16 ~alloc:None flat)
+    | "drifted" -> (bcase id, trial ~drifted:true ~alloc:None flat)
+    | "non-positive" -> (bcase id, trial ~alloc:None (ties 5 0.))
+    | _ -> (bcase id, trial ~alloc:None [| 1e-6; 1e-6; 1e-6; 4e-6; 4e-6 |])
+  in
+  fun () -> verdict_of_cases ~file [ case ]
+
+(* A count that loses exactness under a zero budget: this run's is exact and
+   the row's sampled, or the reverse. *)
+let exactness_lost ~run_exact () =
+  let id = "exactness-lost" in
+  let sampled = Run.Samples (sam (ties 5 54.)) in
+  let file =
+    file_of
+      [
+        wall_row id (ties 5 1e-6);
+        row ~metric:m_alloc id (if run_exact then sampled else Run.Exact 54);
+      ]
+  in
+  verdict_of ~file
+    ( bcase ~budgets:[ Budget.no_more_alloc_than 0.0 ] id,
+      if run_exact then trial ~alloc:(Some 54) (ties 5 1e-6)
+      else sampled_alloc 54. )
+
+(* A failing case beside one that measuring again may settle. *)
+let failing_and_unconfirmed () =
+  let file =
+    file_of
+      [
+        wall_row "alpha" (ties 5 1e-6);
+        alloc_row "alpha" 54;
+        wall_row "beta" (ties 5 1e-6);
+        alloc_row "beta" 54;
+      ]
+  in
+  verdict_of_cases ~file
+    [ exact_regression_case "alpha"; (bcase "beta", trial (ties 5 2e-6)) ]
+
 (* A column holding 1.4 us and 33 ms. *)
 let time_units () =
   let file =
@@ -837,6 +882,44 @@ let past_ten_cases_the_accept_line_names_each () =
   not_contains ~sub:"case-99" line;
   not_contains ~sub:"-f case " line
 
+(* Each inconclusive reason's hints, the case alone in its run: [rerun:]
+   measures again, [accept:] records the row again, and a reason that asks
+   for another measurement or budget has none. *)
+let remedies =
+  let rerun = Some "\n  rerun:   bench.exe\n"
+  and accept = Some "\n  accept:  bench.exe bless\n" in
+  [
+    ("environment: measure again", loaded_regression, rerun, None);
+    ("unconfirmed: measure again", one_reason "unconfirmed", rerun, None);
+    ("drifted: measure again", one_reason "drifted", rerun, None);
+    ("batch drifted: record again", one_reason "batch-drifted", None, accept);
+    ( "exactness lost, this run exact: record again",
+      exactness_lost ~run_exact:true,
+      None,
+      accept );
+    ( "exactness lost, this run sampled: no command",
+      exactness_lost ~run_exact:false,
+      None,
+      None );
+    ("wide interval: no command", one_reason "wide-interval", None, None);
+    ("non-positive sample: no command", one_reason "non-positive", None, None);
+  ]
+
+(* The detail line names the reason its test is named after, up to a ',' or
+   ':'. *)
+let hints_of_a_reason (name, verdict, rerun, accept) =
+  let report = Report.check (render ()) (verdict ()) in
+  let reason =
+    List.hd (String.split_on_char ',' (List.hd (String.split_on_char ':' name)))
+  in
+  contains ~msg:"the reason" ~sub:(" " ^ reason) report;
+  (match rerun with
+  | Some sub -> contains ~sub report
+  | None -> not_contains ~sub:"rerun:" report);
+  match accept with
+  | Some sub -> contains ~sub report
+  | None -> not_contains ~sub:"accept:" report
+
 let first (name, _, _) = name
 let first4 (name, _, _, _) = name
 let first5 (name, _, _, _, _) = name
@@ -866,6 +949,20 @@ let check_report =
             equal string expected
               (rerun_line
                  (Report.check (render ~exe:(exe n) ()) (failing_cases 2))));
+        cases "an inconclusive reason joins the hint that is its remedy"
+          ~name:first4 remedies hints_of_a_reason;
+        test "a rerun for noise alone repeats the run's flags and patterns"
+          (fun () ->
+            contains ~sub:"\n  rerun:   bench.exe --quick -f un -f 'a b'\n"
+              (Report.check
+                 (render ~flags:[ "--quick" ] ~patterns:[ "un"; "a b" ] ())
+                 (one_reason "unconfirmed" ())));
+        test "a failing run's rerun names the failing cases alone" (fun () ->
+            contains ~sub:"\n  rerun:   bench.exe -f alpha\n"
+              (Report.check (render ()) (failing_and_unconfirmed ())));
+        test "the load names its threshold" (fun () ->
+            equal string "load 7.9 on 8 cores, over 4.0"
+              (Report.loaded ~load:7.9 ~cores:8));
         test "the rerun line names ten failing cases" (fun () ->
             contains ~sub:" -f case-10\n"
               (Report.check (render ()) (failing_cases 10)));

@@ -96,6 +96,10 @@ val classify : load:float option -> cores:int -> load
 
     Raises [Invalid_argument] if [cores < 1]. *)
 
+val loaded_at : cores:int -> float
+(** [loaded_at ~cores] is [0.5 *. float cores], the load average at and above
+    which {!classify} deems a host of [cores] cores loaded. *)
+
 val load : unit -> load
 (** [load ()] is the host's load now: [classify ~load ~cores], where [load] is
     the host's 1-minute load average, [getloadavg(3)] on Darwin and other POSIX

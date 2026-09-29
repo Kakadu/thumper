@@ -13,4 +13,7 @@ thumper: digest — 6 cases vs digest.thumper for machine testkey
   inconclusive  1.00 us    ±0.0%         drifted
       drifted
 
+  rerun:   bench.exe
+  accept:  bench.exe bless -f batch-drifted
+
   6 cases: 0 passed, 6 inconclusive.

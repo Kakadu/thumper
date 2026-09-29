@@ -4,4 +4,4 @@ thumper: digest — blessed 2 cases into digest.thumper for machine testkey
   blessed  2.50 us  ±0.0%  3,000 w  beta
   warning: beta: possibly folded: wrap the input in black_box
 
-  warning: blessed under load 7.9 on 8 cores (--force recorded)
+  warning: blessed under load 7.9 on 8 cores, over 4.0 (--force recorded)

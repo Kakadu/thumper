@@ -41,6 +41,9 @@ let status_redraw p = "\r" ^ status_line p ^ csi "K"
 
 let plural n = if n = 1 then "" else "s"
 
+let loaded ~load ~cores =
+  strf "load %.1f on %d cores, over %.1f" load cores (Env.loaded_at ~cores)
+
 let group_int n =
   let s = string_of_int (abs n) in
   let len = String.length s in
@@ -410,6 +413,32 @@ let check_cell (c : Verdict.case_report) =
         frag ~style:`Faint "passed" "" :: f :: rest
     | ranked -> ranked
 
+(* The hint that acts on a metric's verdict: [`Bless] records its row, for a
+   proposed or improved metric and for an inconclusive one whose row is to be
+   recorded again ([batch drifted], or [exactness lost] when this run's count
+   is exact and the row's sampled); [`Rerun] measures it again, for an
+   inconclusive one that another measurement may settle ([environment],
+   [unconfirmed], [drifted]). [wide interval], [non-positive sample] and a
+   sampled count's [exactness lost] ask for another measurement or budget,
+   which no command states. *)
+let remedy_of (c : Verdict.case_report) (mr : Verdict.metric_report) =
+  match mr.verdict with
+  | Verdict.Proposed | Verdict.Judged (Verdict.Improved _) -> Some `Bless
+  | Verdict.Judged (Verdict.Inconclusive { reason; _ }) -> (
+      match reason with
+      | Verdict.Environment | Verdict.Unconfirmed | Verdict.Candidate_drifted ->
+          Some `Rerun
+      | Verdict.Batch_drifted -> Some `Bless
+      | Verdict.Exactness_lost -> (
+          match Run.Trial.measurement c.trial mr.metric with
+          | Some (Run.Exact _) -> Some `Bless
+          | Some (Run.Samples _) | None -> None)
+      | Verdict.Wide_interval | Verdict.Non_positive -> None)
+  | Verdict.Judged
+      ( Verdict.Regressed _ | Verdict.Equivalent _
+      | Verdict.Changed_within_budget _ | Verdict.Within_budget _ ) ->
+      None
+
 (* The report *)
 
 (* The rerun line names at most this many failing cases; past it, it repeats
@@ -518,8 +547,7 @@ let check r v =
         [
           head;
           styled ~color `Yellow
-            (strf "warning: load %.1f on %d cores; timing verdicts degraded"
-               load cores);
+            (strf "warning: %s; timing verdicts degraded" (loaded ~load ~cores));
         ]
     | _ -> [ head ]
   in
@@ -552,38 +580,42 @@ let check r v =
       cases
   in
   let table = table_lines ~color rows @ warnings in
-  (* Actions: the rerun of the failing cases, and the bless of the passing
-     cases with a proposed or improved metric. *)
+  (* Actions: the command that measures again, and the bless of the passing
+     cases whose rows are to be recorded. An inconclusive reason joins the
+     hint that is its remedy ([remedy]); a reason that asks for another
+     measurement or budget has no command. *)
   let actions =
     let exe = shell_arg r.exe in
-    let hint ~label head ~own = function
+    let own = List.map (fun p -> "-f " ^ shell_arg p) r.patterns in
+    let hint ~label head ~own_run = function
       | [] -> []
       | selected ->
           let selection =
-            if own then List.map (fun p -> "-f " ^ shell_arg p) r.patterns
+            if own_run then own
             else
               List.map (fun (c : Verdict.case_report) -> "-f " ^ c.id) selected
           in
           wrap_command ~label head (r.flags @ selection)
     in
-    let recordable (c : Verdict.case_report) =
-      (not (case_fails c))
-      && List.exists
-           (fun (mr : Verdict.metric_report) ->
-             match mr.verdict with
-             | Verdict.Proposed | Verdict.Judged (Verdict.Improved _) -> true
-             | Verdict.Judged
-                 ( Verdict.Regressed _ | Verdict.Equivalent _
-                 | Verdict.Changed_within_budget _ | Verdict.Within_budget _
-                 | Verdict.Inconclusive _ ) ->
-                 false)
-           c.reports
+    let has remedy (c : Verdict.case_report) =
+      List.exists (fun mr -> remedy_of c mr = Some remedy) c.reports
     in
     let failing = List.filter case_fails cases in
-    let recorded = List.filter recordable cases in
-    hint ~label:"  rerun:   " exe ~own:(List.length failing > rerun_cap) failing
+    let recorded =
+      List.filter (fun c -> (not (case_fails c)) && has `Bless c) cases
+    in
+    let rerun =
+      match failing with
+      | [] when List.exists (has `Rerun) cases ->
+          wrap_command ~label:"  rerun:   " exe (r.flags @ own)
+      | failing ->
+          hint ~label:"  rerun:   " exe
+            ~own_run:(List.length failing > rerun_cap)
+            failing
+    in
+    rerun
     @ hint ~label:"  accept:  " (exe ^ " bless")
-        ~own:(List.length recorded = n_cases)
+        ~own_run:(List.length recorded = n_cases)
         recorded
   in
   (* Summary, compared runs only. Its color is the outcome's: red iff the run
@@ -686,10 +718,8 @@ let bless ~color ~suite ~machine ~baseline_path ~cases:n ~load run =
     | Env.Loaded { load; cores } ->
         [
           styled ~color `Yellow
-            (strf
-               "  warning: blessed under load %.1f on %d cores (--force \
-                recorded)"
-               load cores);
+            (strf "  warning: blessed under %s (--force recorded)"
+               (loaded ~load ~cores));
         ]
     | Env.Quiet -> []
   in

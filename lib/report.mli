@@ -28,6 +28,11 @@ val status_erase : string
 (** [status_erase] is the bytes that erase the status line on a terminal: a
     carriage return and the erase to the end of the line. *)
 
+val loaded : load:float -> cores:int -> string
+(** [loaded ~load ~cores] is how every line that reports a loaded host names the
+    load: [load 7.9 on 8 cores, over 4.0], with the threshold of
+    {!Env.loaded_at}. *)
+
 val shell_arg : string -> string
 (** [shell_arg s] is [s] as one argument of a POSIX shell command: [s] itself
     when it is non-empty and each of its bytes is an ASCII letter, a digit or
@@ -55,8 +60,8 @@ type render = {
           {!shell_arg}. *)
   patterns : string list;
       (** The run's patterns. A hint line selects by them, quoted, in place of
-          its cases' ids: the [rerun:] line when more than 10 cases fail, the
-          [accept:] line when it records every case of the run. *)
+          its cases' ids: the [rerun:] line when no case or more than 10 cases
+          fail, the [accept:] line when it records every case of the run. *)
   strict : bool;
       (** Whether the run was given [--strict]. The summary's colour follows it,
           and the summary ends with [; failed under --strict] when [--strict]
@@ -81,10 +86,17 @@ val check : render -> Verdict.t -> string
     word: [improved], [proposed], or [passed] for the relations equivalent and
     within budget. Its other relations follow on the detail line. A regression
     and a relation within budget name their budget, [budget +5%] or [cap 64 w].
-    The [rerun:] line prints iff some case fails, and names the failing cases.
-    The [accept:] line prints iff some case that does not fail has a [Proposed]
-    or [Improved] metric, and is the [bless] command that records those cases.
-    The summary, which only a run against a current section prints, is red iff
+
+    An inconclusive metric's reason joins the hint that is its remedy. The
+    [rerun:] line prints iff some case fails, and then names the failing cases,
+    or else iff some metric is inconclusive for [Environment], [Unconfirmed] or
+    [Candidate_drifted], and then repeats the run's own selection. The [accept:]
+    line prints iff some case that does not fail has a [Proposed] or [Improved]
+    metric, or one inconclusive for [Batch_drifted], or for [Exactness_lost]
+    when the run's count is exact. It is the [bless] command that records those
+    cases. [Wide_interval], [Non_positive] and a sampled count's
+    [Exactness_lost] make no hint. A load is named by {!loaded}. The summary,
+    which only a run against a current section prints, is red iff
     [Verdict.exit_code ~strict:r.strict v] is not [0]. *)
 
 (** {1:bless The bless report} *)

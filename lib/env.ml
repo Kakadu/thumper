@@ -180,6 +180,7 @@ let classify ~load ~cores =
       Loaded { load; cores }
   | Some _ | None -> Quiet
 
+let loaded_at ~cores = load_threshold *. float_of_int cores
 let load () = classify ~load:(load_average ()) ~cores:(cores ())
 
 (* wait_quiet poll cadence: the kernel recomputes the 1-minute load average on
