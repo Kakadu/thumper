@@ -3,478 +3,177 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Unit tests for [Bench].
-   [Bench] is a private module of the library, reached — with its [Budget]
-   and [Metric] dependencies — through the facade's [Thumper.Private]
-   re-export, so rebuilds track [lib/bench.{ml,mli}]. *)
+(* [Bench] builds and resolves trees without measuring, so every claim is on a
+   value and runs in process. The running claims call a prepared case's batch
+   closure directly and read what its closures recorded. A table row holds its
+   tree as a function: a constructor or a budget built at initialisation runs
+   outside every test, where no mutant is armed. *)
 
 open Windtrap
 module Bench = Thumper.Private.Bench
 module Budget = Thumper.Private.Budget
 module Metric = Thumper.Private.Metric
 
+let strf = Printf.sprintf
 let noop () = ()
 
-let resolve_ok benches =
-  match Bench.resolve benches with
-  | Ok cases -> cases
-  | Error e -> failf "resolve: %s" (Format.asprintf "%a" Bench.pp_error e)
+(* Witnesses *)
 
-let ids ?filter benches =
-  let cases = resolve_ok benches in
-  let cases =
-    match filter with
-    | None -> cases
-    | Some f -> List.filter (Bench.matches f) cases
-  in
-  List.map Bench.id cases
+let error =
+  Testable.make ~pp:Bench.pp_error ~equal:(fun a b ->
+      match (a, b) with
+      | Bench.Duplicate_id a, Bench.Duplicate_id b -> String.equal a b
+      | Bench.Uncollected_budget a, Bench.Uncollected_budget b ->
+          String.equal a.scope b.scope && String.equal a.metric b.metric
+      | Bench.Duplicate_id _, Bench.Uncollected_budget _
+      | Bench.Uncollected_budget _, Bench.Duplicate_id _ ->
+          false)
+
+(* A budget as the metric it binds and its bound, all that inheritance moves. *)
+let budget_label b =
+  let m = Metric.id (Budget.metric b) in
+  match Budget.contract b with
+  | Budget.Relative { max_regression; _ } -> strf "%s +%g" m max_regression
+  | Budget.Absolute_max v -> strf "%s at most %g" m v
+
+(* Resolved cases and recorded calls *)
+
+let resolved benches = require_ok ~pp:Bench.pp_error (Bench.resolve benches)
+let ids benches = List.map Bench.id (resolved benches)
 
 let the_case benches =
-  match resolve_ok benches with
-  | [ c ] -> c
-  | l -> failf "expected exactly one case, got %d" (List.length l)
+  require_match (function [ c ] -> Some c | _ -> None) (resolved benches)
 
-let duplicate_id benches =
-  match Bench.resolve benches with
-  | Error (Bench.Duplicate_id id) -> id
-  | Error e -> failf "expected Duplicate_id, got %a" Bench.pp_error e
-  | Ok _ -> failf "expected Error (Duplicate_id _), got Ok"
+let prepared bench = Bench.prepare (the_case [ bench ])
 
-(* Budgets compare by (metric id, resolved contract) — all their observable
-   content (as in test_budget). *)
-let pp_contract ppf = function
-  | Budget.Relative { max_regression; band } ->
-      Format.fprintf ppf "Relative { max_regression = %g; band = %g }"
-        max_regression band
-  | Budget.Absolute_max v -> Format.fprintf ppf "Absolute_max %g" v
+(* A recorder: [record] appends an event, [trace ()] is the events so far. *)
+let recorder () =
+  let events = ref [] in
+  ((fun () -> List.rev !events), fun e -> events := e :: !events)
 
-let equal_contract a b =
-  match (a, b) with
-  | Budget.Relative a, Budget.Relative b ->
-      Float.equal a.max_regression b.max_regression && Float.equal a.band b.band
-  | Budget.Absolute_max a, Budget.Absolute_max b -> Float.equal a b
-  | _ -> false
+(* Constructors *)
 
-let budget =
-  Testable.contramap
-    (fun b -> (Metric.id (Budget.metric b), Budget.contract b))
-    (pair string (Testable.make ~pp:pp_contract ~equal:equal_contract))
+let slugs =
+  [
+    ("a valid segment is kept as is", "string-64", "string-64");
+    ("letter case is kept", "MiB", "MiB");
+    ("dots and underscores are id characters", "v1.2_rc", "v1.2_rc");
+    ("a space becomes a hyphen", "hello world", "hello-world");
+    ("a run of other characters becomes one hyphen", "a + b", "a-b");
+    ("runs at either end are dropped", " (parens) ", "parens");
+    ("a slash is not an id character", "a/b", "a-b");
+    ("hyphens at either end are kept", "-pre set", "-pre-set");
+  ]
 
-(* Metrics compare by id — their identity (metric.mli). *)
-let metric = Testable.contramap Metric.id string
+let explicit_ids =
+  [
+    ("over a name that slugs", "Custom.Id", "some display name");
+    ("over a name with no id character", "ok", "!!!");
+  ]
 
-(* Ids: slugging and validation *)
+let invalid_id id =
+  Invalid_argument
+    (strf
+       "Thumper.bench: invalid id %S: an id is one segment of [A-Za-z0-9._-]+ \
+        (groups join segments with '/')"
+       id)
 
-let slug_table =
-  cases
-    ~name:(fun (name, _) -> Printf.sprintf "%S" name)
-    "id = slug(name)"
+let refusals =
+  [
+    ( "an empty name",
+      (fun () -> Bench.bench "" noop),
+      Invalid_argument "Thumper.bench: empty name" );
+    ( "an empty name with an id",
+      (fun () -> Bench.bench ~id:"ok" "" noop),
+      Invalid_argument "Thumper.bench: empty name" );
+    ( "an empty group name",
+      (fun () -> Bench.group "" []),
+      Invalid_argument "Thumper.group: empty name" );
+    ( "an empty name with a setup",
+      (fun () -> Bench.bench_with_setup ~setup:noop "" noop),
+      Invalid_argument "Thumper.bench_with_setup: empty name" );
+    ( "an id with a space",
+      (fun () -> Bench.bench ~id:"a b" "n" noop),
+      invalid_id "a b" );
+    ("an empty id", (fun () -> Bench.bench ~id:"" "n" noop), invalid_id "");
+    ( "an id of two segments",
+      (fun () -> Bench.bench ~id:"sha/x" "n" noop),
+      invalid_id "sha/x" );
+    ( "a name with no id character",
+      (fun () -> Bench.bench "!!!" noop),
+      Invalid_argument
+        "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug \
+         into an id; pass ~id" );
+    ( "an empty metrics list",
+      (fun () -> Bench.bench ~metrics:[] "x" noop),
+      Invalid_argument "Thumper.bench: empty ~metrics list (omit it to inherit)"
+    );
+    ( "a metric twice",
+      (fun () ->
+        Bench.bench ~metrics:[ Metric.wall_time; Metric.wall_time ] "x" noop),
+      Invalid_argument "Thumper.bench: duplicate metric wall_time in ~metrics"
+    );
+    ( "two budgets for one metric",
+      (fun () ->
+        Bench.bench
+          ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
+          "x" noop),
+      Invalid_argument
+        "Thumper.bench: two budgets for metric wall_time in one ~budgets list"
+    );
+    ( "two budgets for one metric on a group",
+      (fun () ->
+        Bench.group
+          ~budgets:
+            [ Budget.no_more_alloc_than 0.; Budget.no_more_alloc_than 0.1 ]
+          "g" []),
+      Invalid_argument
+        "Thumper.group: two budgets for metric alloc_words in one ~budgets list"
+    );
+    ( "an empty name before an invalid id",
+      (fun () -> Bench.bench ~id:"a b" "" noop),
+      Invalid_argument "Thumper.bench: empty name" );
+    ( "an invalid id before an empty metrics list",
+      (fun () -> Bench.bench ~id:"a b" ~metrics:[] "n" noop),
+      invalid_id "a b" );
+    ( "a name with no id character before an empty metrics list",
+      (fun () -> Bench.bench ~metrics:[] "!!!" noop),
+      Invalid_argument
+        "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug \
+         into an id; pass ~id" );
+    ( "a metric twice before two budgets for one metric",
+      (fun () ->
+        Bench.bench
+          ~metrics:[ Metric.wall_time; Metric.wall_time ]
+          ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
+          "x" noop),
+      Invalid_argument "Thumper.bench: duplicate metric wall_time in ~metrics"
+    );
+  ]
+
+let constructors =
+  group "Constructors"
     [
-      ("string-64", "string-64") (* valid names are ids verbatim *);
-      ("MiB", "MiB") (* case is preserved, not folded *);
-      ("v1.2_rc", "v1.2_rc") (* '.' and '_' are id characters *);
-      ("hello world", "hello-world") (* a space becomes a separator *);
-      ("a + b", "a-b") (* one separator per run, not per character *);
-      (" (parens) ", "parens") (* edge runs are dropped, not kept *);
-      ("a/b", "a-b") (* '/' is not an id character: no accidental nesting *);
-      ("-pre set", "-pre-set") (* literal edge hyphens are kept *);
+      cases "a case's id is the slug of its name"
+        ~name:(fun (name, _, _) -> name)
+        slugs
+        (fun (_, name, id) ->
+          equal string id (Bench.id (the_case [ Bench.bench name noop ])));
+      cases "an explicit id is the segment and the name is kept"
+        ~name:(fun (name, _, _) -> name)
+        explicit_ids
+        (fun (_, id, name) ->
+          let c = the_case [ Bench.bench ~id name noop ] in
+          equal (pair string string) (id, name) (Bench.id c, Bench.name c));
+      cases "a malformed node is refused, naming its constructor"
+        ~name:(fun (name, _, _) -> name)
+        refusals
+        (fun (_, make, e) -> raises e make);
     ]
-    (fun (name, expected) ->
-      equal string expected (Bench.id (the_case [ Bench.bench name noop ])))
 
-let explicit_id_is_verbatim () =
-  let c = the_case [ Bench.bench ~id:"Custom.Id" "some display name" noop ] in
-  equal ~msg:"id" string "Custom.Id" (Bench.id c);
-  equal ~msg:"name is untouched" string "some display name" (Bench.name c)
+(* Selection *)
 
-let explicit_id_rescues_unsluggable_name () =
-  let c = the_case [ Bench.bench ~id:"ok" "!!!" noop ] in
-  equal ~msg:"id" string "ok" (Bench.id c);
-  equal ~msg:"name" string "!!!" (Bench.name c)
-
-let rejects_invalid_explicit_id () =
-  let msg id =
-    Printf.sprintf
-      "Thumper.bench: invalid id %S: an id is one segment of [A-Za-z0-9._-]+ \
-       (groups join segments with '/')"
-      id
-  in
-  raises ~msg:"space"
-    (Invalid_argument (msg "a b"))
-    (fun () -> Bench.bench ~id:"a b" "n" noop);
-  raises ~msg:"empty"
-    (Invalid_argument (msg ""))
-    (fun () -> Bench.bench ~id:"" "n" noop);
-  raises ~msg:"slash: an id is one segment"
-    (Invalid_argument (msg "sha/x"))
-    (fun () -> Bench.bench ~id:"sha/x" "n" noop)
-
-let rejects_empty_name () =
-  raises ~msg:"without ~id" (Invalid_argument "Thumper.bench: empty name")
-    (fun () -> Bench.bench "" noop);
-  (* The display name always renders in reports: an explicit ~id does not
-     make an empty name acceptable. *)
-  raises ~msg:"an explicit ~id does not rescue it"
-    (Invalid_argument "Thumper.bench: empty name") (fun () ->
-      Bench.bench ~id:"ok" "" noop)
-
-let rejects_unsluggable_name () =
-  raises
-    (Invalid_argument
-       "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug \
-        into an id; pass ~id") (fun () -> Bench.bench "!!!" noop)
-
-let each_constructor_validates () =
-  (* The error names the constructor the author called. *)
-  raises ~msg:"group" (Invalid_argument "Thumper.group: empty name") (fun () ->
-      Bench.group "" []);
-  raises ~msg:"bench_with_setup"
-    (Invalid_argument "Thumper.bench_with_setup: empty name") (fun () ->
-      Bench.bench_with_setup ~setup:(fun () -> ()) "" (fun () -> ()))
-
-(* Paths and grouping *)
-
-let group_prefixes_ids_and_names () =
-  let c = the_case [ Bench.group "sha256" [ Bench.bench "string-64" noop ] ] in
-  equal ~msg:"id" string "sha256/string-64" (Bench.id c);
-  equal ~msg:"full_name" string "sha256/string-64" (Bench.full_name c);
-  equal ~msg:"name" string "string-64" (Bench.name c)
-
-let group_name_is_slugged_for_ids_only () =
-  let c =
-    the_case [ Bench.group "Hash Functions" [ Bench.bench "md5" noop ] ]
-  in
-  equal ~msg:"id uses the slug" string "Hash-Functions/md5" (Bench.id c);
-  equal ~msg:"full_name keeps the display name" string "Hash Functions/md5"
-    (Bench.full_name c)
-
-let group_id_overrides_its_segment () =
-  let c =
-    the_case [ Bench.group ~id:"sha" "SHA-256 family" [ Bench.bench "x" noop ] ]
-  in
-  equal ~msg:"id" string "sha/x" (Bench.id c);
-  equal ~msg:"full_name" string "SHA-256 family/x" (Bench.full_name c)
-
-let nesting_joins_all_segments () =
-  let c =
-    the_case
-      [
-        Bench.group "outer" [ Bench.group "inner" [ Bench.bench "leaf" noop ] ];
-      ]
-  in
-  equal string "outer/inner/leaf" (Bench.id c)
-
-let resolve_preserves_authoring_order () =
-  equal (list string)
-    [ "sha256/string-64"; "sha256/incremental"; "fib/10"; "fib/20" ]
-    (ids
-       [
-         Bench.group "sha256"
-           [ Bench.bench "string-64" noop; Bench.bench "incremental" noop ];
-         Bench.group "fib" [ Bench.bench "10" noop; Bench.bench "20" noop ];
-       ])
-
-let empty_group_resolves_to_no_cases () =
-  equal (list string) [] (ids [ Bench.group "empty" [] ])
-
-let group_name_slash_cannot_inject_a_path () =
-  (* '/' is not an id character, so a group *named* "a/b" slugs to segment
-     "a-b" and can never forge the id space of nested groups "a"/"b". *)
-  equal (list string) [ "a-b/c"; "a/b/c" ]
-    (ids
-       [
-         Bench.group "a/b" [ Bench.bench "c" noop ];
-         Bench.group "a" [ Bench.group "b" [ Bench.bench "c" noop ] ];
-       ])
-
-(* Inheritance *)
-
-let tags_accumulate_outer_first () =
-  let c =
-    the_case
-      [
-        Bench.group ~tags:[ "outer" ] "g"
-          [ Bench.bench ~tags:[ "inner" ] "x" noop ];
-      ]
-  in
-  equal (list string) [ "outer"; "inner" ] (Bench.tags c)
-
-let tags_deduplicate () =
-  let c =
-    the_case
-      [
-        Bench.group ~tags:[ "t"; "a" ] "g"
-          [ Bench.bench ~tags:[ "a"; "b"; "t" ] "x" noop ];
-      ]
-  in
-  equal (list string) [ "t"; "a"; "b" ] (Bench.tags c)
-
-let metrics_default_to_none () =
-  let c = the_case [ Bench.group "g" [ Bench.bench "x" noop ] ] in
-  equal ~msg:"metrics" (option (list metric)) None (Bench.metrics c);
-  equal ~msg:"budgets" (option (list budget)) None (Bench.budgets c)
-
-let metrics_inherit_from_the_group () =
-  let c =
-    the_case
-      [ Bench.group ~metrics:[ Metric.wall_time ] "g" [ Bench.bench "x" noop ] ]
-  in
-  equal (option (list metric)) (Some [ Metric.wall_time ]) (Bench.metrics c)
-
-let metrics_override_wholesale () =
-  (* The nearest ?metrics chooses exactly what is measured: the group's list
-     is replaced, not merged — a metric list is a selection, not a map. *)
-  let c =
-    the_case
-      [
-        Bench.group
-          ~metrics:[ Metric.wall_time; Metric.alloc_words ]
-          "g"
-          [ Bench.bench ~metrics:[ Metric.cpu_time ] "x" noop ];
-      ]
-  in
-  equal (option (list metric)) (Some [ Metric.cpu_time ]) (Bench.metrics c)
-
-let budgets_merge_per_metric_across_scopes () =
-  (* The pinned ruling: a case relaxing its time budget still inherits
-     the group's allocation pin — nearest scope first in the merged list. *)
-  let c =
-    the_case
-      [
-        Bench.group
-          ~budgets:[ Budget.no_more_alloc_than 0. ]
-          "g"
-          [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ];
-      ]
-  in
-  equal
-    (option (list budget))
-    (Some [ Budget.no_slower_than 0.15; Budget.no_more_alloc_than 0. ])
-    (Bench.budgets c)
-
-let nearest_scope_wins_per_metric () =
-  let c =
-    the_case
-      [
-        Bench.group
-          ~budgets:[ Budget.no_slower_than 0.05 ]
-          "g"
-          [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ];
-      ]
-  in
-  equal
-    (option (list budget))
-    (Some [ Budget.no_slower_than 0.15 ])
-    (Bench.budgets c)
-
-let budgets_flow_through_nested_groups () =
-  (* outer pins alloc, inner sets time, the case re-sets time: the case's
-     time budget shadows the inner group's; the alloc pin survives both. *)
-  let c =
-    the_case
-      [
-        Bench.group
-          ~budgets:[ Budget.no_more_alloc_than 0. ]
-          "outer"
-          [
-            Bench.group
-              ~budgets:[ Budget.no_slower_than 0.05 ]
-              "inner"
-              [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ];
-          ];
-      ]
-  in
-  equal
-    (option (list budget))
-    (Some [ Budget.no_slower_than 0.15; Budget.no_more_alloc_than 0. ])
-    (Bench.budgets c)
-
-let empty_budget_list_is_the_merge_identity () =
-  let c =
-    the_case
-      [
-        Bench.group
-          ~budgets:[ Budget.no_more_alloc_than 0. ]
-          "g"
-          [ Bench.bench ~budgets:[] "x" noop ];
-      ]
-  in
-  equal
-    (option (list budget))
-    (Some [ Budget.no_more_alloc_than 0. ])
-    (Bench.budgets c)
-
-let empty_budget_lists_alone_observe_none () =
-  (* The identity holds in the option too: scopes giving only empty lists
-     contribute nothing, and the observed merge is never [Some []]. *)
-  let c =
-    the_case
-      [ Bench.group ~budgets:[] "g" [ Bench.bench ~budgets:[] "x" noop ] ]
-  in
-  equal (option (list budget)) None (Bench.budgets c)
-
-let rejects_two_budgets_for_one_metric_in_one_list () =
-  (* Within a single list there is no scope distance to break the tie:
-     ambiguous author intent, rejected at construction. *)
-  raises
-    (Invalid_argument
-       "Thumper.bench: two budgets for metric wall_time in one ~budgets list")
-    (fun () ->
-      Bench.bench
-        ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
-        "x" noop);
-  raises ~msg:"via different constructors"
-    (Invalid_argument
-       "Thumper.bench: two budgets for metric alloc_words in one ~budgets list")
-    (fun () ->
-      Bench.bench
-        ~budgets:
-          [
-            Budget.relative ~metric:Metric.alloc_words ~max_regression:0.05 ();
-            Budget.at_most ~metric:Metric.alloc_words 4096.;
-          ]
-        "x" noop);
-  raises ~msg:"on a group"
-    (Invalid_argument
-       "Thumper.group: two budgets for metric alloc_words in one ~budgets list")
-    (fun () ->
-      Bench.group
-        ~budgets:[ Budget.no_more_alloc_than 0.; Budget.no_more_alloc_than 0.1 ]
-        "g" [])
-
-let rejects_bad_metrics_lists () =
-  raises ~msg:"empty"
-    (Invalid_argument "Thumper.bench: empty ~metrics list (omit it to inherit)")
-    (fun () -> Bench.bench ~metrics:[] "x" noop);
-  raises ~msg:"duplicate"
-    (Invalid_argument "Thumper.bench: duplicate metric wall_time in ~metrics")
-    (fun () ->
-      Bench.bench ~metrics:[ Metric.wall_time; Metric.wall_time ] "x" noop)
-
-(* Duplicate ids *)
-
-let duplicate_names_in_a_group () =
-  equal string "g/x"
-    (duplicate_id
-       [ Bench.group "g" [ Bench.bench "x" noop; Bench.bench "x" noop ] ])
-
-let slug_collision_is_a_duplicate () =
-  (* Two different display names, one id: "a b" slugs to "a-b". *)
-  equal string "a-b"
-    (duplicate_id [ Bench.bench "a b" noop; Bench.bench "a-b" noop ])
-
-let explicit_id_collides_with_a_derived_one () =
-  equal string "x"
-    (duplicate_id [ Bench.bench ~id:"x" "first" noop; Bench.bench "x" noop ])
-
-let same_name_in_different_groups_is_fine () =
-  equal (list string) [ "a/x"; "b/x" ]
-    (ids
-       [
-         Bench.group "a" [ Bench.bench "x" noop ];
-         Bench.group "b" [ Bench.bench "x" noop ];
-       ])
-
-let pp_error_names_the_id_and_the_remedy () =
-  equal string "duplicate case id 'g/x' (rename the case or pass ~id)"
-    (Format.asprintf "%a" Bench.pp_error (Bench.Duplicate_id "g/x"))
-
-(* A budget names a metric its scope collects *)
-
-let run_metrics = [ Metric.wall_time; Metric.alloc_words ]
-
-let uncollected ?(budgets = []) benches =
-  match Bench.check_collected ~metrics:run_metrics ~budgets benches with
-  | Ok () -> None
-  | Error (Bench.Uncollected_budget { scope; metric }) -> Some (scope, metric)
-  | Error e -> failf "expected Uncollected_budget, got %a" Bench.pp_error e
-
-let found = option (pair string string)
-
-let a_collected_budget_is_accepted () =
-  equal found None
-    (uncollected
-       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ]
-       [
-         Bench.group
-           ~budgets:[ Budget.no_more_alloc_than 0. ]
-           "g"
-           [ Bench.bench "x" noop ];
-       ])
-
-let a_run_budget_on_an_uncollected_metric_is_refused () =
-  equal found
-    (Some ("", "cpu_time"))
-    (uncollected
-       ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
-       [ Bench.bench "x" noop ])
-
-let a_scope_budget_is_checked_against_its_own_metrics () =
-  (* The same-call typo: the default metric of [no_slower_than] is wall_time,
-     which this case does not collect. *)
-  equal found
-    (Some ("g/x", "wall_time"))
-    (uncollected
-       [
-         Bench.group "g"
-           [
-             Bench.bench ~metrics:[ Metric.cpu_time ]
-               ~budgets:[ Budget.no_slower_than 0.05 ]
-               "x" noop;
-           ];
-       ]);
-  equal found
-    (Some ("g", "cpu_time"))
-    (uncollected
-       [
-         Bench.group
-           ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
-           "g"
-           [ Bench.bench "x" noop ];
-       ])
-
-let a_scope_inherits_the_nearest_metrics () =
-  equal found None
-    (uncollected
-       [
-         Bench.group ~metrics:[ Metric.cpu_time ] "g"
-           [
-             Bench.bench
-               ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
-               "x" noop;
-           ];
-       ]);
-  equal found
-    (Some ("g/x", "alloc_words"))
-    (uncollected
-       [
-         Bench.group ~metrics:[ Metric.cpu_time ] "g"
-           [ Bench.bench ~budgets:[ Budget.no_more_alloc_than 0. ] "x" noop ];
-       ])
-
-let an_inherited_budget_a_case_does_not_collect_is_fine () =
-  (* tolk's shape: suite budgets on wall and alloc, one case narrowed to wall
-     only. The case drops the alloc budget at judgment; nothing to refuse. *)
-  equal found None
-    (uncollected
-       ~budgets:[ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ]
-       [ Bench.bench ~metrics:[ Metric.wall_time ] "compile" noop ])
-
-let pp_error_names_the_scope_and_the_metric () =
-  equal string
-    "'g/x' has a budget on cpu_time but does not collect it (add it to \
-     ~metrics or drop the budget)"
-    (Format.asprintf "%a" Bench.pp_error
-       (Bench.Uncollected_budget { scope = "g/x"; metric = "cpu_time" }));
-  equal string
-    "the run has a budget on cpu_time but does not collect it (add it to \
-     Config.metrics or drop the budget)"
-    (Format.asprintf "%a" Bench.pp_error
-       (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }))
-
-(* Filter algebra *)
-
-let filter_suite () =
+let selection_suite () =
   [
     Bench.group ~tags:[ "hash" ] "sha256"
       [
@@ -484,275 +183,535 @@ let filter_suite () =
     Bench.group "fib" [ Bench.bench "10" noop; Bench.bench "20" noop ];
   ]
 
-let id_filter_is_substring_match () =
-  equal ~msg:"prefix" (list string)
-    [ "sha256/string-64"; "sha256/incremental-1mib" ]
-    (ids ~filter:(`Id "sha") (filter_suite ()));
-  equal ~msg:"across the '/' join" (list string) [ "sha256/string-64" ]
-    (ids ~filter:(`Id "56/str") (filter_suite ()));
-  equal ~msg:"case-sensitive" (list string) []
-    (ids ~filter:(`Id "SHA") (filter_suite ()));
-  equal ~msg:"empty substring matches all" int 4
-    (List.length (ids ~filter:(`Id "") (filter_suite ())))
+let every_case =
+  [ "sha256/string-64"; "sha256/incremental-1mib"; "fib/10"; "fib/20" ]
 
-let tag_filter_is_exact_and_sees_inherited_tags () =
-  equal ~msg:"group tag reaches the cases" (list string)
-    [ "sha256/string-64"; "sha256/incremental-1mib" ]
-    (ids ~filter:(`Tag "hash") (filter_suite ()));
-  equal ~msg:"exact match, not substring" (list string) []
-    (ids ~filter:(`Tag "has") (filter_suite ()))
+let selections =
+  [
+    ( "`Id, by a substring of the id",
+      `Id "sha",
+      [ "sha256/string-64"; "sha256/incremental-1mib" ] );
+    ("`Id, across the '/' join", `Id "56/str", [ "sha256/string-64" ]);
+    ("`Id, byte for byte", `Id "SHA", []);
+    ("`Id \"\", every case", `Id "", every_case);
+    ( "`Tag, through its group's tags",
+      `Tag "hash",
+      [ "sha256/string-64"; "sha256/incremental-1mib" ] );
+    ("`Tag, through its own tags", `Tag "lab", [ "sha256/incremental-1mib" ]);
+    ("`Tag, by equality", `Tag "has", []);
+    ( "`And, the cases every filter selects",
+      `And [ `Tag "hash"; `Tag "lab" ],
+      [ "sha256/incremental-1mib" ] );
+    ("`And [], every case", `And [], every_case);
+    ( "`Or, the cases some filter selects",
+      `Or [ `Id "string"; `Id "10" ],
+      [ "sha256/string-64"; "fib/10" ] );
+    ("`Or [], no case", `Or [], []);
+    ( "nested filters",
+      `And [ `Or [ `Id "string"; `Id "incremental" ]; `And [ `Tag "lab" ] ],
+      [ "sha256/incremental-1mib" ] );
+  ]
 
-let tags_conjoin () =
+let selection =
+  group "Selection"
+    [
+      cases "matches selects"
+        ~name:(fun (name, _, _) -> name)
+        selections
+        (fun (_, filter, expected) ->
+          equal (list string) expected
+            (List.map Bench.id
+               (List.filter (Bench.matches filter)
+                  (resolved (selection_suite ())))));
+    ]
+
+(* Resolving *)
+
+let resolve_is_depth_first () =
   equal (list string)
-    [ "sha256/incremental-1mib" ]
-    (ids ~filter:(`And [ `Tag "hash"; `Tag "lab" ]) (filter_suite ()))
-
-let empty_or_selects_nothing () =
-  (* The representable empty selection: the caller sees Ok [] and decides. *)
-  equal (list string) [] (ids ~filter:(`Or []) (filter_suite ()))
-
-let empty_and_selects_everything () =
-  equal int 4 (List.length (ids ~filter:(`And []) (filter_suite ())))
-
-let cli_composition_ids_or_tags_and () =
-  (* `And [`Or ids; `And tags]: -f patterns are OR'd, --tags conjoin. *)
-  equal ~msg:"two -f patterns, no tags" (list string)
-    [ "sha256/string-64"; "fib/10" ]
+    [ "a"; "g/b"; "g/h/c"; "g/d"; "e" ]
     (ids
-       ~filter:(`And [ `Or [ `Id "string"; `Id "10" ]; `And [] ])
-       (filter_suite ()));
-  equal ~msg:"patterns restricted by a tag" (list string)
-    [ "sha256/incremental-1mib" ]
-    (ids
-       ~filter:
-         (`And [ `Or [ `Id "string"; `Id "incremental" ]; `And [ `Tag "lab" ] ])
-       (filter_suite ()))
+       [
+         Bench.bench "a" noop;
+         Bench.group "g"
+           [
+             Bench.bench "b" noop;
+             Bench.group "h" [ Bench.bench "c" noop ];
+             Bench.bench "d" noop;
+           ];
+         Bench.bench "e" noop;
+       ])
 
-let matches_observes_one_case () =
-  let c = the_case [ Bench.bench ~tags:[ "lab" ] "x" noop ] in
-  is_true ~msg:"tag" (Bench.matches (`Tag "lab") c);
-  is_false ~msg:"absent tag" (Bench.matches (`Tag "ci") c);
-  is_true ~msg:"id substring" (Bench.matches (`Id "x") c)
+let resolve_runs_no_closure () =
+  let trace, record = recorder () in
+  ignore
+    (resolved
+       [
+         Bench.bench_with_setup "x"
+           ~setup:(fun () -> record "setup")
+           ~teardown:(fun () -> record "teardown")
+           (fun () -> record "f");
+       ]);
+  equal (list string) [] (trace ())
 
-(* Prepare *)
+let duplicates =
+  [
+    ( "one name twice in a group",
+      (fun () ->
+        [ Bench.group "g" [ Bench.bench "x" noop; Bench.bench "x" noop ] ]),
+      "g/x" );
+    ( "two names with one slug",
+      (fun () -> [ Bench.bench "a b" noop; Bench.bench "a-b" noop ]),
+      "a-b" );
+    ( "an explicit id and a slug",
+      (fun () -> [ Bench.bench ~id:"x" "first" noop; Bench.bench "x" noop ]),
+      "x" );
+    ( "the first id repeated in authoring order",
+      (fun () ->
+        [
+          Bench.bench "x" noop;
+          Bench.bench "y" noop;
+          Bench.bench "y" noop;
+          Bench.bench "x" noop;
+        ]),
+      "y" );
+  ]
 
-let prepare_shape () =
-  (* The testable shape of the prepare contract: setup once, run_batch k runs
-     the closure exactly k times with the setup environment, teardown once. *)
-  let setup_calls = ref 0 and f_calls = ref 0 and teardown_calls = ref 0 in
-  let torn_down_env = ref 0 in
-  let b =
-    Bench.bench_with_setup "case"
-      ~setup:(fun () ->
-        incr setup_calls;
-        41)
-      ~teardown:(fun env ->
-        torn_down_env := env;
-        incr teardown_calls)
-      (fun env -> if env = 41 then incr f_calls)
-  in
-  let c = the_case [ b ] in
-  equal ~msg:"constructors and resolve never run closures" int 0 !setup_calls;
-  let p = Bench.prepare c in
-  equal ~msg:"setup ran once" int 1 !setup_calls;
-  equal ~msg:"no batch ran yet" int 0 !f_calls;
-  p.Bench.run_batch 5;
-  p.Bench.run_batch 3;
-  equal ~msg:"run_batch k calls f exactly k times, env passed through" int 8
-    !f_calls;
-  equal ~msg:"teardown not called by batches" int 0 !teardown_calls;
-  p.Bench.teardown ();
-  equal ~msg:"teardown ran once" int 1 !teardown_calls;
-  equal ~msg:"teardown received the setup environment" int 41 !torn_down_env;
-  equal ~msg:"setup still ran only once" int 1 !setup_calls
+let run_metrics = [ Metric.wall_time; Metric.alloc_words ]
 
-let prepare_without_setup_counts_calls () =
-  let calls = ref 0 in
-  let c = the_case [ Bench.bench "x" (fun () -> incr calls) ] in
-  let p = Bench.prepare c in
-  p.Bench.run_batch 0;
-  equal ~msg:"k = 0 runs nothing" int 0 !calls;
-  p.Bench.run_batch 7;
-  equal ~msg:"k = 7 runs seven calls" int 7 !calls;
-  p.Bench.teardown () (* a no-op, and safe to call *)
+let collections =
+  [
+    ( "budgets on collected metrics",
+      (fun () ->
+        ( [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ],
+          [
+            Bench.group
+              ~budgets:[ Budget.no_more_alloc_than 0. ]
+              "g"
+              [ Bench.bench "x" noop ];
+          ] )),
+      Ok () );
+    ( "a run budget on a metric the run does not collect",
+      (fun () ->
+        ( [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+          [ Bench.bench "x" noop ] )),
+      Error (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }) );
+    ( "a case budget on a metric its own list leaves out",
+      (fun () ->
+        ( [],
+          [
+            Bench.group "g"
+              [
+                Bench.bench ~metrics:[ Metric.cpu_time ]
+                  ~budgets:[ Budget.no_slower_than 0.05 ]
+                  "x" noop;
+              ];
+          ] )),
+      Error (Bench.Uncollected_budget { scope = "g/x"; metric = "wall_time" })
+    );
+    ( "a group budget on a metric the run does not collect",
+      (fun () ->
+        ( [],
+          [
+            Bench.group
+              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              "g"
+              [ Bench.bench "x" noop ];
+          ] )),
+      Error (Bench.Uncollected_budget { scope = "g"; metric = "cpu_time" }) );
+    ( "a case budget on a metric its group collects",
+      (fun () ->
+        ( [],
+          [
+            Bench.group ~metrics:[ Metric.cpu_time ] "g"
+              [
+                Bench.bench
+                  ~budgets:
+                    [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+                  "x" noop;
+              ];
+          ] )),
+      Ok () );
+    ( "a case budget on a metric its group's list leaves out",
+      (fun () ->
+        ( [],
+          [
+            Bench.group ~metrics:[ Metric.cpu_time ] "g"
+              [ Bench.bench ~budgets:[ Budget.no_more_alloc_than 0. ] "x" noop ];
+          ] )),
+      Error (Bench.Uncollected_budget { scope = "g/x"; metric = "alloc_words" })
+    );
+    ( "an inherited budget on a metric the case does not collect",
+      (fun () ->
+        ( [ Budget.no_slower_than 0.05; Budget.no_more_alloc_than 0.01 ],
+          [ Bench.bench ~metrics:[ Metric.wall_time ] "compile" noop ] )),
+      Ok () );
+    ( "the run's budgets before the tree's",
+      (fun () ->
+        ( [ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ],
+          [
+            Bench.bench
+              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              "x" noop;
+          ] )),
+      Error (Bench.Uncollected_budget { scope = ""; metric = "cpu_time" }) );
+    ( "the tree's in authoring order",
+      (fun () ->
+        ( [],
+          [
+            Bench.bench
+              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              "x" noop;
+            Bench.bench
+              ~budgets:[ Budget.no_slower_than ~metric:Metric.cpu_time 0.05 ]
+              "y" noop;
+          ] )),
+      Error (Bench.Uncollected_budget { scope = "x"; metric = "cpu_time" }) );
+  ]
 
-let env_reaches_every_call_of_every_batch () =
-  (* [Sys.opaque_identity] is the identity: the one object setup created is
-     the object every call of every batch mutates (pinned physically). *)
-  let sum_at_teardown = ref (-1) in
-  let c =
-    the_case
+let error_texts =
+  [
+    ( "a duplicate id",
+      Bench.Duplicate_id "g/x",
+      __POS_OF__ {| duplicate case id 'g/x' (rename the case or pass ~id) |} );
+    ( "a run budget",
+      Bench.Uncollected_budget { scope = ""; metric = "cpu_time" },
+      __POS_OF__
+        {| the run has a budget on cpu_time but does not collect it (add it to Config.metrics or drop the budget) |}
+    );
+    ( "a scope's budget",
+      Bench.Uncollected_budget { scope = "g/x"; metric = "cpu_time" },
+      __POS_OF__
+        {| 'g/x' has a budget on cpu_time but does not collect it (add it to ~metrics or drop the budget) |}
+    );
+  ]
+
+let resolving =
+  group "Resolving"
+    [
+      test "resolve lists the cases depth first in authoring order"
+        resolve_is_depth_first;
+      test "an empty group resolves to no case" (fun () ->
+          equal (list string) [] (ids [ Bench.group "empty" [] ]));
+      test "resolve runs no closure" resolve_runs_no_closure;
+      test "one name in two groups is two ids" (fun () ->
+          equal (list string) [ "a/x"; "b/x" ]
+            (ids
+               [
+                 Bench.group "a" [ Bench.bench "x" noop ];
+                 Bench.group "b" [ Bench.bench "x" noop ];
+               ]));
+      cases "two cases with one id are refused"
+        ~name:(fun (name, _, _) -> name)
+        duplicates
+        (fun (_, benches, id) ->
+          equal
+            (result (list string) error)
+            (Error (Bench.Duplicate_id id))
+            (Result.map (List.map Bench.id) (Bench.resolve (benches ()))));
+      cases "check_collected"
+        ~name:(fun (name, _, _) -> name)
+        collections
+        (fun (_, suite, expected) ->
+          let budgets, benches = suite () in
+          equal (result unit error) expected
+            (Bench.check_collected ~metrics:run_metrics ~budgets benches));
+      cases "pp_error gives the remedy"
+        ~name:(fun (name, _, _) -> name)
+        error_texts
+        (fun (_, e, text) ->
+          expect (Format.asprintf "%a" Bench.pp_error e) text);
+    ]
+
+(* Case observers *)
+
+let paths =
+  [
+    ( "a group prefixes the id and the full name",
+      (fun () -> Bench.group "sha256" [ Bench.bench "string-64" noop ]),
+      ("sha256/string-64", "string-64", "sha256/string-64") );
+    ( "a group's segment is its slug, its full name part its name",
+      (fun () -> Bench.group "Hash Functions" [ Bench.bench "md5" noop ]),
+      ("Hash-Functions/md5", "md5", "Hash Functions/md5") );
+    ( "a group's explicit id is its segment",
+      (fun () ->
+        Bench.group ~id:"sha" "SHA-256 family" [ Bench.bench "x" noop ]),
+      ("sha/x", "x", "SHA-256 family/x") );
+    ( "nested groups join every segment",
+      (fun () ->
+        Bench.group "outer" [ Bench.group "inner" [ Bench.bench "leaf" noop ] ]),
+      ("outer/inner/leaf", "leaf", "outer/inner/leaf") );
+  ]
+
+(* A group named "a/b" slugs to the segment "a-b": its id cannot be that of
+   the groups "a" and "b" nested, though its full name is. *)
+let a_slash_in_a_name_forges_no_id () =
+  let cases =
+    resolved
       [
-        Bench.bench_with_setup "x"
-          ~setup:(fun () -> ref 0)
-          ~teardown:(fun env -> sum_at_teardown := !env)
-          (fun env -> incr env);
+        Bench.group "a/b" [ Bench.bench "c" noop ];
+        Bench.group "a" [ Bench.group "b" [ Bench.bench "c" noop ] ];
       ]
   in
-  let p = Bench.prepare c in
+  equal (list string) [ "a-b/c"; "a/b/c" ] (List.map Bench.id cases);
+  equal (list string) [ "a/b/c"; "a/b/c" ] (List.map Bench.full_name cases)
+
+let tag_scopes =
+  [
+    ("none without tags", (fun () -> Bench.bench "x" noop), []);
+    ( "outer scopes first",
+      (fun () ->
+        Bench.group ~tags:[ "outer" ] "g"
+          [ Bench.bench ~tags:[ "inner" ] "x" noop ]),
+      [ "outer"; "inner" ] );
+    ( "each once",
+      (fun () ->
+        Bench.group ~tags:[ "t"; "a" ] "g"
+          [ Bench.bench ~tags:[ "a"; "b"; "t" ] "x" noop ]),
+      [ "t"; "a"; "b" ] );
+    ( "any string",
+      (fun () -> Bench.bench ~tags:[ ""; "a b" ] "x" noop),
+      [ ""; "a b" ] );
+  ]
+
+let metric_scopes =
+  [
+    ( "None when no scope gives a list",
+      (fun () -> Bench.group "g" [ Bench.bench "x" noop ]),
+      None );
+    ( "the group's list",
+      (fun () ->
+        Bench.group ~metrics:[ Metric.wall_time ] "g" [ Bench.bench "x" noop ]),
+      Some [ "wall_time" ] );
+    ( "the nearest list, whole",
+      (fun () ->
+        Bench.group
+          ~metrics:[ Metric.wall_time; Metric.alloc_words ]
+          "g"
+          [ Bench.bench ~metrics:[ Metric.cpu_time ] "x" noop ]),
+      Some [ "cpu_time" ] );
+  ]
+
+let budget_scopes =
+  [
+    ( "None when no scope gives one",
+      (fun () -> Bench.group "g" [ Bench.bench "x" noop ]),
+      None );
+    ( "merged per metric, nearest first",
+      (fun () ->
+        Bench.group
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          "g"
+          [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ]),
+      Some [ "wall_time +0.15"; "alloc_words +0" ] );
+    ( "the nearest for one metric",
+      (fun () ->
+        Bench.group
+          ~budgets:[ Budget.no_slower_than 0.05 ]
+          "g"
+          [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ]),
+      Some [ "wall_time +0.15" ] );
+    ( "through nested groups",
+      (fun () ->
+        Bench.group
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          "outer"
+          [
+            Bench.group
+              ~budgets:[ Budget.no_slower_than 0.05 ]
+              "inner"
+              [ Bench.bench ~budgets:[ Budget.no_slower_than 0.15 ] "x" noop ];
+          ]),
+      Some [ "wall_time +0.15"; "alloc_words +0" ] );
+    ( "the inherited ones under an empty list",
+      (fun () ->
+        Bench.group
+          ~budgets:[ Budget.no_more_alloc_than 0. ]
+          "g"
+          [ Bench.bench ~budgets:[] "x" noop ]),
+      Some [ "alloc_words +0" ] );
+    ( "None under empty lists alone",
+      (fun () ->
+        Bench.group ~budgets:[] "g" [ Bench.bench ~budgets:[] "x" noop ]),
+      None );
+    ( "one on a metric the case does not collect",
+      (fun () ->
+        Bench.group
+          ~budgets:[ Budget.at_most ~metric:Metric.alloc_words 4096. ]
+          "g"
+          [ Bench.bench ~metrics:[ Metric.wall_time ] "x" noop ]),
+      Some [ "alloc_words at most 4096" ] );
+  ]
+
+let case_observers =
+  group "Case observers"
+    [
+      cases "id, name and full_name"
+        ~name:(fun (name, _, _) -> name)
+        paths
+        (fun (_, tree, expected) ->
+          let c = the_case [ tree () ] in
+          equal
+            (triple string string string)
+            expected
+            (Bench.id c, Bench.name c, Bench.full_name c));
+      test "a '/' in a group's name forges no id" a_slash_in_a_name_forges_no_id;
+      cases "tags"
+        ~name:(fun (name, _, _) -> name)
+        tag_scopes
+        (fun (_, tree, expected) ->
+          equal (list string) expected (Bench.tags (the_case [ tree () ])));
+      cases "metrics"
+        ~name:(fun (name, _, _) -> name)
+        metric_scopes
+        (fun (_, tree, expected) ->
+          equal
+            (option (list string))
+            expected
+            (Option.map (List.map Metric.id)
+               (Bench.metrics (the_case [ tree () ]))));
+      cases "budgets"
+        ~name:(fun (name, _, _) -> name)
+        budget_scopes
+        (fun (_, tree, expected) ->
+          equal
+            (option (list string))
+            expected
+            (Option.map (List.map budget_label)
+               (Bench.budgets (the_case [ tree () ]))));
+    ]
+
+(* Running *)
+
+(* A marker before each batch shows which calls the batch made. *)
+let a_prepared_case_runs_setup_batches_and_teardown () =
+  let trace, record = recorder () in
+  let p =
+    prepared
+      (Bench.bench_with_setup "x"
+         ~setup:(fun () ->
+           record "setup";
+           41)
+         ~teardown:(fun env -> record (strf "teardown %d" env))
+         (fun env -> record (strf "f %d" env)))
+  in
+  List.iter
+    (fun k ->
+      record (strf "batch %d" k);
+      p.Bench.run_batch k)
+    [ 2; 1 ];
+  p.Bench.teardown ();
+  equal (list string)
+    [ "setup"; "batch 2"; "f 41"; "f 41"; "batch 1"; "f 41"; "teardown 41" ]
+    (trace ())
+
+let a_case_without_setup_runs_k_calls () =
+  let trace, record = recorder () in
+  let p = prepared (Bench.bench "x" (fun () -> record "f")) in
+  List.iter
+    (fun k ->
+      record (strf "batch %d" k);
+      p.Bench.run_batch k)
+    [ 0; 3 ];
+  p.Bench.teardown ();
+  equal (list string) [ "batch 0"; "batch 3"; "f"; "f"; "f" ] (trace ())
+
+(* The environment is one mutable counter: every call of both batches adds to
+   it, so the teardown reads their sum. *)
+let every_call_gets_the_one_environment () =
+  let sum = ref (-1) in
+  let p =
+    prepared
+      (Bench.bench_with_setup "x"
+         ~setup:(fun () -> ref 0)
+         ~teardown:(fun env -> sum := !env)
+         incr)
+  in
   p.Bench.run_batch 4;
   p.Bench.run_batch 6;
   p.Bench.teardown ();
-  equal int 10 !sum_at_teardown
+  equal int 10 !sum
 
 exception Boom
 
-let setup_exceptions_propagate_from_prepare () =
-  (* No containment in bench: the measuring worker owns it (measure.mli). *)
-  let f_calls = ref 0 in
+(* Each row runs a case whose closures record, up to the one that raises. *)
+let raising =
+  [
+    ( "from setup, through prepare",
+      (fun record ->
+        let p =
+          prepared
+            (Bench.bench_with_setup "x"
+               ~setup:(fun () ->
+                 record "setup";
+                 raise Boom)
+               (fun () -> record "f"))
+        in
+        p.Bench.run_batch 1),
+      [ "setup" ] );
+    ( "from f, through run_batch, with no teardown",
+      (fun record ->
+        let calls = ref 0 in
+        let p =
+          prepared
+            (Bench.bench_with_setup "x"
+               ~setup:(fun () -> record "setup")
+               ~teardown:(fun () -> record "teardown")
+               (fun () ->
+                 record "f";
+                 incr calls;
+                 if !calls = 3 then raise Boom))
+        in
+        p.Bench.run_batch 5),
+      [ "setup"; "f"; "f"; "f" ] );
+    ( "from teardown",
+      (fun record ->
+        let p =
+          prepared
+            (Bench.bench_with_setup "x"
+               ~setup:(fun () -> record "setup")
+               ~teardown:(fun () ->
+                 record "teardown";
+                 raise Boom)
+               (fun () -> record "f"))
+        in
+        p.Bench.run_batch 1;
+        p.Bench.teardown ()),
+      [ "setup"; "f"; "teardown" ] );
+  ]
+
+let each_prepare_runs_setup_again () =
+  let trace, record = recorder () in
   let c =
     the_case
-      [
-        Bench.bench_with_setup "x"
-          ~setup:(fun () -> raise Boom)
-          (fun () -> incr f_calls);
-      ]
+      [ Bench.bench_with_setup "x" ~setup:(fun () -> record "setup") noop ]
   in
-  raises Boom (fun () -> Bench.prepare c);
-  equal ~msg:"the measured closure never ran" int 0 !f_calls
+  ignore (Bench.prepare c);
+  ignore (Bench.prepare c);
+  equal (list string) [ "setup"; "setup" ] (trace ())
 
-let closure_exceptions_propagate_from_run_batch () =
-  let calls = ref 0 and teardowns = ref 0 in
-  let c =
-    the_case
-      [
-        Bench.bench_with_setup "x"
-          ~setup:(fun () -> ())
-          ~teardown:(fun () -> incr teardowns)
-          (fun () ->
-            incr calls;
-            if !calls = 3 then raise Boom);
-      ]
-  in
-  let p = Bench.prepare c in
-  raises Boom (fun () -> p.Bench.run_batch 5);
-  equal ~msg:"calls before the raise happened" int 3 !calls;
-  equal ~msg:"teardown stays the caller's job, raise or not" int 0 !teardowns
-
-let prepare_twice_is_independent () =
-  let setup_calls = ref 0 in
-  let c =
-    the_case
-      [
-        Bench.bench_with_setup "x"
-          ~setup:(fun () ->
-            incr setup_calls;
-            ())
-          (fun () -> ());
-      ]
-  in
-  let _p1 = Bench.prepare c in
-  let _p2 = Bench.prepare c in
-  equal ~msg:"each prepare runs setup again" int 2 !setup_calls
-
-let black_box_is_the_identity () = equal int 42 (Bench.black_box 42)
+let running =
+  group "Running"
+    [
+      test "a prepared case runs setup once, k calls a batch, then teardown"
+        a_prepared_case_runs_setup_batches_and_teardown;
+      test "a case without setup runs k calls a batch and tears down nothing"
+        a_case_without_setup_runs_k_calls;
+      test "every call of every batch gets the one environment"
+        every_call_gets_the_one_environment;
+      cases "an exception escapes unchanged"
+        ~name:(fun (name, _, _) -> name)
+        raising
+        (fun (_, run, expected) ->
+          let trace, record = recorder () in
+          raises Boom (fun () -> run record);
+          equal (list string) expected (trace ()));
+      test "each prepare runs setup again" each_prepare_runs_setup_again;
+      test "black_box is the identity" (fun () ->
+          equal int 42 (Bench.black_box 42));
+    ]
 
 let () =
-  run "bench"
-    [
-      group "ids"
-        [
-          slug_table;
-          test "explicit ~id is used verbatim" explicit_id_is_verbatim;
-          test "explicit ~id rescues an unsluggable name"
-            explicit_id_rescues_unsluggable_name;
-          test "rejects an invalid explicit ~id" rejects_invalid_explicit_id;
-          test "rejects an empty name" rejects_empty_name;
-          test "rejects a name that slugs to nothing" rejects_unsluggable_name;
-          test "every constructor validates, naming itself"
-            each_constructor_validates;
-        ];
-      group "paths"
-        [
-          test "group prefixes ids and display names"
-            group_prefixes_ids_and_names;
-          test "a group name is slugged for ids, kept for display"
-            group_name_is_slugged_for_ids_only;
-          test "group ~id overrides its path segment"
-            group_id_overrides_its_segment;
-          test "nested groups join all segments" nesting_joins_all_segments;
-          test "resolve preserves authoring order"
-            resolve_preserves_authoring_order;
-          test "an empty group resolves to no cases"
-            empty_group_resolves_to_no_cases;
-          test "a '/' in a group name cannot inject a path"
-            group_name_slash_cannot_inject_a_path;
-        ];
-      group "inheritance"
-        [
-          test "tags accumulate, outer scopes first" tags_accumulate_outer_first;
-          test "tags deduplicate" tags_deduplicate;
-          test "metrics and budgets default to None (inherit further out)"
-            metrics_default_to_none;
-          test "metrics inherit from the group" metrics_inherit_from_the_group;
-          test "case ~metrics overrides the group's wholesale"
-            metrics_override_wholesale;
-          test "budgets merge per metric across scopes"
-            budgets_merge_per_metric_across_scopes;
-          test "the nearest scope wins per metric" nearest_scope_wins_per_metric;
-          test "budgets flow through nested groups"
-            budgets_flow_through_nested_groups;
-          test "an empty ~budgets list is the merge identity"
-            empty_budget_list_is_the_merge_identity;
-          test "empty ~budgets lists alone observe None, never Some []"
-            empty_budget_lists_alone_observe_none;
-          test "rejects two budgets for one metric in one list"
-            rejects_two_budgets_for_one_metric_in_one_list;
-          test "rejects empty or duplicated ~metrics" rejects_bad_metrics_lists;
-        ];
-      group "duplicate ids"
-        [
-          test "duplicate names in a group" duplicate_names_in_a_group;
-          test "a slug collision is a duplicate" slug_collision_is_a_duplicate;
-          test "an explicit id collides with a derived one"
-            explicit_id_collides_with_a_derived_one;
-          test "the same name in different groups is fine"
-            same_name_in_different_groups_is_fine;
-          test "pp_error names the id and the remedy"
-            pp_error_names_the_id_and_the_remedy;
-        ];
-      group "collected budgets"
-        [
-          test "a collected budget is accepted" a_collected_budget_is_accepted;
-          test "a run budget on an uncollected metric is refused"
-            a_run_budget_on_an_uncollected_metric_is_refused;
-          test "a scope's budget is checked against its own metrics"
-            a_scope_budget_is_checked_against_its_own_metrics;
-          test "a scope inherits the nearest metrics"
-            a_scope_inherits_the_nearest_metrics;
-          test "an inherited budget a case does not collect is fine"
-            an_inherited_budget_a_case_does_not_collect_is_fine;
-          test "pp_error names the scope and the metric"
-            pp_error_names_the_scope_and_the_metric;
-        ];
-      group "filters"
-        [
-          test "`Id is case-sensitive substring match on the id"
-            id_filter_is_substring_match;
-          test "`Tag is exact and sees inherited tags"
-            tag_filter_is_exact_and_sees_inherited_tags;
-          test "tags conjoin under `And" tags_conjoin;
-          test "`Or [] selects nothing (empty selection representable)"
-            empty_or_selects_nothing;
-          test "`And [] selects everything" empty_and_selects_everything;
-          test "the CLI composition: ids OR'd, tags AND'd"
-            cli_composition_ids_or_tags_and;
-          test "matches observes one case" matches_observes_one_case;
-        ];
-      group "prepare"
-        [
-          test "setup once, run_batch k calls f k times, teardown once"
-            prepare_shape;
-          test "a setup-less case counts calls and tears down as a no-op"
-            prepare_without_setup_counts_calls;
-          test "the setup object reaches every call of every batch"
-            env_reaches_every_call_of_every_batch;
-          test "setup exceptions propagate from prepare"
-            setup_exceptions_propagate_from_prepare;
-          test "closure exceptions propagate from run_batch"
-            closure_exceptions_propagate_from_run_batch;
-          test "each prepare is independent" prepare_twice_is_independent;
-          test "black_box is the identity" black_box_is_the_identity;
-        ];
-    ]
-  |> exit
+  exit
+    (run "bench"
+       [ constructors; selection; resolving; case_observers; running ])
