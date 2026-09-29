@@ -169,10 +169,12 @@ The determinism kit:
   alone, so their verdicts compare whole counts that no load can move.
   `THUMPER_FIXTURE_RAN_PATH` appends a line per process start — how
   the dune-caching scenario observes re-runs without asserting time.
-- **Environment pinning** — every scenario exports
-  `THUMPER_MACHINE=testkey` (stable section keys) and a sandbox-local
-  `THUMPER_LOCK_DIR`, and unsets `INSIDE_DUNE`/`GITHUB_ACTIONS`
-  unless the scenario is about them.
+- **Environment pinning** — every session sources
+  `test/cram/prelude.sh` first: `THUMPER_MACHINE=testkey` (stable
+  section keys), a `THUMPER_LOCK_DIR` in the session's directory, and
+  `INSIDE_DUNE`, `DUNE_SOURCEROOT`, `CI`, `GITHUB_ACTIONS`, `NO_COLOR`
+  and `TERM` unset. It keeps dune's `INSIDE_DUNE` in `CONTEXT`, for the
+  sessions about a rule action's environment.
 - **`(locks measurement)`** in `test/cram/dune` serializes the
   scenarios: a dozen concurrent spinning workers would push the load
   average over the gate's threshold and the suite would flake itself

@@ -4,11 +4,7 @@ cons cell to each call of alloc/list, alloc_less takes a word from each call
 of alloc/array. Every verdict below compares integers, so no load can move
 it.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ CONTEXT="$INSIDE_DUNE"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
   $ $FIX check --quick -f alloc > /dev/null 2>&1

@@ -3,10 +3,7 @@ file. Under alloc_grow, alloc/list allocates more on each call than on the
 one before, so the exactness probe fails and the run's sampled count cannot
 be compared with the baseline's exact one: exactness lost, whatever the load.
 
-  $ export THUMPER_MACHINE=testkey
-  $ mkdir -p locks && export THUMPER_LOCK_DIR="$PWD/locks"
-  $ unset INSIDE_DUNE
-  $ unset GITHUB_ACTIONS
+  $ . ./prelude.sh
   $ FIX=./fixture/bench_fixture.exe
 
   $ $FIX check --quick -f alloc/list > /dev/null 2>&1
