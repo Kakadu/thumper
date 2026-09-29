@@ -737,11 +737,11 @@ module Verdict : sig
 
   val to_json : t -> string
   (** [to_json t] is [t] as a JSON document on one line, with no final newline.
-      Its schema is frozen and specified in [doc/manual/checking.md]. Its
-      [overall] is {!overall}'s. A metric's [status] is its own: ["fail"] when
-      it fails its case, ["inconclusive"] when its relation is inconclusive, and
-      ["pass"] otherwise. A proposed metric has a [null] [relation] and the
-      [reason] ["missing_baseline"]. *)
+      Its schema is frozen and specified in [doc/manual/json.md]. Its [overall]
+      is {!overall}'s. A metric's [status] is its own: ["fail"] when it fails
+      its case, ["inconclusive"] when its relation is inconclusive, and ["pass"]
+      otherwise. A proposed metric has a [null] [relation] and the [reason]
+      ["missing_baseline"]. *)
 end
 
 (** {1:checking Checking} *)
