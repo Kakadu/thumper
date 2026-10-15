@@ -80,7 +80,7 @@ let measure ?h ?(frozen_k = None) ~config w case =
 
 (* Result plumbing *)
 
-let failure = testable ~pp:Measure.pp_failure ~equal:( = ) ()
+let failure = Testable.make ~pp:Measure.pp_failure ~equal:( = )
 
 let trial_ok = function
   | Ok t -> t

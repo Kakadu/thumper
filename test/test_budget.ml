@@ -25,7 +25,7 @@ let equal_contract a b =
   | Budget.Absolute_max a, Budget.Absolute_max b -> Float.equal a b
   | _ -> false
 
-let contract = testable ~pp:pp_contract ~equal:equal_contract ()
+let contract = Testable.make ~pp:pp_contract ~equal:equal_contract
 
 let contains hay needle =
   let nh = String.length hay and nn = String.length needle in

@@ -63,7 +63,7 @@ let pp_evidence ppf = function
 
 (* Stored samples come from [%.3e] texts, so they are never NaN and
    structural equality is sound. *)
-let evidence = testable ~pp:pp_evidence ~equal:( = ) ()
+let evidence = Testable.make ~pp:pp_evidence ~equal:( = )
 let row_key r = (Baseline.row_id r, Baseline.row_metric r)
 
 let identity =
@@ -1010,11 +1010,9 @@ let gen_baseline =
     (Baseline.empty ~suite) keys parts
 
 let baseline_t =
-  testable
-    ~pp:(fun ppf t -> Format.fprintf ppf "%S" (Baseline.to_string t))
-    ~equal:(fun a b ->
-      String.equal (Baseline.to_string a) (Baseline.to_string b))
-    ~gen:gen_baseline ()
+  Gen.with_pp
+    (fun ppf t -> Format.fprintf ppf "%S" (Baseline.to_string t))
+    gen_baseline
 
 (* Three fixed-key sections plus an advance row for the middle one; the row
    replaces an existing key or inserts a fresh one. *)
@@ -1042,12 +1040,11 @@ let gen_update_case =
   (t, target, advance)
 
 let update_case_t =
-  testable
-    ~pp:(fun ppf (t, target, row) ->
+  Gen.with_pp
+    (fun ppf (t, target, row) ->
       Format.fprintf ppf "(%S, %s, %s %s)" (Baseline.to_string t) target
         (Baseline.row_id row) (Baseline.row_metric row))
-    ~equal:(fun a b -> a == b)
-    ~gen:gen_update_case ()
+    gen_update_case
 
 (* Properties *)
 
@@ -1092,10 +1089,9 @@ let properties =
                  (Baseline.rows s')))
           (Baseline.machines t));
     prop' "a flipped stored-median digit is detected as Corrupt"
-      (testable
-         ~pp:(fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
-         ~gen:Gen.(pair gen_id (int_range 1 10_000))
-         ())
+      (Gen.with_pp
+         (fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
+         Gen.(pair gen_id (int_range 1 10_000)))
       (fun (id, k) ->
         let samples = [| 1.234e-3; 2.5e-3; 3.75e-3; 9.5e-3 |] in
         let row = Baseline.sampled_row ~id ~metric:"wall_time" ~k ~samples in

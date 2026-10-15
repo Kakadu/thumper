@@ -1102,7 +1102,7 @@ let scenario_gen =
     other;
   }
 
-let scenario = testable ~pp:pp_scenario ~gen:scenario_gen ()
+let scenario = Gen.with_pp pp_scenario scenario_gen
 
 let monotone_ratchet s =
   (* Build the file: every outcome except Fresh has a committed row, plus a

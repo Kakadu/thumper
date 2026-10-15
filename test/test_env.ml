@@ -164,7 +164,7 @@ let pp_gate ppf = function
   | Env.Loaded { load; cores } ->
       Format.fprintf ppf "Loaded {load=%g; cores=%d}" load cores
 
-let gate_t : Env.gate testable = testable ~pp:pp_gate ()
+let gate_t : Env.gate testable = Testable.structural ~pp:pp_gate
 let quiet = Env.Quiet
 let loaded load cores = Env.Loaded { load; cores }
 
@@ -211,7 +211,8 @@ let gate_smoke () =
 (* wait_quiet, driven through its gate seam (no reliance on host load). *)
 
 let timeout_t : [ `Timeout ] testable =
-  testable ~pp:(fun ppf `Timeout -> Format.pp_print_string ppf "`Timeout") ()
+  Testable.structural ~pp:(fun ppf `Timeout ->
+    Format.pp_print_string ppf "`Timeout")
 
 let wq_t = result unit timeout_t
 

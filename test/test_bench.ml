@@ -50,7 +50,7 @@ let equal_contract a b =
 let budget =
   Testable.contramap
     (fun b -> (Metric.id (Budget.metric b), Budget.contract b))
-    (pair string (testable ~pp:pp_contract ~equal:equal_contract ()))
+    (pair string (Testable.make ~pp:pp_contract ~equal:equal_contract))
 
 (* Metrics compare by id — their identity (metric.mli). *)
 let metric = Testable.contramap Metric.id string

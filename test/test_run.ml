@@ -24,7 +24,7 @@ let pp_measurement ppf = function
   | Run.Exact n -> Format.fprintf ppf "Exact %d" n
 
 (* Valid evidence never holds NaN, so structural equality is sound here. *)
-let measurement = testable ~pp:pp_measurement ~equal:( = ) ()
+let measurement = Testable.make ~pp:pp_measurement ~equal:( = )
 
 (* The sampled constructor *)
 

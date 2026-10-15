@@ -123,19 +123,17 @@ let pp_farr ppf v =
     (String.concat "; " (List.map (Printf.sprintf "%h") (Array.to_list v)))
 
 let farr ?(min_n = 3) ?(max_n = 25) () =
-  testable ~pp:pp_farr
-    ~gen:
-      (Gen.map Array.of_list (Gen.list_size (Gen.int_range min_n max_n) dyadic))
-    ()
+  Gen.with_pp pp_farr
+    (Gen.map Array.of_list (Gen.list ~size:(Gen.int_range min_n max_n) dyadic))
 
 let pp_float ppf = Format.fprintf ppf "%g"
-let alpha_of l = testable ~pp:pp_float ~gen:(Gen.oneofl l) ()
+let alpha_of l = Gen.with_pp pp_float (Gen.of_list l)
 let ci_alpha = alpha_of [ 0.005; 0.01; 0.02; 0.05; 0.1; 0.3 ]
 let side_alpha = alpha_of [ 0.005; 0.01; 0.025; 0.05; 0.1; 0.2 ]
-let delta = testable ~pp:pp_float ~gen:dyadic ()
+let delta = Gen.with_pp pp_float dyadic
 
 let size =
-  testable ~pp:(fun ppf -> Format.fprintf ppf "%d") ~gen:(Gen.int_range 3 15) ()
+  Gen.with_pp (fun ppf -> Format.fprintf ppf "%d") (Gen.int_range 3 15)
 
 let sorted v =
   let v = Array.copy v in
@@ -246,13 +244,11 @@ let properties =
     prop' "drifted is false on a constant vector" (pair delta size)
       (fun (x, n) -> is_false (Stats.drifted ~alpha:0.05 (Array.make n x)));
     prop' "geometric mean of a constant vector is the constant"
-      (pair
-         (testable ~pp:pp_float
-            ~gen:
-              (Gen.map
-                 (fun k -> float_of_int k /. 65536.)
-                 (Gen.int_range 1 2_000_000))
-            ())
+      (Gen.pair
+         (Gen.with_pp pp_float
+            (Gen.map
+               (fun k -> float_of_int k /. 65536.)
+               (Gen.int_range 1 2_000_000)))
          size)
       (fun (x, n) ->
         equal approximately x (Stats.geometric_mean (Array.make n x)));
