@@ -424,7 +424,7 @@ let validation =
   ]
 
 let () =
-  run "stats"
+  exit (run "stats"
     [
       group "golden" (golden_tests ());
       group "properties" properties;

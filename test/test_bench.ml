@@ -546,7 +546,7 @@ let prepare_twice_is_independent () =
 let black_box_is_the_identity () = equal int 42 (Bench.black_box 42)
 
 let () =
-  run "bench"
+  exit (run "bench"
     [
       group "ids"
         [

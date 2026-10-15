@@ -65,7 +65,7 @@ let cross_check name read () =
     failf "%s measured %.6f s across a 50 ms sleep (unit error?)" name s
 
 let () =
-  run "thumper_clock"
+  exit (run "thumper_clock"
     [
       group "clock"
         [

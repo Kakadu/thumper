@@ -191,49 +191,51 @@ let rejects_at_most_on_never_exact_metrics () =
     [ Metric.wall_time; Metric.cpu_time ]
 
 let () =
-  run "budget"
-    [
-      group "band derivation"
-        [
-          derived_band_table;
-          test "r = 0 degenerates budget and band to zero"
-            zero_budget_degenerates;
-          test "equivalent_within overrides the derivation up to the budget"
-            override_replaces_derivation;
-        ];
-      group "defaults"
-        [
-          test "default_max_regression is 5%"
-            default_max_regression_is_five_percent;
-          test "band_cap is 2.5%" band_cap_is_the_u2_cap;
-          test "defaults is one wall_time budget at 5%, band 2.5%"
-            defaults_gate_wall_time_at_five_percent;
-        ];
-      group "constructors"
-        [
-          test "no_slower_than gates wall_time (migration change 2)"
-            no_slower_than_gates_wall_time;
-          test "no_slower_than is relative on wall_time"
-            no_slower_than_is_relative_on_wall_time;
-          test "no_slower_than ?metric overrides the metric"
-            no_slower_than_metric_override;
-          test "no_more_alloc_than gates alloc_words"
-            no_more_alloc_than_gates_alloc_words;
-          test "no_more_alloc_than is relative on alloc_words"
-            no_more_alloc_than_is_relative_on_alloc_words;
-          test "at_most is an absolute contract" at_most_is_an_absolute_contract;
-        ];
-      group "validation"
-        [
-          test "rejects negative or NaN max_regression"
-            rejects_bad_max_regression;
-          test "rejects negative or NaN equivalent_within"
-            rejects_bad_equivalent_within;
-          test "rejects a band exceeding its budget"
-            rejects_band_exceeding_budget;
-          test "rejects negative or NaN at_most threshold"
-            rejects_bad_at_most_threshold;
-          test "rejects at_most on never-exact metrics"
-            rejects_at_most_on_never_exact_metrics;
-        ];
-    ]
+  exit
+    (run "budget"
+       [
+         group "band derivation"
+           [
+             derived_band_table;
+             test "r = 0 degenerates budget and band to zero"
+               zero_budget_degenerates;
+             test "equivalent_within overrides the derivation up to the budget"
+               override_replaces_derivation;
+           ];
+         group "defaults"
+           [
+             test "default_max_regression is 5%"
+               default_max_regression_is_five_percent;
+             test "band_cap is 2.5%" band_cap_is_the_u2_cap;
+             test "defaults is one wall_time budget at 5%, band 2.5%"
+               defaults_gate_wall_time_at_five_percent;
+           ];
+         group "constructors"
+           [
+             test "no_slower_than gates wall_time (migration change 2)"
+               no_slower_than_gates_wall_time;
+             test "no_slower_than is relative on wall_time"
+               no_slower_than_is_relative_on_wall_time;
+             test "no_slower_than ?metric overrides the metric"
+               no_slower_than_metric_override;
+             test "no_more_alloc_than gates alloc_words"
+               no_more_alloc_than_gates_alloc_words;
+             test "no_more_alloc_than is relative on alloc_words"
+               no_more_alloc_than_is_relative_on_alloc_words;
+             test "at_most is an absolute contract"
+               at_most_is_an_absolute_contract;
+           ];
+         group "validation"
+           [
+             test "rejects negative or NaN max_regression"
+               rejects_bad_max_regression;
+             test "rejects negative or NaN equivalent_within"
+               rejects_bad_equivalent_within;
+             test "rejects a band exceeding its budget"
+               rejects_band_exceeding_budget;
+             test "rejects negative or NaN at_most threshold"
+               rejects_bad_at_most_threshold;
+             test "rejects at_most on never-exact metrics"
+               rejects_at_most_on_never_exact_metrics;
+           ];
+       ])

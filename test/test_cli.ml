@@ -1186,133 +1186,143 @@ let default_path_lands_next_to_the_source () =
 (* Suite *)
 
 let () =
-  run "cli"
-    [
-      group "parse"
-        [
-          test "defaults: check, nothing set"
-            defaults_are_check_with_nothing_set;
-          test "first argument names the subcommand"
-            first_argument_names_the_subcommand;
-          test "explore is a selection pattern, not a subcommand"
-            explore_is_a_pattern;
-          test "later subcommand word is a pattern"
-            later_subcommand_word_is_a_pattern;
-          test "bare positionals are -f patterns" bare_positionals_are_patterns;
-          test "repeatable flags keep encounter order"
-            repeatable_flags_keep_encounter_order;
-          test "long options accept --opt=value" long_options_accept_equals_form;
-          test "value and boolean flags parse" value_flags_parse;
-          test "--precise parses" precise_preset_parses;
-          test "--color parses auto, always, never" color_parses;
-          test "--quick with --precise is a usage error"
-            quick_and_precise_conflict;
-          test "missing option arguments are usage errors"
-            missing_option_arguments_are_usage_errors;
-          test "malformed --wait-quiet is a usage error"
-            malformed_wait_quiet_is_a_usage_error;
-          test "unknown options are usage errors"
-            unknown_options_are_usage_errors;
-          test "-h and -V win" help_and_version_win;
-          test "-v, --no-fork, --no-color, and the v1 aliases are deleted"
-            deleted_spellings_are_unknown_options;
-          test "the flag-scoping matrix refuses out-of-scope flags"
-            flag_scoping_matrix;
-          test "-- ends option parsing" double_dash_ends_options;
-          test "a lone dash is a pattern" lone_dash_is_a_pattern;
-        ];
-      group "filters"
-        [ test "ids OR'd, tags AND'd, empty sides omitted" filter_composition ];
-      group "config"
-        [
-          test "presets refine n; the CLI never flips fork"
-            config_of_refines_presets_only;
-          test "the caller's other knobs are kept"
-            config_of_keeps_the_callers_knobs;
-        ];
-      group "color"
-        [
-          test "per-stream resolution: auto, always, never" use_color_resolution;
-        ];
-      group "status"
-        [ test "the status line formats both sweeps" status_line_formats ];
-      group "hints"
-        [
-          test "promotion is staged only in a rule action"
-            promotion_staged_predicate;
-          test "accept command forks on staging" accept_command_fork;
-          test "accept command quotes hostile paths"
-            accept_command_quotes_hostile_paths;
-          test "rerun hint reproduces the invocation"
-            rerun_hint_reproduces_the_invocation;
-        ];
-      group "baseline path"
-        [
-          test "maps an exe under _build to its source directory"
-            default_dir_maps_exe_to_its_source_directory;
-          test "falls back to the cwd (installed exe, missing directory)"
-            default_dir_falls_back_to_the_cwd;
-          test "a build-directory cwd resolves in the cwd"
-            default_dir_stays_in_a_build_cwd;
-        ];
-      group "render check"
-        [
-          test "mixed run: header, table, actions, summary"
-            mixed_run_renders_all_four_blocks;
-          test "pass run: header, table, summary (never silent)"
-            pass_run_renders_header_table_summary;
-          test "NEW run: proposed rows and the accept prompt"
-            new_run_renders_proposed_rows_and_the_accept_prompt;
-          test "mv hint replaces promote outside dune"
-            mv_hint_replaces_promote_outside_dune;
-          test "loaded compared run warns directly under the header"
-            loaded_run_warns_under_the_header;
-          test "loaded NEW run warns beside the prompt (one load message)"
-            loaded_new_run_warns_beside_the_prompt;
-          test "improvement-only run renders the ratchet prompt"
-            improvement_only_renders_the_ratchet_prompt;
-          test "unconfirmed inconclusive names the reason in the cell"
-            unconfirmed_inconclusive_names_the_reason_in_the_cell;
-          test "exact alloc failure names the alloc side"
-            exact_alloc_failure_names_the_alloc_side;
-          test "per-column time unit scaling never mixes units"
-            per_column_time_unit_scaling;
-          test "alloc column scales per column" alloc_column_scales_per_column;
-          test "sampled alloc renders approximate with the ~ marker"
-            sampled_alloc_renders_approximate;
-          test "measurement warnings render after the table"
-            measurement_warnings_render_after_the_table;
-          test "GitHub annotations on confirmed regressions"
-            github_annotations_on_confirmed_regressions;
-          test "an absolute cap on sampled evidence agrees with the exit code"
-            absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
-          test "ANSI color only when enabled" color_uses_ansi_only_when_enabled;
-        ];
-      group "main"
-        [
-          test "rejects an empty suite name" rejects_a_bad_suite_name;
-          test "rejects duplicate suite budgets" rejects_duplicate_suite_budgets;
-          test "-h exits 0 with usage" help_exits_zero;
-          test "-V exits 0 with the version" version_exits_zero;
-          test "usage errors exit 2" usage_errors_exit_2;
-          test "list prints resolved ids" list_prints_resolved_ids;
-          test "list honors the selection" list_honors_the_selection;
-          test "empty selection exits 2" empty_selection_exits_2;
-          test "startup unlinks both owned artifacts"
-            startup_unlinks_both_owned_artifacts;
-          test "unlinks precede the failing baseline read"
-            unlinks_precede_the_failing_baseline_read;
-          test "unconditional write targets are pre-flighted"
-            unconditional_targets_are_preflighted;
-        ];
-      group "end-to-end"
-        [
-          test "check NEW flow: exit 0, candidate, json, prompt"
-            check_new_flow_end_to_end;
-          test "--strict turns NEW into exit 1" strict_turns_new_into_exit_1;
-          test "partial bless warns and drops unselected rows"
-            partial_bless_warns_and_drops_unselected_rows;
-          test "default path lands next to the benchmark source"
-            default_path_lands_next_to_the_source;
-        ];
-    ]
+  exit
+    (run "cli"
+       [
+         group "parse"
+           [
+             test "defaults: check, nothing set"
+               defaults_are_check_with_nothing_set;
+             test "first argument names the subcommand"
+               first_argument_names_the_subcommand;
+             test "explore is a selection pattern, not a subcommand"
+               explore_is_a_pattern;
+             test "later subcommand word is a pattern"
+               later_subcommand_word_is_a_pattern;
+             test "bare positionals are -f patterns"
+               bare_positionals_are_patterns;
+             test "repeatable flags keep encounter order"
+               repeatable_flags_keep_encounter_order;
+             test "long options accept --opt=value"
+               long_options_accept_equals_form;
+             test "value and boolean flags parse" value_flags_parse;
+             test "--precise parses" precise_preset_parses;
+             test "--color parses auto, always, never" color_parses;
+             test "--quick with --precise is a usage error"
+               quick_and_precise_conflict;
+             test "missing option arguments are usage errors"
+               missing_option_arguments_are_usage_errors;
+             test "malformed --wait-quiet is a usage error"
+               malformed_wait_quiet_is_a_usage_error;
+             test "unknown options are usage errors"
+               unknown_options_are_usage_errors;
+             test "-h and -V win" help_and_version_win;
+             test "-v, --no-fork, --no-color, and the v1 aliases are deleted"
+               deleted_spellings_are_unknown_options;
+             test "the flag-scoping matrix refuses out-of-scope flags"
+               flag_scoping_matrix;
+             test "-- ends option parsing" double_dash_ends_options;
+             test "a lone dash is a pattern" lone_dash_is_a_pattern;
+           ];
+         group "filters"
+           [
+             test "ids OR'd, tags AND'd, empty sides omitted" filter_composition;
+           ];
+         group "config"
+           [
+             test "presets refine n; the CLI never flips fork"
+               config_of_refines_presets_only;
+             test "the caller's other knobs are kept"
+               config_of_keeps_the_callers_knobs;
+           ];
+         group "color"
+           [
+             test "per-stream resolution: auto, always, never"
+               use_color_resolution;
+           ];
+         group "status"
+           [ test "the status line formats both sweeps" status_line_formats ];
+         group "hints"
+           [
+             test "promotion is staged only in a rule action"
+               promotion_staged_predicate;
+             test "accept command forks on staging" accept_command_fork;
+             test "accept command quotes hostile paths"
+               accept_command_quotes_hostile_paths;
+             test "rerun hint reproduces the invocation"
+               rerun_hint_reproduces_the_invocation;
+           ];
+         group "baseline path"
+           [
+             test "maps an exe under _build to its source directory"
+               default_dir_maps_exe_to_its_source_directory;
+             test "falls back to the cwd (installed exe, missing directory)"
+               default_dir_falls_back_to_the_cwd;
+             test "a build-directory cwd resolves in the cwd"
+               default_dir_stays_in_a_build_cwd;
+           ];
+         group "render check"
+           [
+             test "mixed run: header, table, actions, summary"
+               mixed_run_renders_all_four_blocks;
+             test "pass run: header, table, summary (never silent)"
+               pass_run_renders_header_table_summary;
+             test "NEW run: proposed rows and the accept prompt"
+               new_run_renders_proposed_rows_and_the_accept_prompt;
+             test "mv hint replaces promote outside dune"
+               mv_hint_replaces_promote_outside_dune;
+             test "loaded compared run warns directly under the header"
+               loaded_run_warns_under_the_header;
+             test "loaded NEW run warns beside the prompt (one load message)"
+               loaded_new_run_warns_beside_the_prompt;
+             test "improvement-only run renders the ratchet prompt"
+               improvement_only_renders_the_ratchet_prompt;
+             test "unconfirmed inconclusive names the reason in the cell"
+               unconfirmed_inconclusive_names_the_reason_in_the_cell;
+             test "exact alloc failure names the alloc side"
+               exact_alloc_failure_names_the_alloc_side;
+             test "per-column time unit scaling never mixes units"
+               per_column_time_unit_scaling;
+             test "alloc column scales per column"
+               alloc_column_scales_per_column;
+             test "sampled alloc renders approximate with the ~ marker"
+               sampled_alloc_renders_approximate;
+             test "measurement warnings render after the table"
+               measurement_warnings_render_after_the_table;
+             test "GitHub annotations on confirmed regressions"
+               github_annotations_on_confirmed_regressions;
+             test
+               "an absolute cap on sampled evidence agrees with the exit code"
+               absolute_cap_on_sampled_evidence_agrees_with_the_exit_code;
+             test "ANSI color only when enabled"
+               color_uses_ansi_only_when_enabled;
+           ];
+         group "main"
+           [
+             test "rejects an empty suite name" rejects_a_bad_suite_name;
+             test "rejects duplicate suite budgets"
+               rejects_duplicate_suite_budgets;
+             test "-h exits 0 with usage" help_exits_zero;
+             test "-V exits 0 with the version" version_exits_zero;
+             test "usage errors exit 2" usage_errors_exit_2;
+             test "list prints resolved ids" list_prints_resolved_ids;
+             test "list honors the selection" list_honors_the_selection;
+             test "empty selection exits 2" empty_selection_exits_2;
+             test "startup unlinks both owned artifacts"
+               startup_unlinks_both_owned_artifacts;
+             test "unlinks precede the failing baseline read"
+               unlinks_precede_the_failing_baseline_read;
+             test "unconditional write targets are pre-flighted"
+               unconditional_targets_are_preflighted;
+           ];
+         group "end-to-end"
+           [
+             test "check NEW flow: exit 0, candidate, json, prompt"
+               check_new_flow_end_to_end;
+             test "--strict turns NEW into exit 1" strict_turns_new_into_exit_1;
+             test "partial bless warns and drops unselected rows"
+               partial_bless_warns_and_drops_unselected_rows;
+             test "default path lands next to the benchmark source"
+               default_path_lands_next_to_the_source;
+           ];
+       ])

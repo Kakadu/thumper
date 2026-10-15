@@ -238,46 +238,47 @@ let empty_run () =
   equal (option int) None (Run.exact run ~case:"a" Metric.alloc_words)
 
 let () =
-  run "run"
-    [
-      group "sampled constructor"
-        [
-          test "accepts a sorted vector and stores the flags"
-            sampled_accepts_sorted;
-          test "accepts ties" sampled_accepts_ties;
-          test "rejects fewer than 3 samples" sampled_rejects_short;
-          test "rejects an unsorted vector" sampled_rejects_unsorted;
-          test "rejects NaN at any position" sampled_rejects_nan;
-          test "rejects infinities" sampled_rejects_infinite;
-          test "rejects an outlier count outside [0;n]" sampled_outlier_range;
-        ];
-      group "ownership"
-        [
-          test "constructor copies its input" constructor_copies_input;
-          test "samples projection returns a fresh array"
-            projection_returns_fresh_array;
-        ];
-      group "trial"
-        [
-          test "accessors return what make was given" trial_accessors;
-          test "warnings default to empty" trial_warnings_default_empty;
-          test "rejects k < 1" trial_rejects_bad_k;
-          test "rejects duplicate metrics" trial_rejects_duplicate_metric;
-          test "rejects exact evidence for a metric no probe can prove"
-            trial_rejects_exact_for_unexactable_metric;
-          test "accepts sampled evidence for an exact-capable metric"
-            trial_accepts_downgraded_exact_capable;
-          test "measurement finds by metric identity"
-            trial_measurement_by_identity;
-        ];
-      group "run"
-        [
-          test "iteration order is the given order" run_order_is_stable;
-          test "rejects duplicate case ids" run_rejects_duplicate_case;
-          test "trial lookup by case id" run_trial_lookup;
-          test "projections find present evidence" projections;
-          test "projections are None for absent or other-form evidence"
-            projections_absent;
-          test "the empty run is representable" empty_run;
-        ];
-    ]
+  exit
+    (run "run"
+       [
+         group "sampled constructor"
+           [
+             test "accepts a sorted vector and stores the flags"
+               sampled_accepts_sorted;
+             test "accepts ties" sampled_accepts_ties;
+             test "rejects fewer than 3 samples" sampled_rejects_short;
+             test "rejects an unsorted vector" sampled_rejects_unsorted;
+             test "rejects NaN at any position" sampled_rejects_nan;
+             test "rejects infinities" sampled_rejects_infinite;
+             test "rejects an outlier count outside [0;n]" sampled_outlier_range;
+           ];
+         group "ownership"
+           [
+             test "constructor copies its input" constructor_copies_input;
+             test "samples projection returns a fresh array"
+               projection_returns_fresh_array;
+           ];
+         group "trial"
+           [
+             test "accessors return what make was given" trial_accessors;
+             test "warnings default to empty" trial_warnings_default_empty;
+             test "rejects k < 1" trial_rejects_bad_k;
+             test "rejects duplicate metrics" trial_rejects_duplicate_metric;
+             test "rejects exact evidence for a metric no probe can prove"
+               trial_rejects_exact_for_unexactable_metric;
+             test "accepts sampled evidence for an exact-capable metric"
+               trial_accepts_downgraded_exact_capable;
+             test "measurement finds by metric identity"
+               trial_measurement_by_identity;
+           ];
+         group "run"
+           [
+             test "iteration order is the given order" run_order_is_stable;
+             test "rejects duplicate case ids" run_rejects_duplicate_case;
+             test "trial lookup by case id" run_trial_lookup;
+             test "projections find present evidence" projections;
+             test "projections are None for absent or other-form evidence"
+               projections_absent;
+             test "the empty run is representable" empty_run;
+           ];
+       ])

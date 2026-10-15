@@ -1163,131 +1163,140 @@ let properties =
 (* Suite *)
 
 let () =
-  run "baseline"
-    [
-      group "spec sample"
-        [
-          test "the spec's verbatim sample parses" spec_sample_parses;
-          test "its evidence projects exactly" spec_sample_evidence;
-          test "it re-emits byte-identically" spec_sample_byte_identity;
-        ];
-      group "empty baseline"
-        [
-          test "the empty file is a valid zero-section baseline"
-            empty_file_is_valid;
-          test "the empty fixture reads" empty_fixture_reads;
-          test "empty ~suite renders the two-line preamble"
-            empty_constructor_round_trips;
-          test "empty ~suite validates its argument" empty_constructor_validates;
-        ];
-      group "grammar"
-        [
-          test "a minimal canonical file parses" minimal_parses;
-          test "rejects a bad header (without claiming pre-rewrite)"
-            rejects_bad_header;
-          test "rejects a header-only file" rejects_header_only;
-          test "rejects a truncated file (missing final newline)"
-            rejects_truncated;
-          test "rejects an empty suite name" rejects_empty_suite_name;
-          test "rejects junk after the preamble" rejects_junk_after_preamble;
-          test "rejects a trailing blank line" rejects_trailing_blank;
-          test "rejects doubled blank lines" rejects_double_blank;
-          test "rejects a blank line between rows" rejects_blank_between_rows;
-          test "rejects a comment among rows" rejects_comment_among_rows;
-          test "rejects a bad machine key" rejects_bad_machine_key;
-          test "rejects duplicate or unsorted sections" rejects_section_disorder;
-          test "rejects a disordered section header block"
-            rejects_header_block_disorder;
-          test "rejects malformed rows" rejects_malformed_rows;
-          test "rejects duplicate or unsorted rows" rejects_row_disorder;
-          test "rejects CRLF line endings" rejects_crlf_line_endings;
-          test "rejects trailing whitespace" rejects_trailing_whitespace;
-          test "rejects a '# machine:' line directly after another"
-            rejects_machine_directly_after_machine;
-          test "rejects rows not separated from the header by a blank line"
-            rejects_rows_without_blank_after_header;
-          test "rejects missing or empty section header lines"
-            rejects_missing_section_headers;
-          test "unknown '# ' section comments are annotations and round-trip"
-            unknown_section_comments_round_trip;
-        ];
-      group "median checksum"
-        [
-          test "even n: midpoint of the two central stored samples"
-            checksum_even_midpoint;
-          test "odd n: the central stored sample" checksum_odd_central;
-          test "string equality, not numeric: exponent spelling matters"
-            checksum_is_string_equality_not_numeric;
-          test "two-digit exponents hold down at 1e-10"
-            checksum_negative_exponent_boundary;
-          test "the median derives from stored samples, not raw floats"
-            median_derives_from_stored_not_raw_samples;
-          test "the even-n midpoint never overflows to inf"
-            midpoint_of_huge_samples_stays_finite;
-          test "non-canonical row text is preserved verbatim"
-            non_canonical_row_text_is_preserved_verbatim;
-          test "a flipped digit in the spec sample is corrupt"
-            checksum_spec_sample_digit_flip;
-        ];
-      group "pre-rewrite files"
-        [
-          test "an old version-2 file names the remedy" pre_rewrite_v2_fixture;
-          test "an old host-keyed file names the remedy" pre_rewrite_v1_fixture;
-          test "a headless host-keyed file names the remedy"
-            pre_rewrite_headless_host_keyed;
-          test "a '# version:' line names the remedy" pre_rewrite_version_line;
-          test "new-format corruption is never blamed on the old format"
-            pre_rewrite_not_claimed_for_new_format_errors;
-          test "an unknown future version is not told to delete the file"
-            future_version_header_is_not_pre_rewrite;
-          test "a missing file reads as Absent" missing_file_reads_absent;
-          test "an unreadable path is Io, never Absent"
-            unreadable_is_io_never_absent;
-          test "a permission-denied file is Io, never Absent"
-            permission_denied_read_is_io_never_absent;
-        ];
-      group "row constructors"
-        [
-          test "exact_row validates id, metric, and count" exact_row_validates;
-          test "sampled_row validates k and samples" sampled_row_validates;
-          test "sampled_row stores samples at file precision"
-            sampled_row_quantizes_to_file_precision;
-          test "row_evidence returns fresh arrays"
-            row_evidence_returns_fresh_arrays;
-          test "a fresh section renders the pinned print contract"
-            fresh_section_renders_canonically;
-        ];
-      group "set_section"
-        [
-          test "inserts in key order and replaces wholesale"
-            set_section_sorts_and_replaces;
-          test "byte-preserves every other section"
-            set_section_preserves_other_sections_bytes;
-          test "annotations render as comments and round-trip"
-            set_section_annotations_round_trip;
-          test "validates identity, annotations, and rows" set_section_validates;
-          test "works on the empty-file baseline"
-            set_section_on_empty_file_baseline;
-        ];
-      group "update_rows"
-        [
-          test "replaces and inserts at (id, metric), keeping order"
-            update_rows_replaces_and_inserts;
-          test "prunes present keys and ignores absent ones" update_rows_prunes;
-          test "rejects a missing section, duplicates, and overlap"
-            update_rows_validates;
-        ];
-      group "atomic write"
-        [
-          test "writes and reads back byte-identically" write_reads_back;
-          test "overwrites atomically and leaves no temp file"
-            write_overwrites_and_leaves_no_temp;
-          test "raises Error (Io _) when the directory is missing"
-            write_failure_raises_io;
-          test "raises Error (Io _) in a read-only directory"
-            write_into_readonly_dir_raises_io;
-          test "preserves the target's permission bits"
-            write_preserves_target_permissions;
-        ];
-      group "properties" properties;
-    ]
+  exit
+    (run "baseline"
+       [
+         group "spec sample"
+           [
+             test "the spec's verbatim sample parses" spec_sample_parses;
+             test "its evidence projects exactly" spec_sample_evidence;
+             test "it re-emits byte-identically" spec_sample_byte_identity;
+           ];
+         group "empty baseline"
+           [
+             test "the empty file is a valid zero-section baseline"
+               empty_file_is_valid;
+             test "the empty fixture reads" empty_fixture_reads;
+             test "empty ~suite renders the two-line preamble"
+               empty_constructor_round_trips;
+             test "empty ~suite validates its argument"
+               empty_constructor_validates;
+           ];
+         group "grammar"
+           [
+             test "a minimal canonical file parses" minimal_parses;
+             test "rejects a bad header (without claiming pre-rewrite)"
+               rejects_bad_header;
+             test "rejects a header-only file" rejects_header_only;
+             test "rejects a truncated file (missing final newline)"
+               rejects_truncated;
+             test "rejects an empty suite name" rejects_empty_suite_name;
+             test "rejects junk after the preamble" rejects_junk_after_preamble;
+             test "rejects a trailing blank line" rejects_trailing_blank;
+             test "rejects doubled blank lines" rejects_double_blank;
+             test "rejects a blank line between rows" rejects_blank_between_rows;
+             test "rejects a comment among rows" rejects_comment_among_rows;
+             test "rejects a bad machine key" rejects_bad_machine_key;
+             test "rejects duplicate or unsorted sections"
+               rejects_section_disorder;
+             test "rejects a disordered section header block"
+               rejects_header_block_disorder;
+             test "rejects malformed rows" rejects_malformed_rows;
+             test "rejects duplicate or unsorted rows" rejects_row_disorder;
+             test "rejects CRLF line endings" rejects_crlf_line_endings;
+             test "rejects trailing whitespace" rejects_trailing_whitespace;
+             test "rejects a '# machine:' line directly after another"
+               rejects_machine_directly_after_machine;
+             test "rejects rows not separated from the header by a blank line"
+               rejects_rows_without_blank_after_header;
+             test "rejects missing or empty section header lines"
+               rejects_missing_section_headers;
+             test "unknown '# ' section comments are annotations and round-trip"
+               unknown_section_comments_round_trip;
+           ];
+         group "median checksum"
+           [
+             test "even n: midpoint of the two central stored samples"
+               checksum_even_midpoint;
+             test "odd n: the central stored sample" checksum_odd_central;
+             test "string equality, not numeric: exponent spelling matters"
+               checksum_is_string_equality_not_numeric;
+             test "two-digit exponents hold down at 1e-10"
+               checksum_negative_exponent_boundary;
+             test "the median derives from stored samples, not raw floats"
+               median_derives_from_stored_not_raw_samples;
+             test "the even-n midpoint never overflows to inf"
+               midpoint_of_huge_samples_stays_finite;
+             test "non-canonical row text is preserved verbatim"
+               non_canonical_row_text_is_preserved_verbatim;
+             test "a flipped digit in the spec sample is corrupt"
+               checksum_spec_sample_digit_flip;
+           ];
+         group "pre-rewrite files"
+           [
+             test "an old version-2 file names the remedy"
+               pre_rewrite_v2_fixture;
+             test "an old host-keyed file names the remedy"
+               pre_rewrite_v1_fixture;
+             test "a headless host-keyed file names the remedy"
+               pre_rewrite_headless_host_keyed;
+             test "a '# version:' line names the remedy"
+               pre_rewrite_version_line;
+             test "new-format corruption is never blamed on the old format"
+               pre_rewrite_not_claimed_for_new_format_errors;
+             test "an unknown future version is not told to delete the file"
+               future_version_header_is_not_pre_rewrite;
+             test "a missing file reads as Absent" missing_file_reads_absent;
+             test "an unreadable path is Io, never Absent"
+               unreadable_is_io_never_absent;
+             test "a permission-denied file is Io, never Absent"
+               permission_denied_read_is_io_never_absent;
+           ];
+         group "row constructors"
+           [
+             test "exact_row validates id, metric, and count"
+               exact_row_validates;
+             test "sampled_row validates k and samples" sampled_row_validates;
+             test "sampled_row stores samples at file precision"
+               sampled_row_quantizes_to_file_precision;
+             test "row_evidence returns fresh arrays"
+               row_evidence_returns_fresh_arrays;
+             test "a fresh section renders the pinned print contract"
+               fresh_section_renders_canonically;
+           ];
+         group "set_section"
+           [
+             test "inserts in key order and replaces wholesale"
+               set_section_sorts_and_replaces;
+             test "byte-preserves every other section"
+               set_section_preserves_other_sections_bytes;
+             test "annotations render as comments and round-trip"
+               set_section_annotations_round_trip;
+             test "validates identity, annotations, and rows"
+               set_section_validates;
+             test "works on the empty-file baseline"
+               set_section_on_empty_file_baseline;
+           ];
+         group "update_rows"
+           [
+             test "replaces and inserts at (id, metric), keeping order"
+               update_rows_replaces_and_inserts;
+             test "prunes present keys and ignores absent ones"
+               update_rows_prunes;
+             test "rejects a missing section, duplicates, and overlap"
+               update_rows_validates;
+           ];
+         group "atomic write"
+           [
+             test "writes and reads back byte-identically" write_reads_back;
+             test "overwrites atomically and leaves no temp file"
+               write_overwrites_and_leaves_no_temp;
+             test "raises Error (Io _) when the directory is missing"
+               write_failure_raises_io;
+             test "raises Error (Io _) in a read-only directory"
+               write_into_readonly_dir_raises_io;
+             test "preserves the target's permission bits"
+               write_preserves_target_permissions;
+           ];
+         group "properties" properties;
+       ])

@@ -676,7 +676,7 @@ let live_run_smoke () =
 (* Suite *)
 
 let () =
-  run "check"
+  exit (run "check"
     [
       group "the loop"
         [

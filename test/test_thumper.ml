@@ -455,7 +455,7 @@ module Deleted_surface : sig end = struct
 end
 
 let () =
-  run "thumper"
+  exit (run "thumper"
     [
       group "authoring"
         [

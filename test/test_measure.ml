@@ -713,84 +713,87 @@ let fork_reports_a_raising_case () =
 (* Suite *)
 
 let () =
-  run "measure"
-    [
-      group "calibration"
-        ([
-           test "doubles k until a batch meets the floor"
-             calibration_doubles_to_floor;
-           test "frozen_k below 1 is a programmer error"
-             frozen_k_zero_is_programmer_error;
-         ]
-        @ frozen_k_tests);
-      group "warmup"
-        [
-          test "the 3-batch arm floors short warmups" warmup_batch_arm;
-          test "the timed arm extends past 3 batches" warmup_timed_arm;
-        ];
-      group "exactness probe"
-        [
-          test "proves a planted count at k = 1" probe_exact_at_k1;
-          test "proves a planted count at k = 8192" probe_exact_at_k8192;
-          test "downgrades nondeterministic counters with a warning"
-            probe_downgrades_nondeterministic_counters;
-          test "downgrades when the 2k batch underallocates"
-            probe_downgrades_when_the_2k_batch_underallocates;
-          test "downgrades on a negative harness constant"
-            probe_downgrades_on_negative_harness_constant;
-          test "rejects backward counters" probe_rejects_backward_counters;
-          test "proves a real allocator exact under a finite deadline"
-            probe_exact_with_real_instruments;
-        ];
-      group "quality flags"
-        [
-          test "drift on a planted step" drift_flag_on_planted_step;
-          test "alternating samples do not drift (order preserved)"
-            alternating_samples_do_not_drift;
-          test "unstable on planted severe outliers"
-            unstable_flag_on_planted_outliers;
-          test "clean case has no flags" clean_case_has_no_flags;
-        ];
-      group "deadline"
-        [
-          test "a clock jump past the cap fails the case"
-            deadline_exceeded_on_clock_jump;
-          test "deadline infinity removes the cap"
-            deadline_infinity_removes_the_cap;
-        ];
-      group "teardown"
-        [
-          test "runs on success" teardown_runs_on_success;
-          test "runs when the case raises" teardown_runs_when_the_case_raises;
-          test "runs when the deadline fires"
-            teardown_runs_when_the_deadline_fires;
-          test "raising teardown fails the case" raising_teardown_fails_the_case;
-          test "raising setup fails the case" raising_setup_fails_the_case;
-        ];
-      group "warnings"
-        [
-          test "gc parameter mutation names the parameter"
-            gc_param_mutation_is_warned;
-          test "sub-nanosecond medians suggest folding" fold_suspicion_is_warned;
-        ];
-      group "metrics"
-        [
-          test "cpu_time is sampled from the cpu clock" cpu_time_is_sampled;
-          test "measurement order follows the metric list"
-            measurement_order_follows_the_metric_list;
-        ];
-      group "protocol"
-        ([
-           test "trial round-trips through the wire" protocol_round_trip;
-           test "the pinned grammar parses" parse_accepts_the_pinned_grammar;
-           test "write rejects Worker_died" write_rejects_worker_died;
-         ]
-        @ failure_round_trips
-        @ [ group "malformed wire is Worker_died" malformed_tests ]);
-      group "fork"
-        [
-          test "protocol round-trips through a real fork" fork_round_trip;
-          test "a raising case is reported through the pipe"
-            fork_reports_a_raising_case;
-        ];
-    ]
+  exit
+    (run "measure"
+       [
+         group "calibration"
+           ([
+              test "doubles k until a batch meets the floor"
+                calibration_doubles_to_floor;
+              test "frozen_k below 1 is a programmer error"
+                frozen_k_zero_is_programmer_error;
+            ]
+           @ frozen_k_tests);
+         group "warmup"
+           [
+             test "the 3-batch arm floors short warmups" warmup_batch_arm;
+             test "the timed arm extends past 3 batches" warmup_timed_arm;
+           ];
+         group "exactness probe"
+           [
+             test "proves a planted count at k = 1" probe_exact_at_k1;
+             test "proves a planted count at k = 8192" probe_exact_at_k8192;
+             test "downgrades nondeterministic counters with a warning"
+               probe_downgrades_nondeterministic_counters;
+             test "downgrades when the 2k batch underallocates"
+               probe_downgrades_when_the_2k_batch_underallocates;
+             test "downgrades on a negative harness constant"
+               probe_downgrades_on_negative_harness_constant;
+             test "rejects backward counters" probe_rejects_backward_counters;
+             test "proves a real allocator exact under a finite deadline"
+               probe_exact_with_real_instruments;
+           ];
+         group "quality flags"
+           [
+             test "drift on a planted step" drift_flag_on_planted_step;
+             test "alternating samples do not drift (order preserved)"
+               alternating_samples_do_not_drift;
+             test "unstable on planted severe outliers"
+               unstable_flag_on_planted_outliers;
+             test "clean case has no flags" clean_case_has_no_flags;
+           ];
+         group "deadline"
+           [
+             test "a clock jump past the cap fails the case"
+               deadline_exceeded_on_clock_jump;
+             test "deadline infinity removes the cap"
+               deadline_infinity_removes_the_cap;
+           ];
+         group "teardown"
+           [
+             test "runs on success" teardown_runs_on_success;
+             test "runs when the case raises" teardown_runs_when_the_case_raises;
+             test "runs when the deadline fires"
+               teardown_runs_when_the_deadline_fires;
+             test "raising teardown fails the case"
+               raising_teardown_fails_the_case;
+             test "raising setup fails the case" raising_setup_fails_the_case;
+           ];
+         group "warnings"
+           [
+             test "gc parameter mutation names the parameter"
+               gc_param_mutation_is_warned;
+             test "sub-nanosecond medians suggest folding"
+               fold_suspicion_is_warned;
+           ];
+         group "metrics"
+           [
+             test "cpu_time is sampled from the cpu clock" cpu_time_is_sampled;
+             test "measurement order follows the metric list"
+               measurement_order_follows_the_metric_list;
+           ];
+         group "protocol"
+           ([
+              test "trial round-trips through the wire" protocol_round_trip;
+              test "the pinned grammar parses" parse_accepts_the_pinned_grammar;
+              test "write rejects Worker_died" write_rejects_worker_died;
+            ]
+           @ failure_round_trips
+           @ [ group "malformed wire is Worker_died" malformed_tests ]);
+         group "fork"
+           [
+             test "protocol round-trips through a real fork" fork_round_trip;
+             test "a raising case is reported through the pipe"
+               fork_reports_a_raising_case;
+           ];
+       ])

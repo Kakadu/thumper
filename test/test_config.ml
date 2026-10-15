@@ -138,63 +138,64 @@ let metrics_accepts_distinct_lists () =
     Config.(default |> metrics Metric.[ alloc_words; wall_time ])
 
 let () =
-  run "config"
-    [
-      group "presets"
-        [
-          test "default pins the protocol constants" default_pins_u2;
-          test "quick is default with 11 batches" quick_is_default_with_11;
+  exit
+    (run "config"
+       [
+         group "presets"
+           [
+             test "default pins the protocol constants" default_pins_u2;
+             test "quick is default with 11 batches" quick_is_default_with_11;
           test "precise is default with 40 batches" precise_is_default_with_40;
-        ];
-      group "setters"
-        [
-          test "samples sets only the batch count" samples_sets_n;
-          test "samples accepts the n = 3 stats floor"
-            samples_accepts_the_minimum;
-          test "samples has no upper bound" samples_has_no_upper_bound;
-          test "batch_floor sets only the floor" batch_floor_sets_the_floor;
-          test "warmup sets only the timed arm" warmup_sets_the_timed_arm;
-          test "warmup 0 disables the timed arm, keeps the batch arm"
-            warmup_zero_disables_the_timed_arm;
-          test "deadline sets only the cap" deadline_sets_the_cap;
-          test "deadline infinity removes the cap"
-            deadline_infinity_removes_the_cap;
-          test "deadline permits a cap below the protocol cost"
-            deadline_permits_a_cap_below_the_protocol_cost;
-          test "setters are order-independent across knobs"
-            setters_are_order_independent;
-          test "metrics sets only the metric list" metrics_sets_the_list;
-          test "fork sets only the fork flag" fork_sets_the_flag;
-          test "setters chain in pipelines" setters_chain_in_pipelines;
-        ];
-      group "validation"
-        [
-          test "samples rejects n < 3 with the setter and value"
-            samples_rejects_below_3;
+           ];
+         group "setters"
+           [
+             test "samples sets only the batch count" samples_sets_n;
+             test "samples accepts the n = 3 stats floor"
+               samples_accepts_the_minimum;
+             test "samples has no upper bound" samples_has_no_upper_bound;
+             test "batch_floor sets only the floor" batch_floor_sets_the_floor;
+             test "warmup sets only the timed arm" warmup_sets_the_timed_arm;
+             test "warmup 0 disables the timed arm, keeps the batch arm"
+               warmup_zero_disables_the_timed_arm;
+             test "deadline sets only the cap" deadline_sets_the_cap;
+             test "deadline infinity removes the cap"
+               deadline_infinity_removes_the_cap;
+             test "deadline permits a cap below the protocol cost"
+               deadline_permits_a_cap_below_the_protocol_cost;
+             test "setters are order-independent across knobs"
+               setters_are_order_independent;
+             test "metrics sets only the metric list" metrics_sets_the_list;
+             test "fork sets only the fork flag" fork_sets_the_flag;
+             test "setters chain in pipelines" setters_chain_in_pipelines;
+           ];
+         group "validation"
+           [
+             test "samples rejects n < 3 with the setter and value"
+               samples_rejects_below_3;
           cases int [ 2; 1; 0; -1 ] "samples rejects n < 3" (fun n ->
-              raises_match invalid_argument (fun () ->
-                  Config.(default |> samples n)));
-          test "batch_floor rejects a zero floor"
-            batch_floor_rejects_nonpositive;
+                 raises_match invalid_argument (fun () ->
+                     Config.(default |> samples n)));
+             test "batch_floor rejects a zero floor"
+               batch_floor_rejects_nonpositive;
           cases (float 0.) [ 0.; -1e-3; nan; infinity; neg_infinity ]
             "batch_floor rejects non-finite or non-positive" (fun s ->
-              raises_match invalid_argument (fun () ->
-                  Config.(default |> batch_floor s)));
-          test "warmup rejects a negative duration" warmup_rejects_negative;
+                 raises_match invalid_argument (fun () ->
+                     Config.(default |> batch_floor s)));
+             test "warmup rejects a negative duration" warmup_rejects_negative;
           cases (float 0.) [ -1e-9; -1.; nan; infinity; neg_infinity ]
             "warmup rejects non-finite or negative" (fun s ->
-              raises_match invalid_argument (fun () ->
-                  Config.(default |> warmup s)));
-          test "deadline rejects a non-positive cap"
-            deadline_rejects_nonpositive;
+                 raises_match invalid_argument (fun () ->
+                     Config.(default |> warmup s)));
+             test "deadline rejects a non-positive cap"
+               deadline_rejects_nonpositive;
           cases (float 0.) [ 0.; -5.; nan; neg_infinity ]
             "deadline rejects non-positive or NaN" (fun s ->
-              raises_match invalid_argument (fun () ->
-                  Config.(default |> deadline s)));
-          test "metrics rejects an empty list" metrics_rejects_empty;
-          test "metrics rejects duplicate ids, order-free"
-            metrics_rejects_duplicates;
-          test "metrics accepts any duplicate-free list"
-            metrics_accepts_distinct_lists;
-        ];
+                 raises_match invalid_argument (fun () ->
+                     Config.(default |> deadline s)));
+             test "metrics rejects an empty list" metrics_rejects_empty;
+             test "metrics rejects duplicate ids, order-free"
+               metrics_rejects_duplicates;
+             test "metrics accepts any duplicate-free list"
+               metrics_accepts_distinct_lists;
+           ];
     ]

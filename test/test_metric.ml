@@ -164,28 +164,30 @@ let pp_prints_the_id () =
   equal string "wall_time" (Format.asprintf "%a" Metric.pp Metric.wall_time)
 
 let () =
-  run "metric"
-    [
-      group "builtins"
-        [
-          test "ids match the frozen wire spellings" ids_are_wire_format;
-          test "units of every built-in" builtin_units;
-          test "kinds of every built-in" builtin_kinds;
-          test "sources of every built-in" builtin_sources;
-        ];
-      group "gc projections"
-        [
-          test "alloc_words is minor + major - promoted" alloc_words_projection;
-          test "counter metrics project their field" counter_projections;
-        ];
-      group "exactness"
-        [
-          test "exact-capable is exactly the Gc_counter class"
-            exact_capable_classification;
-        ];
-      group "identity"
-        [
-          test "equal and compare use the id alone" identity_is_the_id;
-          test "pp prints the id" pp_prints_the_id;
-        ];
-    ]
+  exit
+    (run "metric"
+       [
+         group "builtins"
+           [
+             test "ids match the frozen wire spellings" ids_are_wire_format;
+             test "units of every built-in" builtin_units;
+             test "kinds of every built-in" builtin_kinds;
+             test "sources of every built-in" builtin_sources;
+           ];
+         group "gc projections"
+           [
+             test "alloc_words is minor + major - promoted"
+               alloc_words_projection;
+             test "counter metrics project their field" counter_projections;
+           ];
+         group "exactness"
+           [
+             test "exact-capable is exactly the Gc_counter class"
+               exact_capable_classification;
+           ];
+         group "identity"
+           [
+             test "equal and compare use the id alone" identity_is_the_id;
+             test "pp prints the id" pp_prints_the_id;
+           ];
+       ])

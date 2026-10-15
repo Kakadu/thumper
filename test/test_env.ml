@@ -440,7 +440,7 @@ let pp_error_pins () =
     (Format.asprintf "%a" Env.Lease.pp_error (Env.Lease.Unusable "boom"))
 
 let () =
-  run "env"
+  exit (run "env"
     [
       group "machine key"
         [

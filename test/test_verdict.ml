@@ -1398,152 +1398,153 @@ let json_machine_field () =
 (* Suite *)
 
 let () =
-  run "verdict"
-    [
-      group "relation table"
-        [
-          relation_grid;
-          test "a straddling interval is inconclusive (wide_interval)"
-            wide_interval_is_inconclusive;
-          test "within_budget needs the whole interval above the band"
-            within_budget_needs_the_whole_interval_above_the_band;
-        ];
-      group "confirmation"
-        [
-          test "a confirmed regression carries both shifts, pooled 2n, and k"
-            confirmed_regression_carries_evidence;
-          test "an unrepeated regression is inconclusive (unconfirmed)"
-            unconfirmed_regression_is_inconclusive;
-          test "a missing confirmation trial is inconclusive"
-            missing_confirmation_is_inconclusive;
-          test "a drifted confirmation trial is inconclusive"
-            drifted_confirmation_is_inconclusive;
-          test "an unstable confirmation trial is inconclusive"
-            unstable_confirmation_is_inconclusive;
-          test "a confirmation in the opposite direction is inconclusive"
-            opposite_confirmation_is_inconclusive;
-          test "exact-form confirmation evidence is inconclusive"
-            exact_confirmation_evidence_is_inconclusive;
-          test "the confirmation is judged at the wider alpha"
-            confirmation_is_judged_at_the_wider_alpha;
+  exit
+    (run "verdict"
+       [
+         group "relation table"
+           [
+             relation_grid;
+             test "a straddling interval is inconclusive (wide_interval)"
+               wide_interval_is_inconclusive;
+             test "within_budget needs the whole interval above the band"
+               within_budget_needs_the_whole_interval_above_the_band;
+           ];
+         group "confirmation"
+           [
+             test "a confirmed regression carries both shifts, pooled 2n, and k"
+               confirmed_regression_carries_evidence;
+             test "an unrepeated regression is inconclusive (unconfirmed)"
+               unconfirmed_regression_is_inconclusive;
+             test "a missing confirmation trial is inconclusive"
+               missing_confirmation_is_inconclusive;
+             test "a drifted confirmation trial is inconclusive"
+               drifted_confirmation_is_inconclusive;
+             test "an unstable confirmation trial is inconclusive"
+               unstable_confirmation_is_inconclusive;
+             test "a confirmation in the opposite direction is inconclusive"
+               opposite_confirmation_is_inconclusive;
+             test "exact-form confirmation evidence is inconclusive"
+               exact_confirmation_evidence_is_inconclusive;
+             test "the confirmation is judged at the wider alpha"
+               confirmation_is_judged_at_the_wider_alpha;
           test "an unconfirmed improvement is inconclusive and never ratchets"
-            unconfirmed_improvement_is_inconclusive_and_never_ratchets;
-          test "the queue lists sampled strongs in case order"
-            queue_lists_only_sampled_strongs_in_case_order;
-          test "decide rejects unrequested or duplicate confirmations"
-            decide_rejects_unrequested_or_duplicate_ids;
-        ];
-      group "quality degradations"
-        [
-          test "a drifting candidate trial never produces a verdict"
-            drifted_candidate_never_produces_a_verdict;
-          test "an unstable candidate blocks demonstrated directions only"
-            unstable_candidate_blocks_demonstrated_directions;
-          test "baseline instability is recomputed from stored samples"
-            baseline_instability_is_recomputed_from_stored_samples;
-          test "non-positive samples get their own reason"
-            non_positive_samples_get_their_own_reason;
-        ];
-      group "environment gate"
-        [
-          test "loaded degrades sampled relations; exact still gates"
-            loaded_gate_degrades_sampled_but_not_exact;
-          test "loaded queues no confirmations"
-            loaded_gate_queues_no_confirmations;
-          test "loaded at decide degrades pending relations"
-            loaded_gate_at_decide_degrades_pendings;
-          test "evidence-shape reasons survive a loaded gate"
-            evidence_shape_reasons_survive_a_loaded_gate;
-        ];
-      group "staleness"
-        [
-          test "a compiler mismatch short-circuits every metric"
-            stale_section_short_circuits_every_metric;
-          test "the candidate proposes a fresh section"
-            stale_candidate_proposes_a_fresh_section;
-          test "an unrecorded compiler identity is never comparable"
-            unrecorded_compiler_identity_is_never_comparable;
-        ];
-      group "exact metrics"
-        [
-          test "integers compare against the budget without confirmation"
-            exact_integer_comparison;
-          test "a change from a zero baseline exceeds any relative budget"
-            exact_zero_baseline_regresses_any_relative_budget;
-          test "a moved frozen k makes differing integers inconclusive"
-            exact_batch_drift_edge;
-          test "a recalibrated improvement stands and records the new k"
-            recalibrated_improvement_stands_and_records_new_k;
-          test "mixed exact/sampled comparisons lose exactness"
-            exactness_lost_edges;
+               unconfirmed_improvement_is_inconclusive_and_never_ratchets;
+             test "the queue lists sampled strongs in case order"
+               queue_lists_only_sampled_strongs_in_case_order;
+             test "decide rejects unrequested or duplicate confirmations"
+               decide_rejects_unrequested_or_duplicate_ids;
+           ];
+         group "quality degradations"
+           [
+             test "a drifting candidate trial never produces a verdict"
+               drifted_candidate_never_produces_a_verdict;
+             test "an unstable candidate blocks demonstrated directions only"
+               unstable_candidate_blocks_demonstrated_directions;
+             test "baseline instability is recomputed from stored samples"
+               baseline_instability_is_recomputed_from_stored_samples;
+             test "non-positive samples get their own reason"
+               non_positive_samples_get_their_own_reason;
+           ];
+         group "environment gate"
+           [
+             test "loaded degrades sampled relations; exact still gates"
+               loaded_gate_degrades_sampled_but_not_exact;
+             test "loaded queues no confirmations"
+               loaded_gate_queues_no_confirmations;
+             test "loaded at decide degrades pending relations"
+               loaded_gate_at_decide_degrades_pendings;
+             test "evidence-shape reasons survive a loaded gate"
+               evidence_shape_reasons_survive_a_loaded_gate;
+           ];
+         group "staleness"
+           [
+             test "a compiler mismatch short-circuits every metric"
+               stale_section_short_circuits_every_metric;
+             test "the candidate proposes a fresh section"
+               stale_candidate_proposes_a_fresh_section;
+             test "an unrecorded compiler identity is never comparable"
+               unrecorded_compiler_identity_is_never_comparable;
+           ];
+         group "exact metrics"
+           [
+             test "integers compare against the budget without confirmation"
+               exact_integer_comparison;
+             test "a change from a zero baseline exceeds any relative budget"
+               exact_zero_baseline_regresses_any_relative_budget;
+             test "a moved frozen k makes differing integers inconclusive"
+               exact_batch_drift_edge;
+             test "a recalibrated improvement stands and records the new k"
+               recalibrated_improvement_stands_and_records_new_k;
+             test "mixed exact/sampled comparisons lose exactness"
+               exactness_lost_edges;
           test "a zero-tolerance budget on a downgraded metric loses exactness"
-            zero_tolerance_on_downgraded_metric_is_exactness_lost;
-          test "an absolute budget gates exact evidence"
-            absolute_budget_gates_exact_evidence;
-          test "an absolute budget never gates sampled evidence"
-            absolute_budget_never_gates_sampled_evidence;
-        ];
-      group "budgets and case verdicts"
-        [
-          test "a budgeted metric missing from the trial is inconclusive"
-            missing_budgeted_metric_is_inconclusive;
-          test "unbudgeted metrics report but never gate"
-            unbudgeted_metrics_report_but_never_gate;
-          test "no cross-metric forgiveness; improvements still ratchet"
-            no_cross_metric_forgiveness;
-          test "case budgets override run budgets per metric"
-            case_budgets_override_run_budgets_per_metric;
-          test "judge validates ids, budgets, and the section's machine"
-            judge_validates_inputs;
-        ];
-      group "NEW"
-        [
-          test "a missing section proposes everything and exits 0"
-            new_section_proposes_everything;
-          test "a new metric row is proposed on compared runs"
-            new_metric_row_is_added_on_compared_runs;
-          test "proposals record gated and flagged evidence"
-            proposals_record_gated_and_flagged_evidence;
-        ];
-      group "ratchet"
-        [
+               zero_tolerance_on_downgraded_metric_is_exactness_lost;
+             test "an absolute budget gates exact evidence"
+               absolute_budget_gates_exact_evidence;
+             test "an absolute budget never gates sampled evidence"
+               absolute_budget_never_gates_sampled_evidence;
+           ];
+         group "budgets and case verdicts"
+           [
+             test "a budgeted metric missing from the trial is inconclusive"
+               missing_budgeted_metric_is_inconclusive;
+             test "unbudgeted metrics report but never gate"
+               unbudgeted_metrics_report_but_never_gate;
+             test "no cross-metric forgiveness; improvements still ratchet"
+               no_cross_metric_forgiveness;
+             test "case budgets override run budgets per metric"
+               case_budgets_override_run_budgets_per_metric;
+             test "judge validates ids, budgets, and the section's machine"
+               judge_validates_inputs;
+           ];
+         group "NEW"
+           [
+             test "a missing section proposes everything and exits 0"
+               new_section_proposes_everything;
+             test "a new metric row is proposed on compared runs"
+               new_metric_row_is_added_on_compared_runs;
+             test "proposals record gated and flagged evidence"
+               proposals_record_gated_and_flagged_evidence;
+           ];
+         group "ratchet"
+           [
           test "an equivalent run writes nothing" equivalent_run_writes_nothing;
-          test "an advance is a one-row diff" advance_is_a_one_row_diff;
+             test "an advance is a one-row diff" advance_is_a_one_row_diff;
           test "partial selections never prune" partial_selection_never_prunes;
-          test "a stale partial selection warns about dropped rows"
-            stale_partial_selection_warns_about_dropped_rows;
-          test "full selections prune dead ids with a notice"
-            full_selection_prunes_dead_ids_with_a_notice;
+             test "a stale partial selection warns about dropped rows"
+               stale_partial_selection_warns_about_dropped_rows;
+             test "full selections prune dead ids with a notice"
+               full_selection_prunes_dead_ids_with_a_notice;
           prop' "the ratchet is monotone over generated scenarios" scenario
-            monotone_ratchet;
-        ];
-      group "bless"
-        [
-          test "re-records the section wholesale, non-monotone"
-            bless_rerecords_the_section_wholesale;
-          test "adds a suite header over the empty file"
-            bless_adds_a_suite_header_over_the_empty_file;
-        ];
-      group "ownership"
-        [
-          test "pooling copies and sorts without mutating either trial"
-            pooling_copies_and_sorts_without_mutating_inputs;
-        ];
+               monotone_ratchet;
+           ];
+         group "bless"
+           [
+             test "re-records the section wholesale, non-monotone"
+               bless_rerecords_the_section_wholesale;
+             test "adds a suite header over the empty file"
+               bless_adds_a_suite_header_over_the_empty_file;
+           ];
+         group "ownership"
+           [
+             test "pooling copies and sorts without mutating either trial"
+               pooling_copies_and_sorts_without_mutating_inputs;
+           ];
       group "exit codes" [ test "the exit table incl. strict" exit_code_table ];
-      group "json"
-        [
-          test "golden document: field names, order, nullability"
-            json_golden_document;
-          test "confirmed regression document"
-            json_confirmed_regression_document;
-          test "within_budget wire relation and summary bucket"
-            json_within_budget_wire_relation;
-          test "unconfirmed strongs count in n_inconclusive"
-            json_unconfirmed_counts_inconclusive;
-          test "candidate-side reasons use the additive wire strings"
-            json_candidate_side_reason_wire_strings;
-          test "geomean is over per-case ratios" json_geomean_over_ratios;
-          test "strings are escaped" json_escapes_strings;
-          test "the machine field is the identity's key" json_machine_field;
-        ];
+         group "json"
+           [
+             test "golden document: field names, order, nullability"
+               json_golden_document;
+             test "confirmed regression document"
+               json_confirmed_regression_document;
+             test "within_budget wire relation and summary bucket"
+               json_within_budget_wire_relation;
+             test "unconfirmed strongs count in n_inconclusive"
+               json_unconfirmed_counts_inconclusive;
+             test "candidate-side reasons use the additive wire strings"
+               json_candidate_side_reason_wire_strings;
+             test "geomean is over per-case ratios" json_geomean_over_ratios;
+             test "strings are escaped" json_escapes_strings;
+             test "the machine field is the identity's key" json_machine_field;
+           ];
     ]
