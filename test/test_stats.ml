@@ -24,6 +24,14 @@ open Windtrap
 module Stats = Thumper.Private.Stats
 
 let exactly = float_exact (* order-statistic-exact quantities: bit equality *)
+
+(* A negated quantity is [-0.] whenever it is zero, and [-.0.] and [0.] are
+   one real number; [float_exact] keeps them apart only because its order has
+   to agree with its equality, so the laws that flip a sign compare with this
+   one instead. The printer is still [float_exact]'s. *)
+let exactly_negated =
+  Testable.make ~pp:(Testable.pp float_exact) ~equal:Float.equal
+
 let approximately = float_rel ~rel:1e-12 ~abs:0.0 (* libm / big quotients *)
 
 (* Golden corpus *)
@@ -148,18 +156,19 @@ let properties =
           Stats.shift ~alpha_per_side:0.005 ~baseline:a ~candidate:a
         in
         equal ~msg:"estimate" exactly 0. estimate;
-        equal ~msg:"lower is -upper" exactly (-.upper) lower;
+        equal ~msg:"lower is -upper" exactly_negated (-.upper) lower;
         is_true ~msg:"interval straddles zero" (lower <= 0. && 0. <= upper));
     prop "shift is antisymmetric under swapping the samples (m <> n)"
       (Gen.pair (farr ~min_n:3 ~max_n:12 ()) (farr ~min_n:13 ~max_n:25 ()))
       (fun (b, c) ->
         let s = Stats.shift ~alpha_per_side:0.025 ~baseline:b ~candidate:c in
         let s' = Stats.shift ~alpha_per_side:0.025 ~baseline:c ~candidate:b in
-        equal ~msg:"estimate" exactly (-.s'.Stats.estimate) s.Stats.estimate;
-        equal ~msg:"lower" exactly
+        equal ~msg:"estimate" exactly_negated (-.s'.Stats.estimate)
+          s.Stats.estimate;
+        equal ~msg:"lower" exactly_negated
           (-.s'.Stats.interval.Stats.upper)
           s.Stats.interval.Stats.lower;
-        equal ~msg:"upper" exactly
+        equal ~msg:"upper" exactly_negated
           (-.s'.Stats.interval.Stats.lower)
           s.Stats.interval.Stats.upper);
     prop "shift is translation-equivariant (log-space law, exact on grid)"
