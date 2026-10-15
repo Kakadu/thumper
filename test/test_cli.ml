@@ -649,8 +649,9 @@ let mixed_run_renders_all_four_blocks () =
       ]
   in
   print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 3 cases vs digest.thumper [testkey]
 
   alpha   2.00 us  ±0.0%      54 w   REGRESSED +100.0% [+100.0, +100.0]  budget +5%  confirmed; equivalent (alloc exact)
@@ -670,8 +671,9 @@ let pass_run_renders_header_table_summary () =
     verdict_of ~file (bcase "alpha", trial (ties 5 1e-6))
   in
   print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   equivalent
@@ -682,8 +684,9 @@ thumper: digest — 1 case vs digest.thumper [testkey]
 let new_run_renders_proposed_rows_and_the_accept_prompt () =
   let v = new_fixture () in
   print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — no baseline for machine testkey (test-host)
 
   alpha   1.00 us  ±0.0%   54 w   proposed
@@ -711,8 +714,9 @@ let loaded_run_warns_under_the_header () =
       (bcase "alpha", trial (ties 5 2e-6))
   in
   print_string (Cli.render_check (ctx ~gate:loaded ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 warning: load 7.9 on 8 cores — timing verdicts degraded
 
@@ -736,8 +740,9 @@ let loaded_new_run_warns_beside_the_prompt () =
 let improvement_only_renders_the_ratchet_prompt () =
   let v = improved_fixture () in
   print_string (Cli.render_check (ctx ~wrote:true ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   improved -50.0% [-50.0, -50.0]  confirmed
@@ -755,8 +760,9 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
     verdict_of ~file (bcase "alpha", trial (ties 5 2e-6))
   in
   print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   2.00 us  ±0.0%   54 w   inconclusive: unconfirmed; equivalent (alloc exact)
@@ -769,8 +775,9 @@ let exact_alloc_failure_names_the_alloc_side () =
      (the "REGRESSED alloc" form), integers with no interval. *)
   let v = exact_alloc_fail_fixture () in
   print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   71 w   REGRESSED alloc 54 w → 71 w (exact)
@@ -856,8 +863,9 @@ let measurement_warnings_render_after_the_table () =
   in
   let v = verdict_of ~file (bcase "alpha", warned) in
   print_string (Cli.render_check (ctx ()) v);
-  expect
-    {|
+  expect (output ())
+  @@ __POS_OF__
+       {|
 thumper: digest — 1 case vs digest.thumper [testkey]
 
   alpha   1.00 us  ±0.0%   54 w   equivalent
@@ -945,7 +953,7 @@ let usage_errors_exit_2 () =
 let list_prints_resolved_ids () =
   let code = Cli.main ~argv:[| "bench.exe"; "list" |] ~name:"digest" benches in
   equal int 0 code;
-  expect {|
+  expect (output ()) @@ __POS_OF__ {|
 alpha
 g/beta
 |}
@@ -957,7 +965,7 @@ let list_honors_the_selection () =
       ~name:"digest" benches
   in
   equal int 0 code;
-  expect {| g/beta |}
+  expect (output ()) @@ __POS_OF__ {| g/beta |}
 
 let empty_selection_exits_2 () =
   let code =
