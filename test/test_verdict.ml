@@ -1515,7 +1515,7 @@ let () =
                stale_partial_selection_warns_about_dropped_rows;
              test "full selections prune dead ids with a notice"
                full_selection_prunes_dead_ids_with_a_notice;
-          prop' "the ratchet is monotone over generated scenarios" scenario
+             prop "the ratchet is monotone over generated scenarios" scenario
                monotone_ratchet;
            ];
          group "bless"

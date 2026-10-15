@@ -1055,12 +1055,12 @@ let row_lines chunk =
 
 let properties =
   [
-    prop' "parse of a printed file re-emits it byte-identically" baseline_t
+    prop "parse of a printed file re-emits it byte-identically" baseline_t
       (fun t ->
         let s = Baseline.to_string t in
         let t' = ok_exn (Baseline.of_string s) in
         equal string s (Baseline.to_string t'));
-    prop' "print then parse preserves the observable structure" baseline_t
+    prop "print then parse preserves the observable structure" baseline_t
       (fun t ->
         let t' = ok_exn (Baseline.of_string (Baseline.to_string t)) in
         equal ~msg:"suite" (option string) (Baseline.suite t)
@@ -1088,7 +1088,7 @@ let properties =
                      Baseline.row_evidence r ))
                  (Baseline.rows s')))
           (Baseline.machines t));
-    prop' "a flipped stored-median digit is detected as Corrupt"
+    prop "a flipped stored-median digit is detected as Corrupt"
       (Gen.with_pp
          (fun ppf (id, k) -> Format.fprintf ppf "(%s, %d)" id k)
          Gen.(pair gen_id (int_range 1 10_000)))
@@ -1116,7 +1116,7 @@ let properties =
             (String.split_on_char '\n' (Baseline.to_string t))
         in
         corrupt ~mentions:"median" (String.concat "\n" munged));
-    prop' "update_rows byte-preserves untouched rows and other sections"
+    prop "update_rows byte-preserves untouched rows and other sections"
       update_case_t (fun (t, target, advance) ->
         let before = Baseline.to_string t in
         let t' =
