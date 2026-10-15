@@ -941,16 +941,17 @@ let write_preserves_target_permissions () =
 (* Generators *)
 
 let gen_segment =
-  Gen.string_size (Gen.int_range 1 5)
-    (Gen.oneofl [ 'a'; 'b'; 'z'; 'A'; '0'; '9'; '.'; '_'; '-' ])
+  Gen.string_of ~size:(Gen.int_range 1 5)
+    (Gen.of_list [ 'a'; 'b'; 'z'; 'A'; '0'; '9'; '.'; '_'; '-' ])
 
 let gen_id =
-  Gen.map (String.concat "/") (Gen.list_size (Gen.int_range 1 3) gen_segment)
+  Gen.map (String.concat "/") (Gen.list ~size:(Gen.int_range 1 3) gen_segment)
 
-let gen_metric = Gen.oneofl [ "wall_time"; "cpu_time"; "alloc_words" ]
+let gen_metric = Gen.of_list [ "wall_time"; "cpu_time"; "alloc_words" ]
 
 let gen_key =
-  Gen.string_size (Gen.int_range 1 16) (Gen.oneofl [ '0'; '1'; '9'; 'a'; 'f' ])
+  Gen.string_of ~size:(Gen.int_range 1 16)
+    (Gen.of_list [ '0'; '1'; '9'; 'a'; 'f' ])
 
 let gen_samples =
   Gen.map
@@ -958,7 +959,7 @@ let gen_samples =
       let a = Array.of_list l in
       Array.sort Float.compare a;
       a)
-    (Gen.list_size (Gen.int_range 3 12) (Gen.float_range 1e-9 1.0))
+    (Gen.list ~size:(Gen.int_range 3 12) (Gen.float_range 1e-9 1.0))
 
 let gen_row =
   let open Gen in
@@ -986,12 +987,12 @@ let dedup_rows rows =
 
 let gen_section_parts =
   let open Gen in
-  let* host = oneofl [ "mbp · Apple M1 · arm64 · macos"; "ci x86_64"; "h" ] in
-  let* ocaml_id = oneofl [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
+  let* host = of_list [ "mbp · Apple M1 · arm64 · macos"; "ci x86_64"; "h" ] in
+  let* ocaml_id = of_list [ "5.5.0 · 64-bit · release"; "5.4.0 · 32-bit" ] in
   let* annotations =
-    list_size (int_range 0 2) (oneofl [ "forced"; "note x" ])
+    list ~size:(int_range 0 2) (of_list [ "forced"; "note x" ])
   in
-  let+ rows = list_size (int_range 0 6) gen_row in
+  let+ rows = list ~size:(int_range 0 6) gen_row in
   (host, ocaml_id, annotations, dedup_rows rows)
 
 let build key (host, ocaml, annotations, rows) t =
@@ -1001,10 +1002,10 @@ let build key (host, ocaml, annotations, rows) t =
 
 let gen_baseline =
   let open Gen in
-  let* suite = oneofl [ "digest"; "suite-x"; "s" ] in
-  let* keys = list_size (int_range 0 4) gen_key in
+  let* suite = of_list [ "digest"; "suite-x"; "s" ] in
+  let* keys = list ~size:(int_range 0 4) gen_key in
   let keys = List.sort_uniq String.compare keys in
-  let+ parts = list_size (pure (List.length keys)) gen_section_parts in
+  let+ parts = list ~size:(constant (List.length keys)) gen_section_parts in
   List.fold_left2
     (fun t key p -> build key p t)
     (Baseline.empty ~suite) keys parts
@@ -1018,7 +1019,7 @@ let baseline_t =
    replaces an existing key or inserts a fresh one. *)
 let gen_update_case =
   let open Gen in
-  let* parts = list_size (pure 3) gen_section_parts in
+  let* parts = list ~size:(constant 3) gen_section_parts in
   let* fresh = gen_row in
   let+ replace = bool in
   let keys = [ "aaa1"; "bbb2"; "ccc3" ] in

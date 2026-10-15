@@ -1081,7 +1081,7 @@ let pp_scenario ppf s =
 let scenario_gen =
   let open Gen in
   let outcome =
-    oneofl
+    of_list
       [
         Improve_confirmed;
         Improve_unconfirmed;
@@ -1092,7 +1092,7 @@ let scenario_gen =
         Dead;
       ]
   in
-  let+ outcomes = list_size (int_range 1 6) outcome
+  let+ outcomes = list ~size:(int_range 1 6) outcome
   and+ full = bool
   and+ other = bool in
   {

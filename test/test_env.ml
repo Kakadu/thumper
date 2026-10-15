@@ -450,10 +450,13 @@ let () =
     [
       group "machine key"
         [
-          prop "fingerprint is 16 lowercase hex for any input" string (fun s ->
-              is_hex16 (Env.fingerprint s));
-          cases (pair string string) fingerprint_pins
-            "fingerprint pins the FNV-1a 64 recipe" (fun (input, expected) ->
+          prop "fingerprint is 16 lowercase hex for any input" Gen.string
+            (fun s -> is_true (is_hex16 (Env.fingerprint s)));
+          cases
+            ~name:(fun (input, expected) ->
+              Printf.sprintf "%S -> %S" input expected)
+            "fingerprint pins the FNV-1a 64 recipe" fingerprint_pins
+            (fun (input, expected) ->
               equal string expected (Env.fingerprint input));
           test "default key is a stable 16-hex fingerprint"
             default_key_is_a_fingerprint;
