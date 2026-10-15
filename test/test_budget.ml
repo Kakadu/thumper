@@ -51,7 +51,8 @@ let band_of b =
    point (halving is exact), so comparisons are exact. *)
 let derived_band_table =
   cases
-    (pair (float 0.) (float 0.))
+    ~name:(fun (r, e) -> Printf.sprintf "r=%g, e=%g" r e)
+    "e = min(cap, r/2)"
     [
       (0., 0.) (* degenerate: r = 0 gives e = 0 *);
       (0.02, 0.01) (* r/2 below the cap: r/2 wins *);
@@ -60,7 +61,6 @@ let derived_band_table =
       (0.06, 0.025) (* r/2 above the cap: the cap wins *);
       (0.5, 0.025);
     ]
-    "e = min(cap, r/2)"
     (fun (r, expected) ->
       equal float_exact expected
         (band_of

@@ -176,7 +176,8 @@ let () =
            [
              test "samples rejects n < 3 with the setter and value"
                samples_rejects_below_3;
-          cases int [ 2; 1; 0; -1 ] "samples rejects n < 3" (fun n ->
+             cases ~name:string_of_int "samples rejects n < 3" [ 2; 1; 0; -1 ]
+               (fun n ->
                  raises_match invalid_argument (fun () ->
                      Config.(default |> samples n)));
              test "batch_floor rejects a zero floor"

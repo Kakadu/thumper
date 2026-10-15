@@ -58,7 +58,8 @@ let metric = Testable.contramap Metric.id string
 (* Ids: slugging and validation *)
 
 let slug_table =
-  cases (pair string string)
+  cases ~name:(fun (name, expected) -> Printf.sprintf "%S -> %S" name expected)
+    "id = slug(name)"
     [
       ("string-64", "string-64") (* valid names are ids verbatim *);
       ("MiB", "MiB") (* case is preserved, not folded *);
@@ -69,7 +70,6 @@ let slug_table =
       ("a/b", "a-b") (* '/' is not an id character: no accidental nesting *);
       ("-pre set", "-pre-set") (* literal edge hyphens are kept *);
     ]
-    "id = slug(name)"
     (fun (name, expected) ->
       equal string expected (Bench.id (the_case [ Bench.bench name noop ])))
 

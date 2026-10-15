@@ -194,8 +194,9 @@ let table_grid =
 
 let relation_grid =
   cases
-    (triple (float 0.) (float 0.) string)
-    table_grid "relation table cell"
+    ~name:(fun (cand, r, expected) ->
+      Printf.sprintf "cand=%g, r=%g, expect %s" cand r expected)
+    "relation table cell" table_grid
     (fun (cand, r, expected) -> equal string expected (point_verdict ~r cand))
 
 let spread = [| 0.5; 0.5; 0.5; 2.0; 2.0 |]

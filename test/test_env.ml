@@ -462,7 +462,7 @@ let () =
           test "THUMPER_MACHINE rejects the empty string" override_rejects_empty;
           test "THUMPER_MACHINE rejects charset violations with the value"
             override_rejects_bad_charset;
-          cases string override_charset_table
+          cases ~name:(fun key -> Printf.sprintf "%S" key)
             "THUMPER_MACHINE rejects characters outside [A-Za-z0-9._-]"
             (fun key ->
               Unix.putenv "THUMPER_MACHINE" key;
@@ -480,13 +480,17 @@ let () =
       group "gate"
         [
           cases
-            (triple (option (float 0.)) int gate_t)
-            gate_table "classify trips at load / cores >= 1/2"
+            ~name:(fun (load, cores, expected) ->
+              Format.asprintf "%s/%d -> %a"
+                (match load with None -> "none" | Some l -> Printf.sprintf "%g" l)
+                cores pp_gate expected)
+            "classify trips at load / cores >= 1/2" gate_table
             (fun (load, cores, expected) ->
               equal gate_t expected (Env.classify ~load ~cores));
           test "classify rejects cores < 1 with the value"
             classify_rejects_no_cores;
-          cases int [ 0; -1; -8 ] "classify rejects cores < 1" (fun cores ->
+          cases ~name:string_of_int "classify rejects cores < 1" [ 0; -1; -8 ]
+            (fun cores ->
               raises_match invalid_argument (fun () ->
                   Env.classify ~load:None ~cores));
           test "cores is at least one" cores_is_at_least_one;
@@ -508,14 +512,17 @@ let () =
             wait_quiet_times_out_while_loaded;
           test "rejects a negative timeout with the value"
             wait_quiet_rejects_negative_timeout;
-          cases (float 0.) [ -1.; -0.001; nan ]
-            "rejects non-finite or negative timeouts" (fun timeout_s ->
+          cases ~name:(fun f -> Printf.sprintf "%g" f)
+            "rejects non-finite or negative timeouts" [ -1.; -0.001; nan ]
+            (fun timeout_s ->
               raises_match invalid_argument (fun () ->
                   Env.wait_quiet ~timeout_s ()));
           test "rejects a zero poll interval with the value"
             wait_quiet_rejects_bad_poll;
-          cases (float 0.) [ 0.; -0.5; nan; infinity ]
-            "rejects non-positive or non-finite poll intervals" (fun poll_s ->
+          cases ~name:(fun f -> Printf.sprintf "%g" f)
+            "rejects non-positive or non-finite poll intervals"
+            [ 0.; -0.5; nan; infinity ]
+            (fun poll_s ->
               raises_match invalid_argument (fun () ->
                   Env.wait_quiet ~timeout_s:0. ~poll_s
                     ~gate:(fun () -> Env.Quiet)
