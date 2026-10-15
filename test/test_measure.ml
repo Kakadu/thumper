@@ -158,7 +158,7 @@ let frozen_k_tests =
 let frozen_k_zero_is_programmer_error () =
   let w = world () in
   let case = bench_stepping w (constant_ns ms_ns) in
-  raises_invalid_arg "Measure.case: frozen_k must be >= 1" (fun () ->
+  raises (Invalid_argument "Measure.case: frozen_k must be >= 1") (fun () ->
       measure ~frozen_k:(Some 0) ~config:wall_only w case)
 
 (* Warmup: max of the timed arm and the 3-batch arm *)

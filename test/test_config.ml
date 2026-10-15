@@ -103,32 +103,36 @@ let setters_chain_in_pipelines () =
    tables assert the exception class. *)
 
 let samples_rejects_below_3 () =
-  raises_invalid_arg "Thumper.Config.samples: 2 (need at least 3 batches)"
+  raises
+    (Invalid_argument "Thumper.Config.samples: 2 (need at least 3 batches)")
     (fun () -> Config.(default |> samples 2))
 
 let batch_floor_rejects_nonpositive () =
-  raises_invalid_arg
-    "Thumper.Config.batch_floor: 0 (need a finite positive duration in seconds)"
-    (fun () -> Config.(default |> batch_floor 0.))
+  raises
+    (Invalid_argument
+       "Thumper.Config.batch_floor: 0 (need a finite positive duration in \
+        seconds)") (fun () -> Config.(default |> batch_floor 0.))
 
 let warmup_rejects_negative () =
-  raises_invalid_arg
-    "Thumper.Config.warmup: -0.1 (need a finite non-negative duration in \
-     seconds)" (fun () -> Config.(default |> warmup (-0.1)))
+  raises
+    (Invalid_argument
+       "Thumper.Config.warmup: -0.1 (need a finite non-negative duration in \
+        seconds)") (fun () -> Config.(default |> warmup (-0.1)))
 
 let deadline_rejects_nonpositive () =
-  raises_invalid_arg
-    "Thumper.Config.deadline: -5 (need a positive duration in seconds)"
+  raises
+    (Invalid_argument
+       "Thumper.Config.deadline: -5 (need a positive duration in seconds)")
     (fun () -> Config.(default |> deadline (-5.)))
 
 let metrics_rejects_empty () =
-  raises_invalid_arg "Thumper.Config.metrics: empty metric list" (fun () ->
-      Config.(default |> metrics []))
+  raises (Invalid_argument "Thumper.Config.metrics: empty metric list")
+    (fun () -> Config.(default |> metrics []))
 
 let metrics_rejects_duplicates () =
   (* Duplicate identity is the id, and detection is order-free: the pair need
      not be adjacent. *)
-  raises_invalid_arg "Thumper.Config.metrics: duplicate metric wall_time"
+  raises (Invalid_argument "Thumper.Config.metrics: duplicate metric wall_time")
     (fun () ->
       Config.(default |> metrics Metric.[ wall_time; cpu_time; wall_time ]))
 

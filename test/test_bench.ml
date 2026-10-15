@@ -90,32 +90,33 @@ let rejects_invalid_explicit_id () =
        (groups join segments with '/')"
       id
   in
-  raises_invalid_arg ~msg:"space" (msg "a b") (fun () ->
+  raises ~msg:"space" (Invalid_argument (msg "a b")) (fun () ->
       Bench.bench ~id:"a b" "n" noop);
-  raises_invalid_arg ~msg:"empty" (msg "") (fun () ->
+  raises ~msg:"empty" (Invalid_argument (msg "")) (fun () ->
       Bench.bench ~id:"" "n" noop);
-  raises_invalid_arg ~msg:"slash: an id is one segment" (msg "sha/x") (fun () ->
+  raises ~msg:"slash: an id is one segment" (Invalid_argument (msg "sha/x")) (fun () ->
       Bench.bench ~id:"sha/x" "n" noop)
 
 let rejects_empty_name () =
-  raises_invalid_arg ~msg:"without ~id" "Thumper.bench: empty name" (fun () ->
+  raises ~msg:"without ~id" (Invalid_argument "Thumper.bench: empty name") (fun () ->
       Bench.bench "" noop);
   (* The display name always renders in reports: an explicit ~id does not
      make an empty name acceptable. *)
-  raises_invalid_arg ~msg:"an explicit ~id does not rescue it"
-    "Thumper.bench: empty name" (fun () -> Bench.bench ~id:"ok" "" noop)
+  raises ~msg:"an explicit ~id does not rescue it"
+    (Invalid_argument "Thumper.bench: empty name") (fun () -> Bench.bench ~id:"ok" "" noop)
 
 let rejects_unsluggable_name () =
-  raises_invalid_arg
-    "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug into \
-     an id; pass ~id" (fun () -> Bench.bench "!!!" noop)
+  raises
+    
+    (Invalid_argument "Thumper.bench: name \"!!!\" has no [A-Za-z0-9._-] characters to slug into \
+     an id; pass ~id") (fun () -> Bench.bench "!!!" noop)
 
 let each_constructor_validates () =
   (* The error names the constructor the author called. *)
-  raises_invalid_arg ~msg:"group" "Thumper.group: empty name" (fun () ->
+  raises ~msg:"group" (Invalid_argument "Thumper.group: empty name") (fun () ->
       Bench.group "" []);
-  raises_invalid_arg ~msg:"bench_with_setup"
-    "Thumper.bench_with_setup: empty name" (fun () ->
+  raises ~msg:"bench_with_setup"
+    (Invalid_argument "Thumper.bench_with_setup: empty name") (fun () ->
       Bench.bench_with_setup ~setup:(fun () -> ()) "" (fun () -> ()))
 
 (* Paths and grouping *)
@@ -302,14 +303,15 @@ let empty_budget_lists_alone_observe_none () =
 let rejects_two_budgets_for_one_metric_in_one_list () =
   (* Within a single list there is no scope distance to break the tie:
      ambiguous author intent, rejected at construction. *)
-  raises_invalid_arg
-    "Thumper.bench: two budgets for metric wall_time in one ~budgets list"
+  raises
+    
+    (Invalid_argument "Thumper.bench: two budgets for metric wall_time in one ~budgets list")
     (fun () ->
       Bench.bench
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         "x" noop);
-  raises_invalid_arg ~msg:"via different constructors"
-    "Thumper.bench: two budgets for metric alloc_words in one ~budgets list"
+  raises ~msg:"via different constructors"
+    (Invalid_argument "Thumper.bench: two budgets for metric alloc_words in one ~budgets list")
     (fun () ->
       Bench.bench
         ~budgets:
@@ -318,19 +320,19 @@ let rejects_two_budgets_for_one_metric_in_one_list () =
             Budget.at_most ~metric:Metric.alloc_words 4096.;
           ]
         "x" noop);
-  raises_invalid_arg ~msg:"on a group"
-    "Thumper.group: two budgets for metric alloc_words in one ~budgets list"
+  raises ~msg:"on a group"
+    (Invalid_argument "Thumper.group: two budgets for metric alloc_words in one ~budgets list")
     (fun () ->
       Bench.group
         ~budgets:[ Budget.no_more_alloc_than 0.; Budget.no_more_alloc_than 0.1 ]
         "g" [])
 
 let rejects_bad_metrics_lists () =
-  raises_invalid_arg ~msg:"empty"
-    "Thumper.bench: empty ~metrics list (omit it to inherit)" (fun () ->
+  raises ~msg:"empty"
+    (Invalid_argument "Thumper.bench: empty ~metrics list (omit it to inherit)") (fun () ->
       Bench.bench ~metrics:[] "x" noop);
-  raises_invalid_arg ~msg:"duplicate"
-    "Thumper.bench: duplicate metric wall_time in ~metrics" (fun () ->
+  raises ~msg:"duplicate"
+    (Invalid_argument "Thumper.bench: duplicate metric wall_time in ~metrics") (fun () ->
       Bench.bench ~metrics:[ Metric.wall_time; Metric.wall_time ] "x" noop)
 
 (* Duplicate ids *)

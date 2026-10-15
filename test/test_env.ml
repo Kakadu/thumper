@@ -105,14 +105,16 @@ let override_is_used_verbatim () =
 
 let override_rejects_empty () =
   Unix.putenv "THUMPER_MACHINE" "";
-  raises_invalid_arg
-    "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])"
+  raises
+    
+    (Invalid_argument "THUMPER_MACHINE: \"\" (need a non-empty key over [A-Za-z0-9._-])")
     (fun () -> Env.machine_key ())
 
 let override_rejects_bad_charset () =
   Unix.putenv "THUMPER_MACHINE" "bad key!";
-  raises_invalid_arg
-    "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over [A-Za-z0-9._-])"
+  raises
+    
+    (Invalid_argument "THUMPER_MACHINE: \"bad key!\" (need a non-empty key over [A-Za-z0-9._-])")
     (fun () -> Env.machine_key ())
 
 (* The charset is what keeps the baseline header grammar escape-free: colons,
@@ -187,7 +189,7 @@ let gate_table =
   ]
 
 let classify_rejects_no_cores () =
-  raises_invalid_arg "Thumper.Env.classify: 0 cores (need at least 1)"
+  raises (Invalid_argument "Thumper.Env.classify: 0 cores (need at least 1)")
     (fun () -> Env.classify ~load:(Some 1.0) ~cores:0)
 
 let cores_is_at_least_one () = is_true (Env.cores () >= 1)
@@ -264,14 +266,16 @@ let wait_quiet_times_out_while_loaded () =
   is_true ~msg:"kept polling until the deadline" (!count >= 2)
 
 let wait_quiet_rejects_negative_timeout () =
-  raises_invalid_arg
-    "Thumper.Env.wait_quiet: timeout_s -1 (need a non-negative timeout in \
-     seconds)" (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
+  raises
+    
+    (Invalid_argument "Thumper.Env.wait_quiet: timeout_s -1 (need a non-negative timeout in \
+     seconds)") (fun () -> Env.wait_quiet ~timeout_s:(-1.) ())
 
 let wait_quiet_rejects_bad_poll () =
-  raises_invalid_arg
-    "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval in \
-     seconds)" (fun () ->
+  raises
+    
+    (Invalid_argument "Thumper.Env.wait_quiet: poll_s 0 (need a positive finite poll interval in \
+     seconds)") (fun () ->
       Env.wait_quiet ~timeout_s:0. ~poll_s:0. ~gate:(fun () -> Env.Quiet) ())
 
 (* The measurement lease, single-process surface. *)
@@ -345,7 +349,7 @@ let lease_releases_on_return () =
 
 let lease_releases_on_exception () =
   let dir = fresh_dir () in
-  raises_failure "boom" (fun () ->
+  raises (Failure "boom") (fun () ->
       Env.Lease.with_lease ~dir (fun () -> failwith "boom"));
   expect_ok (Env.Lease.with_lease ~dir (fun () -> ()))
 
@@ -426,9 +430,10 @@ let explicit_dir_wins_over_the_env () =
     (Sys.file_exists (lock_path env_dir))
 
 let with_lease_rejects_negative_wait () =
-  raises_invalid_arg
-    "Thumper.Env.Lease.with_lease: wait_s -1 (need a non-negative wait in \
-     seconds)" (fun () ->
+  raises
+    
+    (Invalid_argument "Thumper.Env.Lease.with_lease: wait_s -1 (need a non-negative wait in \
+     seconds)") (fun () ->
       Env.Lease.with_lease ~dir:(fresh_dir ()) ~wait_s:(-1.) (fun () -> ()))
 
 let pp_error_pins () =

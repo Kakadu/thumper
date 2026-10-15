@@ -564,9 +564,10 @@ let wrong_suite_raises_before_measuring () =
      derives this machine's section from the file by key.) *)
   let w = world () in
   let baseline = baseline_of [ wall_row "a" (ties 1.0e-3) ] in
-  raises_invalid_arg
-    "Check.run: baseline is for suite \"digest\", not \"other\"; pass this \
-     suite's file, or update its '# suite:' header if the suite was renamed"
+  raises
+    
+    (Invalid_argument "Check.run: baseline is for suite \"digest\", not \"other\"; pass this \
+     suite's file, or update its '# suite:' header if the suite was renamed")
     (fun () ->
       Check.run_with ~instruments:(scripted w) ~gate:quiet ~config:base
         ~baseline ~name:"other"

@@ -912,7 +912,8 @@ let rejects_a_bad_suite_name () =
     (fun () -> Cli.main ~argv:[| "bench.exe"; "list" |] ~name:"" benches)
 
 let rejects_duplicate_suite_budgets () =
-  raises_invalid_arg "Thumper.run: two budgets for metric wall_time" (fun () ->
+  raises (Invalid_argument "Thumper.run: two budgets for metric wall_time")
+    (fun () ->
       Cli.main
         ~budgets:[ Budget.no_slower_than 0.05; Budget.no_slower_than 0.1 ]
         ~argv:[| "bench.exe"; "list" |] ~name:"digest" benches)
