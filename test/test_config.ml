@@ -149,7 +149,8 @@ let () =
            [
              test "default pins the protocol constants" default_pins_u2;
              test "quick is default with 11 batches" quick_is_default_with_11;
-          test "precise is default with 40 batches" precise_is_default_with_40;
+             test "precise is default with 40 batches"
+               precise_is_default_with_40;
            ];
          group "setters"
            [
@@ -182,19 +183,28 @@ let () =
                      Config.(default |> samples n)));
              test "batch_floor rejects a zero floor"
                batch_floor_rejects_nonpositive;
-          cases (float 0.) [ 0.; -1e-3; nan; infinity; neg_infinity ]
-            "batch_floor rejects non-finite or non-positive" (fun s ->
+             cases
+               ~name:(fun f -> Printf.sprintf "%g" f)
+               "batch_floor rejects non-finite or non-positive"
+               [ 0.; -1e-3; nan; infinity; neg_infinity ]
+               (fun s ->
                  raises_match invalid_argument (fun () ->
                      Config.(default |> batch_floor s)));
              test "warmup rejects a negative duration" warmup_rejects_negative;
-          cases (float 0.) [ -1e-9; -1.; nan; infinity; neg_infinity ]
-            "warmup rejects non-finite or negative" (fun s ->
+             cases
+               ~name:(fun f -> Printf.sprintf "%g" f)
+               "warmup rejects non-finite or negative"
+               [ -1e-9; -1.; nan; infinity; neg_infinity ]
+               (fun s ->
                  raises_match invalid_argument (fun () ->
                      Config.(default |> warmup s)));
              test "deadline rejects a non-positive cap"
                deadline_rejects_nonpositive;
-          cases (float 0.) [ 0.; -5.; nan; neg_infinity ]
-            "deadline rejects non-positive or NaN" (fun s ->
+             cases
+               ~name:(fun f -> Printf.sprintf "%g" f)
+               "deadline rejects non-positive or NaN"
+               [ 0.; -5.; nan; neg_infinity ]
+               (fun s ->
                  raises_match invalid_argument (fun () ->
                      Config.(default |> deadline s)));
              test "metrics rejects an empty list" metrics_rejects_empty;
@@ -203,4 +213,4 @@ let () =
              test "metrics accepts any duplicate-free list"
                metrics_accepts_distinct_lists;
            ];
-    ]
+       ])

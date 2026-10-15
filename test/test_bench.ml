@@ -642,4 +642,4 @@ let () =
           test "each prepare is independent" prepare_twice_is_independent;
           test "black_box is the identity" black_box_is_the_identity;
         ];
-    ]
+    ])

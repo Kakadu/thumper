@@ -739,4 +739,4 @@ let () =
           test "measure on the real clock" live_measure_smoke;
           test "run without a section is NEW on any host" live_run_smoke;
         ];
-    ]
+    ])

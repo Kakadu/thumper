@@ -198,8 +198,7 @@ let exact_alloc_fail_fixture () =
   let case =
     bcase_budgeted ~budgets:[ Budget.no_more_alloc_than 0.0 ] "alpha"
   in
-  verdict_of ~file
-    (case, trial ~alloc:(Some 71) (ties 5 1e-6))
+  verdict_of ~file (case, trial ~alloc:(Some 71) (ties 5 1e-6))
 
 (* A protocol small enough for in-process end-to-end runs through [main]:
    3 batches at a 0.1 ms floor with a token warmup — per case, milliseconds.
@@ -562,8 +561,7 @@ let rerun_hint_reproduces_the_invocation () =
       v
   in
   assert_contains out
-    "rerun:   'my dir/bench.exe' --baseline alt/base.thumper --tag lab -f \
-     alpha"
+    "rerun:   'my dir/bench.exe' --baseline alt/base.thumper --tag lab -f alpha"
 
 (* The default baseline path
 
@@ -667,9 +665,7 @@ thumper: digest — 3 cases vs digest.thumper [testkey]
 let pass_run_renders_header_table_summary () =
   (* The report always prints — the silence-on-pass era is over. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v =
-    verdict_of ~file (bcase "alpha", trial (ties 5 1e-6))
-  in
+  let v = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
   print_string (Cli.render_check (ctx ()) v);
   expect (output ())
   @@ __POS_OF__
@@ -709,10 +705,7 @@ let loaded_run_warns_under_the_header () =
      the exact alloc verdict stays visible. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
   let loaded = Env.Loaded { load = 7.9; cores = 8 } in
-  let v =
-    verdict_of ~gate:loaded ~file
-      (bcase "alpha", trial (ties 5 2e-6))
-  in
+  let v = verdict_of ~gate:loaded ~file (bcase "alpha", trial (ties 5 2e-6)) in
   print_string (Cli.render_check (ctx ~gate:loaded ()) v);
   expect (output ())
   @@ __POS_OF__
@@ -756,9 +749,7 @@ let unconfirmed_inconclusive_names_the_reason_in_the_cell () =
   (* The provisional regression is never confirmed: decide folds an empty
      confirmation list in, and the cell names the reason — there is no -v. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let v =
-    verdict_of ~file (bcase "alpha", trial (ties 5 2e-6))
-  in
+  let v = verdict_of ~file (bcase "alpha", trial (ties 5 2e-6)) in
   print_string (Cli.render_check (ctx ()) v);
   expect (output ())
   @@ __POS_OF__
@@ -905,9 +896,7 @@ let color_uses_ansi_only_when_enabled () =
   assert_contains ~msg:"red summary line" colored "\027[31m1 case:";
   (* The cell styles: equivalent is faint. *)
   let file = file_of [ wall_row "alpha" (ties 5 1e-6); alloc_row "alpha" 54 ] in
-  let pass =
-    verdict_of ~file (bcase "alpha", trial (ties 5 1e-6))
-  in
+  let pass = verdict_of ~file (bcase "alpha", trial (ties 5 1e-6)) in
   assert_contains ~msg:"faint equivalent cell when on"
     (Cli.render_check (ctx ~color:true ()) pass)
     "\027[2mequivalent\027[0m"
@@ -1151,6 +1140,7 @@ let default_path_lands_next_to_the_source () =
       let src_dir =
         Filename.concat (String.sub start_cwd 0 i) "test/cram/fixture"
       in
+      (* Note(Kakadu): I think next test will fail in case of vendoring *)
       is_true ~msg:"derived the fixture's real source directory"
         (Sys.file_exists (Filename.concat src_dir "bench_fixture.ml"));
       is_true ~msg:"no stray baseline in the fixture source directory"

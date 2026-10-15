@@ -73,8 +73,8 @@ let empty_file = Result.get_ok (Baseline.of_string "")
 
 let judge ?(gate = Env.Quiet) ?(selection = `Full) ?(budgets = [])
     ?(file = empty_file) cases =
-  Verdict.judge ~identity:ident ~suite:"digest" ~gate ~selection ~budgets
-    ~file ~cases
+  Verdict.judge ~identity:ident ~suite:"digest" ~gate ~selection ~budgets ~file
+    ~cases
 
 (* Judge, confirm via [confirm : id -> Trial.t option], decide. *)
 let run_check ?gate ?selection ?budgets ?file ?(decide_gate = Env.Quiet)
@@ -304,8 +304,7 @@ let confirmation_is_judged_at_the_wider_alpha () =
      L > r = 0.05 — judged at the initial α this would decide
      inconclusive (unconfirmed). *)
   let file =
-    (fun f -> f)
-      (file_of [ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ])
+    (fun f -> f) (file_of [ wall_row "a" [| 0.9; 0.95; 1.0; 1.05; 1.1 |] ])
   in
   let t =
     run_check ~file
@@ -411,9 +410,7 @@ let non_positive_samples_get_their_own_reason () =
           ~samples:[| 0.0; 1.0; 2.0 |];
       ]
   in
-  let t =
-    run_check ~file:zero_file [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
+  let t = run_check ~file:zero_file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
   check_rel ~msg:"stored zeros" t ~case:"a" ~metric:m_wall
     "inconclusive:non_positive";
   is_true ~msg:"wire spelling"
@@ -438,8 +435,7 @@ let loaded = Env.Loaded { load = 7.9; cores = 8 }
 
 let loaded_gate_degrades_sampled_but_not_exact () =
   let file =
-    (fun f -> f)
-      (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
+    (fun f -> f) (file_of [ wall_row "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let t =
     run_check ~gate:loaded
@@ -462,9 +458,7 @@ let loaded_gate_degrades_sampled_but_not_exact () =
 
 let loaded_gate_queues_no_confirmations () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let p =
-    judge ~gate:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ]
-  in
+  let p = judge ~gate:loaded ~file [ (bcase "a", wall_trial (ties 5 2.0)) ] in
   equal (list string) [] (Verdict.confirmations p)
 
 let loaded_gate_at_decide_degrades_pendings () =
@@ -528,9 +522,7 @@ let stale_section_short_circuits_every_metric () =
 
 let stale_candidate_proposes_a_fresh_section () =
   let file = stale_file () in
-  let t =
-    run_check ~file [ (bcase "a", stale_trial ()) ]
-  in
+  let t = run_check ~file [ (bcase "a", stale_trial ()) ] in
   match Verdict.candidate t with
   | None -> failf "expected a fresh-section candidate"
   | Some result ->
@@ -551,7 +543,8 @@ let unrecorded_compiler_identity_is_never_comparable () =
      from a programmatically built section — and is stale against any
      current identity, even an (equally pathological) empty one. *)
   let file =
-    Baseline.set_section (Baseline.empty ~suite:"digest")
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
       { ident with Baseline.ocaml = "" }
       [ wall_row "a" (ties 5 1.0) ]
   in
@@ -614,8 +607,7 @@ let exact_batch_drift_edge () =
   (* An exact row whose case's frozen k moved compares as inconclusive
      when the values differ, and as equivalent when they agree. *)
   let file =
-    (fun f -> f)
-      (file_of [ wall_row ~k:8 "a" (ties 5 1.0); alloc_row "a" 54 ])
+    (fun f -> f) (file_of [ wall_row ~k:8 "a" (ties 5 1.0); alloc_row "a" 54 ])
   in
   let run_at ~k cand =
     run_check ~file
@@ -947,10 +939,7 @@ let proposals_record_gated_and_flagged_evidence () =
 
 let equivalent_run_writes_nothing () =
   let file = file_of [ wall_row "a" (ties 5 1.0) ] in
-  let t =
-    run_check ~file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
-  in
+  let t = run_check ~file [ (bcase "a", wall_trial (ties 5 1.0)) ] in
   is_none (Verdict.candidate t)
 
 let advance_is_a_one_row_diff () =
@@ -999,7 +988,8 @@ let stale_partial_selection_warns_about_dropped_rows () =
      bless gives its partial re-record. A full-selection stale run drops
      nothing it did not judge and warns about nothing. *)
   let stale_file =
-    Baseline.set_section (Baseline.empty ~suite:"digest")
+    Baseline.set_section
+      (Baseline.empty ~suite:"digest")
       { ident with Baseline.ocaml = "0.0.0" }
       [ wall_row "a" (ties 5 1.0); wall_row "b" (ties 5 1.0) ]
   in
@@ -1032,8 +1022,7 @@ let full_selection_prunes_dead_ids_with_a_notice () =
     file_of [ wall_row "a" (ties 5 1.0); wall_row "dead" (ties 5 1.0) ]
   in
   let t =
-    run_check ~selection:`Full ~file
-      [ (bcase "a", wall_trial (ties 5 1.0)) ]
+    run_check ~selection:`Full ~file [ (bcase "a", wall_trial (ties 5 1.0)) ]
   in
   (match Verdict.warnings t with
   | [ w ] -> is_true ~msg:"notice names the id" (contains ~sub:"dead" w)
@@ -1422,7 +1411,8 @@ let () =
                exact_confirmation_evidence_is_inconclusive;
              test "the confirmation is judged at the wider alpha"
                confirmation_is_judged_at_the_wider_alpha;
-          test "an unconfirmed improvement is inconclusive and never ratchets"
+             test
+               "an unconfirmed improvement is inconclusive and never ratchets"
                unconfirmed_improvement_is_inconclusive_and_never_ratchets;
              test "the queue lists sampled strongs in case order"
                queue_lists_only_sampled_strongs_in_case_order;
@@ -1472,7 +1462,8 @@ let () =
                recalibrated_improvement_stands_and_records_new_k;
              test "mixed exact/sampled comparisons lose exactness"
                exactness_lost_edges;
-          test "a zero-tolerance budget on a downgraded metric loses exactness"
+             test
+               "a zero-tolerance budget on a downgraded metric loses exactness"
                zero_tolerance_on_downgraded_metric_is_exactness_lost;
              test "an absolute budget gates exact evidence"
                absolute_budget_gates_exact_evidence;
@@ -1503,9 +1494,11 @@ let () =
            ];
          group "ratchet"
            [
-          test "an equivalent run writes nothing" equivalent_run_writes_nothing;
+             test "an equivalent run writes nothing"
+               equivalent_run_writes_nothing;
              test "an advance is a one-row diff" advance_is_a_one_row_diff;
-          test "partial selections never prune" partial_selection_never_prunes;
+             test "partial selections never prune"
+               partial_selection_never_prunes;
              test "a stale partial selection warns about dropped rows"
                stale_partial_selection_warns_about_dropped_rows;
              test "full selections prune dead ids with a notice"
@@ -1525,7 +1518,8 @@ let () =
              test "pooling copies and sorts without mutating either trial"
                pooling_copies_and_sorts_without_mutating_inputs;
            ];
-      group "exit codes" [ test "the exit table incl. strict" exit_code_table ];
+         group "exit codes"
+           [ test "the exit table incl. strict" exit_code_table ];
          group "json"
            [
              test "golden document: field names, order, nullability"
@@ -1542,4 +1536,4 @@ let () =
              test "strings are escaped" json_escapes_strings;
              test "the machine field is the identity's key" json_machine_field;
            ];
-    ]
+       ])

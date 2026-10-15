@@ -467,6 +467,7 @@ let () =
             override_rejects_bad_charset;
           cases ~name:(fun key -> Printf.sprintf "%S" key)
             "THUMPER_MACHINE rejects characters outside [A-Za-z0-9._-]"
+            override_charset_table
             (fun key ->
               Unix.putenv "THUMPER_MACHINE" key;
               raises_match invalid_argument (fun () -> Env.machine_key ()));
@@ -561,4 +562,4 @@ let () =
             with_lease_rejects_negative_wait;
           test "pp_error renders both cases" pp_error_pins;
         ];
-    ]
+    ])
