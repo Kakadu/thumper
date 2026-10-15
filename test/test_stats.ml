@@ -23,7 +23,7 @@
 open Windtrap
 module Stats = Thumper.Private.Stats
 
-let exactly = float 0.0 (* order-statistic-exact quantities: bit equality *)
+let exactly = float_exact (* order-statistic-exact quantities: bit equality *)
 let approximately = float_rel ~rel:1e-12 ~abs:0.0 (* libm / big quotients *)
 
 (* Golden corpus *)

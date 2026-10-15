@@ -122,17 +122,17 @@ let builtin_sources () =
 
 let alloc_words_projection () =
   (* minor + major - promoted: promoted words are counted by both counters. *)
-  equal (float 0.) 1100. (project Metric.alloc_words)
+  equal float_exact 1100. (project Metric.alloc_words)
 
 let counter_projections () =
-  equal ~msg:"minor_alloc_words" (float 0.) 1000.
+  equal ~msg:"minor_alloc_words" float_exact 1000.
     (project Metric.minor_alloc_words);
-  equal ~msg:"major_alloc_words" (float 0.) 300.
+  equal ~msg:"major_alloc_words" float_exact 300.
     (project Metric.major_alloc_words);
-  equal ~msg:"promoted_words" (float 0.) 200. (project Metric.promoted_words);
-  equal ~msg:"minor_collections" (float 0.) 7.
+  equal ~msg:"promoted_words" float_exact 200. (project Metric.promoted_words);
+  equal ~msg:"minor_collections" float_exact 7.
     (project Metric.minor_collections);
-  equal ~msg:"major_collections" (float 0.) 3.
+  equal ~msg:"major_collections" float_exact 3.
     (project Metric.major_collections)
 
 let exact_capable_classification () =

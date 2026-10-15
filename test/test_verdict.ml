@@ -244,9 +244,8 @@ let confirmed_regression_carries_evidence () =
         (Float.abs (first.Verdict.estimate -. 1.0) < 1e-9);
       is_true ~msg:"confirmation delta ~ +1.0"
         (Float.abs (confirmation.Verdict.estimate -. 1.0) < 1e-9);
-      equal ~msg:"pooled has both passes"
-        (array (float 0.))
-        (ties 10 2.0) pooled;
+      equal ~msg:"pooled has both passes" (array float_exact) (ties 10 2.0)
+        pooled;
       equal ~msg:"k is the confirmation's" int 8 k
   | v -> failf "expected a confirmed regression, got %s" (rel_name v));
   check_overall ~msg:"confirmed regression fails" t `Fail;
@@ -660,9 +659,8 @@ let recalibrated_improvement_stands_and_records_new_k () =
       with
       | Baseline.Sampled { k; samples } ->
           equal ~msg:"new frozen k" int 16 k;
-          equal ~msg:"pooled 2n samples"
-            (array (float 0.))
-            (ties 10 0.5) samples
+          equal ~msg:"pooled 2n samples" (array float_exact) (ties 10 0.5)
+            samples
       | Baseline.Exact_int _ -> failf "expected a sampled row")
 
 let exactness_lost_edges () =
@@ -819,7 +817,7 @@ let no_cross_metric_forgiveness () =
              (Baseline.find_row (section_of result) ~id:"a" ~metric:"wall_time"))
       with
       | Baseline.Sampled { samples; _ } ->
-          equal ~msg:"wall row pooled" (array (float 0.)) (ties 10 0.5) samples
+          equal ~msg:"wall row pooled" (array float_exact) (ties 10 0.5) samples
       | Baseline.Exact_int _ -> failf "expected a sampled row")
 
 let case_budgets_override_run_budgets_per_metric () =
@@ -1238,8 +1236,7 @@ let pooling_copies_and_sorts_without_mutating_inputs () =
   in
   (match verdict_of t ~case:"a" ~metric:m_wall with
   | Judged (Improved (Confirmed { pooled; _ })) ->
-      equal ~msg:"pooled is the sorted union"
-        (array (float 0.))
+      equal ~msg:"pooled is the sorted union" (array float_exact)
         [| 0.4; 0.42; 0.45; 0.47; 0.5; 0.52; 0.55; 0.57; 0.6; 0.62 |]
         pooled
   | v -> failf "expected a confirmed improvement, got %s" (rel_name v));
@@ -1248,16 +1245,13 @@ let pooling_copies_and_sorts_without_mutating_inputs () =
     | Some (Run.Samples s) -> s.Run.sorted
     | _ -> assert false
   in
-  equal ~msg:"first trial's evidence unmutated"
-    (array (float 0.))
-    first (interior first_trial);
-  equal ~msg:"confirmation trial's evidence unmutated"
-    (array (float 0.))
-    conf (interior conf_trial);
+  equal ~msg:"first trial's evidence unmutated" (array float_exact) first
+    (interior first_trial);
+  equal ~msg:"confirmation trial's evidence unmutated" (array float_exact) conf
+    (interior conf_trial);
   ignore (Verdict.candidate t);
-  equal ~msg:"still unmutated after the write path"
-    (array (float 0.))
-    conf (interior conf_trial)
+  equal ~msg:"still unmutated after the write path" (array float_exact) conf
+    (interior conf_trial)
 
 (* Exit codes *)
 

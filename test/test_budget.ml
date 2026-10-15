@@ -62,7 +62,7 @@ let derived_band_table =
     ]
     "e = min(cap, r/2)"
     (fun (r, expected) ->
-      equal (float 0.) expected
+      equal float_exact expected
         (band_of
            (Budget.relative ~metric:Metric.wall_time ~max_regression:r ())))
 
@@ -74,19 +74,19 @@ let zero_budget_degenerates () =
     (Budget.contract (Budget.no_more_alloc_than 0.))
 
 let override_replaces_derivation () =
-  equal ~msg:"override below the cap" (float 0.) 0.01
+  equal ~msg:"override below the cap" float_exact 0.01
     (band_of (Budget.no_slower_than ~equivalent_within:0.01 0.05));
-  equal ~msg:"override escapes the cap" (float 0.) 0.04
+  equal ~msg:"override escapes the cap" float_exact 0.04
     (band_of (Budget.no_slower_than ~equivalent_within:0.04 0.05));
-  equal ~msg:"override up to the whole budget" (float 0.) 0.05
+  equal ~msg:"override up to the whole budget" float_exact 0.05
     (band_of (Budget.no_slower_than ~equivalent_within:0.05 0.05));
-  equal ~msg:"explicit zero band" (float 0.) 0.
+  equal ~msg:"explicit zero band" float_exact 0.
     (band_of (Budget.no_slower_than ~equivalent_within:0. 0.1))
 
 let default_max_regression_is_five_percent () =
-  equal (float 0.) 0.05 Budget.default_max_regression
+  equal float_exact 0.05 Budget.default_max_regression
 
-let band_cap_is_the_u2_cap () = equal (float 0.) 0.025 Budget.band_cap
+let band_cap_is_the_u2_cap () = equal float_exact 0.025 Budget.band_cap
 
 let defaults_gate_wall_time_at_five_percent () =
   (* The budget list applied when a case has no budgets from any level. *)

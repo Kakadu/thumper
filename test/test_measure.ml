@@ -543,8 +543,7 @@ let protocol_round_trip () =
     (Run.Trial.warnings parsed);
   equal ~msg:"alloc" int 54 (exact_of parsed Metric.alloc_words);
   let s = samples_of parsed Metric.wall_time in
-  equal ~msg:"samples survive %h exactly"
-    (array (float 0.))
+  equal ~msg:"samples survive %h exactly" (array float_exact)
     [| 6.883e-7; 6.911e-7; 7.084e-7 |]
     s.Run.sorted;
   equal ~msg:"outliers" int 1 s.Run.outliers;

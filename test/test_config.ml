@@ -19,10 +19,10 @@ let check ?(n = 20) ?(batch_floor = 5e-3) ?(warmup_time = 0.1)
     ?(warmup_batches = 3) ?(deadline = 10.)
     ?(metrics = [ "wall_time"; "alloc_words" ]) ?(fork = true) (t : Config.t) =
   equal ~msg:"n" int n t.Config.n;
-  equal ~msg:"batch_floor" (float 0.) batch_floor t.Config.batch_floor;
-  equal ~msg:"warmup_time" (float 0.) warmup_time t.Config.warmup_time;
+  equal ~msg:"batch_floor" float_exact batch_floor t.Config.batch_floor;
+  equal ~msg:"warmup_time" float_exact warmup_time t.Config.warmup_time;
   equal ~msg:"warmup_batches" int warmup_batches t.Config.warmup_batches;
-  equal ~msg:"deadline" (float 0.) deadline t.Config.deadline;
+  equal ~msg:"deadline" float_exact deadline t.Config.deadline;
   equal ~msg:"metrics" (list string) metrics
     (List.map Metric.id t.Config.metrics);
   equal ~msg:"fork" bool fork t.Config.fork

@@ -272,7 +272,7 @@ let defaults_are_check_with_nothing_set () =
   equal ~msg:"baseline" (option string) None o.Cli.baseline;
   equal ~msg:"json" (option string) None o.Cli.json;
   is_true ~msg:"strict" (not o.Cli.strict);
-  equal ~msg:"wait_quiet" (option (float 0.)) None o.Cli.wait_quiet;
+  equal ~msg:"wait_quiet" (option float_exact) None o.Cli.wait_quiet;
   is_true ~msg:"force" (not o.Cli.force);
   equal ~msg:"color" string "auto" (color_name o.Cli.color)
 
@@ -308,7 +308,7 @@ let long_options_accept_equals_form () =
   let o = opts [ "--tag=lab"; "--baseline=b.thumper"; "--wait-quiet=2.5" ] in
   equal ~msg:"tag" (list string) [ "lab" ] o.Cli.tags;
   equal ~msg:"baseline" (option string) (Some "b.thumper") o.Cli.baseline;
-  equal ~msg:"wait" (option (float 0.)) (Some 2.5) o.Cli.wait_quiet
+  equal ~msg:"wait" (option float_exact) (Some 2.5) o.Cli.wait_quiet
 
 let value_flags_parse () =
   let o =
@@ -326,7 +326,7 @@ let value_flags_parse () =
   in
   equal (option string) (Some "p.thumper") o.Cli.baseline;
   equal (option string) (Some "v.json") o.Cli.json;
-  equal (option (float 0.)) (Some 0.) o.Cli.wait_quiet;
+  equal (option float_exact) (Some 0.) o.Cli.wait_quiet;
   is_true o.Cli.strict;
   equal string "quick" (preset_name o.Cli.preset);
   is_true ~msg:"--force on bless" (opts [ "bless"; "--force" ]).Cli.force
@@ -467,7 +467,7 @@ let config_of_refines_presets_only () =
 let config_of_keeps_the_callers_knobs () =
   let base = Config.(default |> deadline 60.) in
   let c = Cli.config_of ~config:base (opts [ "--quick" ]) in
-  equal ~msg:"caller's deadline kept" (float 0.) 60. c.Config.deadline;
+  equal ~msg:"caller's deadline kept" float_exact 60. c.Config.deadline;
   equal ~msg:"preset n applied over it" int Config.quick.Config.n c.Config.n;
   (* The CLI never flips the fork seam: the caller's in-process protocol
      flows through untouched. *)

@@ -123,8 +123,8 @@ let spec_sample_evidence () =
   | Baseline.Sampled { k; samples } ->
       equal ~msg:"k" int 8192 k;
       equal ~msg:"n" int 20 (Array.length samples);
-      equal ~msg:"first sample" (float 0.) 6.883e-07 samples.(0);
-      equal ~msg:"last sample" (float 0.) 7.084e-07 samples.(19)
+      equal ~msg:"first sample" float_exact 6.883e-07 samples.(0);
+      equal ~msg:"last sample" float_exact 7.084e-07 samples.(19)
   | Baseline.Exact_int _ -> fail "expected sampled evidence"
 
 let spec_sample_byte_identity () =
@@ -677,7 +677,7 @@ let sampled_row_quantizes_to_file_precision () =
   in
   match Baseline.row_evidence r with
   | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"quantized to %.3e" (float 0.)
+      equal ~msg:"quantized to %.3e" float_exact
         (float_of_string "1.235e-03")
         samples.(0)
   | Baseline.Exact_int _ -> fail "expected sampled"
@@ -691,7 +691,7 @@ let row_evidence_returns_fresh_arrays () =
   | Baseline.Exact_int _ -> fail "expected sampled");
   match Baseline.row_evidence r with
   | Baseline.Sampled { samples; _ } ->
-      equal ~msg:"row unaffected by mutating a projection" (float 0.) 1.0
+      equal ~msg:"row unaffected by mutating a projection" float_exact 1.0
         samples.(0)
   | Baseline.Exact_int _ -> fail "expected sampled"
 
