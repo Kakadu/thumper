@@ -20,7 +20,9 @@ let sam ?(outliers = 0) ?(drifted = false) ?(unstable = false) sorted =
 
 let pp_measurement ppf = function
   | Run.Samples s ->
-      Format.fprintf ppf "Samples %a" (Pp.array Format.pp_print_float) s.sorted
+      Format.fprintf ppf "Samples %a"
+        (Format.pp_print_array Format.pp_print_float)
+        s.sorted
   | Run.Exact n -> Format.fprintf ppf "Exact %d" n
 
 (* Valid evidence never holds NaN, so structural equality is sound here. *)
